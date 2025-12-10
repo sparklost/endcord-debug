@@ -41,7 +41,6 @@ jobs:
 
   build:
     needs: detect_minor_bump
-    if: ${{ (matrix.os != 'macos-15' && matrix.os != 'macos-15-intel') || needs.detect_minor_bump.outputs.is_minor == 'true' }}
     name: build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
@@ -76,9 +75,12 @@ jobs:
       contents: read
       actions: write
 
-
     steps:
       - uses: actions/checkout@v5
+
+      - name: Skip macOS unless minor bump
+        if: ${{ (matrix.os == 'macos-15' || matrix.os == 'macos-15-intel') && needs.detect_minor_bump.outputs.is_minor != 'true' }}
+        run: exit 0
 
       ## uncomment to enable caching with artifacts
       # - name: Set CCACHE_DIR environment variable
