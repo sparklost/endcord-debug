@@ -41,10 +41,7 @@ jobs:
 
   build:
     needs: detect_minor_bump
-    if: >
-      (matrix.os != 'macos-15' &&
-       matrix.os != 'macos-15-intel') ||
-      needs.detect_minor_bump.outputs.is_minor == 'true'
+    if: ${{ (matrix.os != 'macos-15' && matrix.os != 'macos-15-intel') || needs.detect_minor_bump.outputs.is_minor == 'true' }}
     name: build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
