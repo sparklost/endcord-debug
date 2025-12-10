@@ -1,0 +1,19 @@
+Voice channels
+    add voice channels to tree
+    show voice channel activity
+    join call from tree
+    join call with goto
+    handle multiple speaking at the same time
+
+Voice calls
+    fix playing sound
+    start recorder thread, record, encode, encrypt, pack, send, stop when leave call, leave call on error
+    pause recorder when muted
+    send and receive RTCP?
+    send speaking event?
+
+Optimize main loop with queues and threading
+Fix member list not updating when switching between same-guild channels
+Vim-like bindings
+Video calls
+Localization

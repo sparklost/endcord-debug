@@ -1,0 +1,83 @@
+name: Build and Release
+run-name: ${{ github.workflow }} for ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  build:
+    name: build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            python-version: 3.13
+            nuitka: true
+            clang: true
+            clang-version: 20.1.4
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.14"
+          enable-cache: false
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        if: ${{ matrix.clang && matrix.os != 'macos-15-intel' }}   # issues with uv
+        with:
+          version: ${{ matrix.clang-version }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt update --fix-missing && sudo apt install -y patchelf ccache lld
+
+      - name: Install dependencies with uv
+        run: uv sync --all-groups
+
+      - name: Run build lite script
+        shell: bash
+        run: |
+            args=()
+            [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+            [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
+            uv run build.py --lite "${args[@]}"
+
+      - name: Make binaries executable
+        if: matrix.platform == 'macos' || matrix.platform == 'linux'
+        run: chmod +x ./dist/endcord ./dist/endcord-lite || true
+
+      - name: Archive files
+        shell: bash
+        run: |
+          version=${GITHUB_REF#refs/tags/}
+          extra="README.md LICENSE commands.md configuration.md extensions.md"
+          cd dist
+          cp ../{README.md,LICENSE,commands.md,configuration.md,extensions.md} .
+          tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
+          cd ..
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            ./dist/*.zip
+            ./dist/*.tar.gz
+          compression-level: 0
+
