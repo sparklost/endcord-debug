@@ -5,46 +5,12 @@ on:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
 
-
 jobs:
-  detect_minor_bump:
-    runs-on: ubuntu-latest
-    outputs:
-      is_minor: ${{ steps.check.outputs.is_minor }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-tags: true
-
-      - name: Get previous tag
-        id: prev
-        run: |
-          PREV=$(git tag --sort=-v:refname | sed -n '2p')
-          echo "prev=$PREV" >> $GITHUB_OUTPUT
-
-      - name: Compare versions
-        id: check
-        run: |
-          CUR="${GITHUB_REF_NAME}"
-          PREV="${{ steps.prev.outputs.prev }}"
-
-          # Extract MINOR numbers
-          CUR_MINOR=$(echo "$CUR" | cut -d. -f2)
-          PREV_MINOR=$(echo "$PREV" | cut -d. -f2)
-
-          if [ "$CUR_MINOR" != "$PREV_MINOR" ]; then
-            echo "is_minor=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_minor=false" >> $GITHUB_OUTPUT
-          fi
-
-
   build:
-    needs: detect_minor_bump
     name: build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -52,24 +18,6 @@ jobs:
             nuitka: true
             clang: true
             clang-version: 20.1.4
-          - os: windows-latest
-            platform: windows
-            python-version: 3.12   # https://github.com/Nuitka/Nuitka/issues/3234
-            nuitka: true
-            clang: false   # https://github.com/Nuitka/Nuitka/issues/3370
-            clang-version: 20.1.4
-          - os: macos-15
-            platform: macos
-            python-version: 3.13
-            nuitka: true
-            clang: true
-            clang-version: 20.1.4
-          - os: macos-15-intel
-            platform: macos
-            python-version: 3.13
-            nuitka: true
-            clang: true
-            clang-version: 20.1.3
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -77,36 +25,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Skip macOS unless minor bump
-        if: ${{ (matrix.os == 'macos-15' || matrix.os == 'macos-15-intel') && needs.detect_minor_bump.outputs.is_minor != 'true' }}
-        run: exit 0
-
-      ## uncomment to enable caching with artifacts
-      # - name: Set CCACHE_DIR environment variable
-      #   if: ${{ matrix.clang }}
-      #   shell: bash
-      #   run: |
-      #     if [[ "${{ runner.os }}" == "Windows" ]]; then
-      #       echo "CCACHE_DIR=${LOCALAPPDATA}\\clcache" >> $GITHUB_ENV
-      #     elif [[ "${{ runner.os }}" == "macOS" ]]; then
-      #       echo "CCACHE_DIR=$HOME/Library/Caches/ccache" >> $GITHUB_ENV
-      #     else
-      #       echo "CCACHE_DIR=$HOME/.cache/ccache" >> $GITHUB_ENV
-      #     fi
-
-      ## uncomment to enable caching with artifacts
-      # - name: Download ccache artifact from previous run
-      #   uses: dawidd6/action-download-artifact@v9
-      #   if: ${{ matrix.clang }}
-      #   with:
-      #     github_token: ${{ secrets.GITHUB_TOKEN }}
-      #     workflow: build-and-release.yml
-      #     name: ccache-${{ runner.os }}
-      #     workflow_conclusion: success
-      #     path: ${{ env.CCACHE_DIR }}
-      #     if_no_artifact_found: warn
-      #   continue-on-error: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -129,27 +47,8 @@ jobs:
         if: matrix.platform == 'linux'
         run: sudo apt update --fix-missing && sudo apt install -y patchelf ccache lld
 
-      - name: Install Windows system dependencies
-        if: matrix.platform == 'windows'
-        run: choco install ccache -y
-        shell: powershell
-
-      - name: Install macOS system dependencies
-        if: matrix.platform == 'macos'
-        run: |
-          brew install ccache
-          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
-
       - name: Install dependencies with uv
         run: uv sync --all-groups
-
-      - name: Run build script
-        shell: bash
-        run: |
-            args=()
-            [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
-            [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
-            uv run build.py "${args[@]}"
 
       - name: Run build lite script
         shell: bash
@@ -170,19 +69,7 @@ jobs:
           extra="README.md LICENSE commands.md configuration.md extensions.md"
           cd dist
           cp ../{README.md,LICENSE,commands.md,configuration.md,extensions.md} .
-          if [[ "${{ matrix.platform }}" == "linux" ]]; then
-            tar -czf "endcord-$version-${{ matrix.platform }}.tar.gz" endcord $extra
-            tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
-          elif [[ "${{ matrix.platform }}" == "windows" ]]; then
-            7z a "endcord-$version-${{ matrix.platform }}.zip" endcord.exe $extra
-            7z a "endcord-lite-$version-${{ matrix.platform }}.zip" endcord-lite.exe $extra
-          elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
-            zip "endcord-$version-${{ matrix.platform }}-x86_64.zip" endcord $extra
-            zip "endcord-lite-$version-${{ matrix.platform }}-x86_64.zip" endcord-lite $extra
-          else
-            zip "endcord-$version-${{ matrix.platform }}-arm64.zip" endcord $extra
-            zip "endcord-lite-$version-${{ matrix.platform }}-arm64.zip" endcord-lite $extra
-          fi
+          tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
           cd ..
 
       - name: Upload build artifact
@@ -193,60 +80,3 @@ jobs:
             ./dist/*.zip
             ./dist/*.tar.gz
           compression-level: 0
-
-      ## uncomment to enable caching with artifacts
-      # - name: Upload ccache artifact
-      #   uses: actions/upload-artifact@v4
-      #   if: ${{ matrix.clang }}
-      #   with:
-      #     name: ccache-${{ matrix.os }}
-      #     path: ${{ env.CCACHE_DIR }}
-
-      - name: Delete previous workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 1
-          delete_workflow_pattern: build-and-release
-
-
-  draft-release:
-    name: Draft GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      attestations: write
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v5
-        with:
-          path: ./dist
-          merge-multiple: true
-
-      - name: Extract version from tag
-        id: extract_version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Generate release attestation
-        uses: actions/attest-build-provenance@v3.0.0
-        with:
-          subject-path: "dist/*"
-
-      - name: Draft a release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: '${{ steps.extract_version.outputs.version }} [DRAFTED BY CI]'
-          tag_name: '${{ steps.extract_version.outputs.version }}'
-          target_commitish: ${{ github.sha }}
-          draft: true
-          prerelease: ${{ contains(steps.extract_version.outputs.version, 'dev') }}
-          files: dist/*
-          generate_release_notes: true
-
