@@ -128,7 +128,7 @@ class Discord():
         self.voice_regions = []
         self.ranked_voice_regions = []
         self.attachment_id = 1
-        logger.info("DEBUG PRINTS ARE WORKING")
+        logger.info("DEBUG PRINTS 2 ARE WORKING")
 
 
     def check_expired_attachment_url(self, url):

@@ -2120,6 +2120,7 @@ class TUI():
         Take input from user, and show it on screen
         Return typed text, absolute_tree_position and whether channel is changed
         """
+        logger.info((prompt, init_text, reset, keep_cursor, autocomplete, clear_delta, forum, command))
         _, w = self.input_hw
         self.enable_autocomplete = autocomplete
         if reset:
@@ -2149,6 +2150,7 @@ class TUI():
         key = -1
         while self.run:
             key = get_key(self.screen)
+            logger.info(f"raw_key: {key}")
 
             if self.mouse and key == curses.KEY_MOUSE:
                 code = self.mouse_events(key)
@@ -2225,12 +2227,15 @@ class TUI():
                 key = f"{self.keybinding_chain}-{key}"
                 self.keybinding_chain = None
 
+            logger.info(f"key: {key}")
+
             if key == 10:   # ENTER
                 # when pasting, dont return, but insert newline character
                 if self.bracket_paste:
                     self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
                     self.input_index += 1
                     self.add_to_delta_store("\n")
+                    logger.info("bracket enter")
                     pass
                 else:
                     if forum:
@@ -2240,6 +2245,7 @@ class TUI():
                         self.draw_input_line()
                     self.cursor_on = True
                     self.input_select_start = None
+                    logger.info(("enter", self.input_buffer))
                     return self.return_input_code(0)
 
             code = self.common_keybindings(key, command=command, forum=forum)
@@ -2272,6 +2278,7 @@ class TUI():
                             self.assist_start = self.input_index
 
             if isinstance(key, int) and 32 <= key <= 126:   # all regular characters
+                logger.info(("key start", key, chr(key), self.input_buffer))
                 if self.input_select_start is not None:
                     self.delete_selection()
                     self.input_select_start = None
@@ -2288,6 +2295,7 @@ class TUI():
                 if self.assist:
                     if chr(key) in ASSIST_TRIGGERS:
                         self.assist_start = self.input_index
+                logger.info(("key end", self.input_buffer))
 
             elif key == BACKSPACE:
                 if self.input_select_start is not None:

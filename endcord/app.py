@@ -1317,6 +1317,7 @@ class Endcord:
                 else:
                     input_text, chat_sel, tree_sel, action = self.tui.wait_input(self.prompt, clear_delta=True, forum=self.forum)
             logger.info(f"Input code: {action}")
+            logger.info((action == 0, input_text, input_text != "\n", self.active_channel["channel_id"], self.disable_sending, self.forum))
 
             # switch channel
             if action == 4:
