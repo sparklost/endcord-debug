@@ -1316,7 +1316,7 @@ class Endcord:
                     input_text, chat_sel, tree_sel, action = self.tui.wait_input(self.prompt, init_text=restore_text, keep_cursor=True, reset=False, clear_delta=True, forum=self.forum)
                 else:
                     input_text, chat_sel, tree_sel, action = self.tui.wait_input(self.prompt, clear_delta=True, forum=self.forum)
-            logger.debug(f"Input code: {action}")
+            logger.info(f"Input code: {action}")
 
             # switch channel
             if action == 4:
@@ -2084,6 +2084,7 @@ class Endcord:
 
             # enter
             elif (action == 0 and input_text and input_text != "\n" and self.active_channel["channel_id"]) or self.command:
+                logger.info("enter")
                 if self.assist_word is not None and self.assist_found:
                     self.restore_input_text = (input_text, "standard")
                     new_input_text, new_index = self.insert_assist(
@@ -2117,6 +2118,7 @@ class Endcord:
                         self.assist_found = []
                         if new_index != 1000000:
                             self.restore_input_text = (None, None)
+                    logger.info("assist")
                     continue
 
                 # message will be received from gateway and then added to self.messages
@@ -2124,9 +2126,11 @@ class Endcord:
                     # anything not "y" when asking for "[Y/n]"
                     self.reset_actions()
                     self.update_status_line()
+                    logger.info("prompt")
                     continue
 
                 if self.editing:
+                    logger.info("edit")
                     text_to_send = emoji.emojize(input_text, language="alias", variant="emoji_type")
                     success = self.discord.send_update_message(
                         channel_id=self.active_channel["channel_id"],
@@ -2140,6 +2144,7 @@ class Endcord:
                         continue   # to keep editing
 
                 elif self.deleting and input_text.lower() == "y":
+                    logger.info("delete")
                     success = self.discord.send_delete_message(
                         channel_id=self.active_channel["channel_id"],
                         message_id=self.deleting,
@@ -2149,6 +2154,7 @@ class Endcord:
                         self.update_extra_line("Network error.")
 
                 elif self.downloading_file["urls"]:
+                    logger.info("download")
                     urls = self.downloading_file["urls"]
                     if self.downloading_file["web"]:
                         try:
@@ -2179,12 +2185,14 @@ class Endcord:
                             pass
 
                 elif self.cancel_download and input_text.lower() == "y":
+                    logger.info("cancel")
                     self.downloader.cancel()
                     self.download_threads = []
                     self.cancel_upload()
                     self.upload_threads = []
 
                 elif self.search:
+                    logger.info("search")
                     self.do_search(input_text)
                     self.restore_input_text = (None, "search")
                     self.reset_actions()
@@ -2193,6 +2201,7 @@ class Endcord:
                     continue
 
                 elif self.search_gif:
+                    logger.info("gif")
                     max_w = self.tui.get_dimensions()[2][1]
                     self.add_running_task("Searching gifs", 4)
                     self.search_messages = self.discord.search_gifs(input_text)
@@ -2213,6 +2222,7 @@ class Endcord:
                     continue
 
                 elif self.command:
+                    logger.info("command")
                     self.tui.instant_assist = False
                     command_type, command_args = parser.command_string(input_text)
                     self.close_extra_window()
@@ -2222,9 +2232,11 @@ class Endcord:
                     continue
 
                 elif self.reacting["id"]:
+                    logger.info("react")
                     self.build_reaction(input_text)
 
                 elif self.hiding_ch["channel_id"] and input_text.lower() == "y":
+                    logger.info("hide")
                     channel_id = self.hiding_ch["channel_id"]
                     guild_id = self.hiding_ch["guild_id"]
                     self.hide_channel(channel_id, guild_id)
@@ -2237,6 +2249,7 @@ class Endcord:
                     self.update_tree()
 
                 elif self.going_to_ch:
+                    logger.info("goto")
                     try:
                         num = max(int(input_text) - 1, 0)
                     except ValueError:
@@ -2254,6 +2267,7 @@ class Endcord:
                                 self.go_to_message(message_id)
 
                 elif self.view_reactions["message_id"]:
+                    logger.info("view react")
                     reactions = self.view_reactions["reactions"]
                     try:
                         num = max(int(input_text) - 1, 0)
@@ -2282,20 +2296,24 @@ class Endcord:
                         pass
 
                 elif input_text[0] == "/" and parser.check_start_command(input_text, self.my_commands, self.guild_commands, self.guild_commands_permitted) and not self.disable_sending:
+                    logger.info("/command")
                     if self.forum:
                         self.update_extra_line("Cant run app command in forum.")
                     else:
                         self.execute_app_command(input_text)
 
                 elif self.slowmode_times.get(self.active_channel["channel_id"]):
+                    logger.info("slowmode")
                     self.restore_input_text = (input_text, "standard")
                     self.update_extra_line(f"Slowmode is enabled, will be able to send message in {self.slowmode_times[self.active_channel["channel_id"]]}s")
                     # dont allow sending messagee until it expires
 
                 elif not self.disable_sending and not self.forum:
+                    logger.info("check message")
                     # check for substituition
                     if input_text.startswith("s/"):
                         self.substitute_in_last_message(input_text)
+                        logger.info("substitute")
                         continue
                     # select attachment
                     this_attachments = None
@@ -2322,6 +2340,7 @@ class Endcord:
                     text_to_send = emoji.emojize(input_text, language="alias", variant="emoji_type")
                     if self.fun and ("xyzzy" in text_to_send or "XYZZY" in text_to_send):
                         self.update_extra_line("Nothing happens.")
+                    logger.info("send message")
                     success = self.discord.send_message(
                         self.active_channel["channel_id"],
                         text_to_send,

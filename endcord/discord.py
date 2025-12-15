@@ -128,6 +128,7 @@ class Discord():
         self.voice_regions = []
         self.ranked_voice_regions = []
         self.attachment_id = 1
+        logger.info("DEBUG PRINTS ARE WORKING")
 
 
     def check_expired_attachment_url(self, url):
@@ -727,14 +728,21 @@ class Discord():
             message_dict["sticker_ids"] = stickers
         message_data = json.dumps(message_dict)
         url = f"/api/v9/channels/{channel_id}/messages"
+        logger.info(message_data)
+        logger.info(url)
+        header = self.header.copy()
+        header["Authorization"] = "REDACTED"
+        logger.info(header)
         try:
             connection = self.get_connection(self.host, 443)
             connection.request("POST", url, message_data, self.header)
             response = connection.getresponse()
         except (socket.gaierror, TimeoutError):
             connection.close()
+            logger.info("SOCKET ERROR")
             return None
         if response.status == 200:
+            logger.info("MESSAGE SENT")
             data = json.loads(response.read())
             connection.close()
             if "referenced_message" in data:
