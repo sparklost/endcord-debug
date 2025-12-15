@@ -62,6 +62,7 @@ settings = {
     "yt_in_mpv": False,
     "client_properties": "default",
     "custom_user_agent": None,
+    "send_x_super_properties": True,
     "proxy": None,
     "custom_host": None,
     "easter_eggs": True,

@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime
 
 try:
@@ -60,8 +61,10 @@ def get_user_processes_diff_linux():
         # read cmdline
         try:
             with open(f"/proc/{pid}/cmdline", "rb") as f:
-                # will decode only what is needed, not entire file
-                cmdline = f.read().split(b" -")[0].split(b"\x00-")[0]
+                # decode only what is needed, not entire file
+                cmdline = f.read().partition(b" -")[0].partition(b"\x00-")[0]
+                prefix, exe, _ = cmdline.partition(b".exe")
+                cmdline = prefix + exe
                 if not cmdline:
                     continue
                 cmdline = cmdline.decode("utf-8")
@@ -186,6 +189,7 @@ def get_user_processes_diff_darwin():
             continue
         if not cmdline:
             continue
+        cmdline = cmdline[0]
 
         # add to cache and newly added processes
         path = cmdline.replace("\\", "/").replace("\x00", "")
@@ -320,7 +324,11 @@ class GameDetection:
         del outdated
 
         # update last seen times in cache
-        added, _ = get_user_processes_diff()
+        try:
+            added, _ = get_user_processes_diff()
+        except BaseException as e:
+            logger.error(f"Game detection service stopped because of error:/n{"".join(traceback.format_exception(e))}")
+            return
         global proc_cache
         proc_cache = {}
         for proc_path in added:
@@ -333,7 +341,11 @@ class GameDetection:
         cache_changed = True   # to save updated times
         _get_user_processes_diff = get_user_processes_diff
         while self.run:
-            added, removed = _get_user_processes_diff()
+            try:
+                added, removed = _get_user_processes_diff()
+            except BaseException as e:
+                logger.error(f"Game detection service stopped because of error:/n{"".join(traceback.format_exception(e))}")
+                return
 
             for proc_path in added:
                 proc = cache.get(proc_path)

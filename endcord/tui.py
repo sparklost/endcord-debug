@@ -19,6 +19,8 @@ if sys.platform == "win32":
     BACKSPACE = 8   # i cant believe this
 else:
     BACKSPACE = curses.KEY_BACKSPACE
+BUTTON4_PRESSED = getattr(curses, "BUTTON4_PRESSED", 0)
+BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0)
 match_word = re.compile(r"\w")
 match_split = re.compile(r"[^\w']")
 match_spaces = re.compile(r" {3,}")
@@ -1418,6 +1420,7 @@ class TUI():
                     self.win_extra_line.insstr(0, 0, text + " " * (w - len(text)) + "\n", curses.color_pair(11) | self.attrib_map[11])
                 self.win_extra_line.noutrefresh()
                 self.need_update.set()
+            self.draw_chat()
 
 
     def remove_extra_line(self):
@@ -1442,6 +1445,7 @@ class TUI():
                 if self.bordered:
                     self.draw_status_line()
                 self.draw_member_list(self.member_list, self.member_list_format, force=True)
+            self.draw_chat()
 
 
     def draw_extra_window(self, title_txt, body_text, select=False, start_zero=False):
@@ -2666,9 +2670,9 @@ class TUI():
                     return self.mouse_double_click(x, y)
                 self.first_click = new_click
                 return self.mouse_single_click(x, y)
-            if bstate & curses.BUTTON4_PRESSED:
+            if bstate & BUTTON4_PRESSED:
                 self.mouse_scroll(x, y, True)
-            elif bstate & curses.BUTTON5_PRESSED:
+            elif bstate & BUTTON5_PRESSED:
                 self.mouse_scroll(x, y, False)
             return None
 

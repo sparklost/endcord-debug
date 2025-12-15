@@ -108,8 +108,12 @@ class Discord():
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
             "User-Agent": user_agent,
-            "X-Super-Properties": client_prop,
         }
+        if client_prop:
+            self.header["X-Super-Properties"] = client_prop
+        if self.header["Authorization"].startswith("Bot"):
+            self.header.pop("User-Agent", None)
+            self.header.pop("X-Super-Properties", None)
         self.user_agent = user_agent
         self.proxy = urllib.parse.urlsplit(proxy)
         self.my_id = self.get_my_id(exit_on_error=True)
@@ -723,10 +727,6 @@ class Discord():
             message_dict["sticker_ids"] = stickers
         message_data = json.dumps(message_dict)
         url = f"/api/v9/channels/{channel_id}/messages"
-        logger.info(url)
-        logger.info(message_data)
-        import json as json_2
-        logger.info(json_2.dumps(self.header, indent=2))
         try:
             connection = self.get_connection(self.host, 443)
             connection.request("POST", url, message_data, self.header)
@@ -884,9 +884,6 @@ class Discord():
         """Set '[username] is typing...' status on specified channel"""
         message_data = None
         url = f"/api/v9/channels/{channel_id}/typing"
-        logger.info(url)
-        import json as json_2
-        logger.info(json_2.dumps(self.header, indent=2))
         try:
             connection = self.get_connection(self.host, 443)
             connection.request("POST", url, message_data, self.header)

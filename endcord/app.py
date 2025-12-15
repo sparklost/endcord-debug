@@ -1,8 +1,10 @@
+import curses
 import importlib.util
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -58,7 +60,7 @@ GUILD_UPLOAD_LIMITS = (10*MB, 10*MB, 50*MB, 100*MB)   # premium tier 0, 1, 2, 3
 FORUM_COMMANDS = (1, 2, 7, 13, 14, 15, 17, 20, 22, 25, 27, 29, 30, 31, 32, 40, 42, 49, 50, 51, 52, 53, 55, 56, 57, 58, 66, 67)
 
 match_emoji = re.compile(r"<:(.*):(\d*)>")
-match_youtube = re.compile(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}")
+match_youtube = re.compile(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}")
 
 
 recorder = peripherals.Recorder()
@@ -125,7 +127,7 @@ class Endcord:
         self.external_editor = config["external_editor"]
         self.limit_command_history = config["limit_command_history"]
         self.remove_prev_notif = ["remove_previous_notification"]
-        self.emoji_as_text = self.config["emoji_as_text"]
+        self.emoji_as_text = config["emoji_as_text"]
 
         if not self.external_editor or not shutil.which(self.external_editor):
             self.external_editor = os.environ.get("EDITOR", "nano")
@@ -201,6 +203,9 @@ class Endcord:
         self.chat = []
         self.chat.insert(0, f"Connecting to {self.config["custom_host"] if self.config["custom_host"] else "Discord"}")
         logger.info(f"Connecting to {self.config["custom_host"] if self.config["custom_host"] else "Discord"}")
+
+        if not config["send_x_super_properties"]:
+            client_prop = None
 
         # initialize stuff
         self.discord = discord.Discord(
@@ -280,11 +285,30 @@ class Endcord:
         self.log_queue_manager = None
         # threading.Thread(target=self.profiling_auto_exit, daemon=True).start()
         self.discord.get_voice_regions()
+
+        # init sigint handler - replaces handler from main.py
+        signal.signal(signal.SIGINT, self.sigint_handler)
+
+        # init extensions
         if config["extensions"] and ENABLE_EXTENSIONS:
             self.load_extensions(version)
             self.tui.load_extensions(self.extensions)
             self.gateway.load_extensions(self.extensions)
         self.main()
+
+
+    def sigint_handler(self, _signum, _frame):
+        """Handling Ctrl-C event"""
+        self.gateway.disconnect_ws()
+        self.run = False
+        try:
+            # in case curses.wrapper doesnt restore terminal
+            curses.nocbreak()
+            curses.echo()
+            curses.endwin()
+        except curses.error:
+            pass
+        sys.exit(0)
 
 
     def load_extensions(self, version):
@@ -497,7 +521,7 @@ class Endcord:
         self.guild_apps = []
         self.guild_commands_permitted = []
         self.pinned = []
-        self.missing_memmbers_nonce = None
+        self.missing_members_nonce = None
         self.forum = False
         self.disable_sending = False
         self.extra_line = None
@@ -824,7 +848,7 @@ class Endcord:
             self.update_chat(keep_selected=False, select_message_index=select_message_index)
         else:
             self.tui.update_chat(self.chat, self.chat_format)
-        self.set_channel_seen(channel_id, self.get_chat_last_message_id())   # right after update_chat so new_unreads is determined
+        self.set_channel_seen(channel_id, self.get_chat_last_message_id(), force_remove_notify=True)   # right after update_chat so new_unreads is determined
         if not guild_id:   # no member list in dms
             self.member_list_visible = False
             self.tui.remove_member_list()
@@ -1045,6 +1069,16 @@ class Endcord:
         for guild in self.member_roles:
             if guild["guild_id"] == self.active_channel["guild_id"]:
                 if self.username_role_colors:
+                    # add my roles if missing
+                    for member in guild["members"]:
+                        if member["user_id"] == self.my_id:
+                            break
+                    else:
+                        guild["members"].append({
+                            "user_id": self.my_id,
+                            "roles": self.current_my_roles,
+                        })
+                    # select colors
                     for member in guild["members"]:
                         if "primary_role_color" not in member:
                             member_roles = member["roles"]
@@ -1416,6 +1450,8 @@ class Endcord:
                     for num in self.get_url_from_selected_line(chat_sel):
                         if urls[num] in embeds:
                             selected_urls.append(urls[num])
+                else:
+                    selected_urls = embeds
                 if len(selected_urls) == 1:
                     self.restore_input_text = (input_text, "standard")
                     selected_url = self.refresh_attachment_url(selected_urls[0])
@@ -1932,13 +1968,13 @@ class Endcord:
                                 content_urls.append(match.group())
                             url = urls[url_index]
                             embed_url = False
-                            for embed in self.get_msg_embeds(msg_index, media_only=False):
+                            for embed in self.get_msg_embeds(msg_index, media_only=False, stickers=False):
                                 if embed == url and url not in content_urls:
                                     embed_url = True
                                     break
                             match = re.search(match_youtube, url)
                             if match:
-                                if shutil.which(self.config["yt_dlp_path"]) and ((support_media and not self.config["native_media_player"]) or shutil.which(self.config["mpv_path"])):
+                                if support_media and shutil.which(self.config["yt_dlp_path"]) and shutil.which(self.config["mpv_path"]):
                                     self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(url, False, True)))
                                     self.download_threads[-1].start()
                                 else:
@@ -2526,20 +2562,22 @@ class Endcord:
                 for num in self.get_url_from_selected_line(chat_sel):
                     if urls[num] in embeds:
                         selected_urls.append(urls[num])
-                if len(selected_urls) == 1 or select_num:
-                    select_num = max(min(select_num-1, len(selected_urls)-1), 0)
-                    selected_url = self.refresh_attachment_url(selected_urls[select_num])
-                    self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(selected_url, False, True)))
-                    self.download_threads[-1].start()
-                else:
-                    self.ignore_typing = True
-                    self.downloading_file = {
-                        "urls": selected_urls,
-                        "web": False,
-                        "open": True,
-                    }
-                    self.restore_input_text = (None, "prompt")
-                    reset = False
+            else:
+                selected_urls = embeds
+            if len(selected_urls) == 1 or select_num:
+                select_num = max(min(select_num-1, len(selected_urls)-1), 0)
+                selected_url = self.refresh_attachment_url(selected_urls[select_num])
+                self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(selected_url, False, True)))
+                self.download_threads[-1].start()
+            else:
+                self.ignore_typing = True
+                self.downloading_file = {
+                    "urls": selected_urls,
+                    "web": False,
+                    "open": True,
+                }
+                self.restore_input_text = (None, "prompt")
+                reset = False
 
         elif cmd_type == 7:   # CANCEL
             reset = False
@@ -3306,6 +3344,7 @@ class Endcord:
                 self.update_extra_line("Invalid emoji. Should be: <:EmojiName:emoji_id>")
 
         elif cmd_type == 58:   # QUIT
+            self.gateway.disconnect_ws()
             self.run = False
 
         elif cmd_type == 59:   # MARK_AS_UNREAD
@@ -3548,7 +3587,7 @@ class Endcord:
         """Get selected url indexes in selected message from selected line in chat"""
         chat_line_map = self.chat_map[chat_sel]
         if not chat_line_map or not chat_line_map[5]:
-            return [0]
+            return []
         line_urls = []
         for url in chat_line_map[5]:
             line_urls.append(url[2])
@@ -3597,7 +3636,7 @@ class Endcord:
         peripherals.copy_to_clipboard(url)
 
 
-    def get_msg_embeds(self, msg_index, media_only=True):
+    def get_msg_embeds(self, msg_index, media_only=True, stickers=True):
         """Get all palyable media embeds and stickers from message in chat"""
         urls = []
         for embed in self.messages[msg_index]["embeds"]:
@@ -3607,10 +3646,11 @@ class Endcord:
                     urls.append(embed["main_url"])
                 else:
                     urls.append(embed["url"])
-        for sticker in self.messages[msg_index]["stickers"]:
-            sticker_url = discord.get_sticker_url(sticker)
-            if sticker_url:
-                urls.append(sticker_url)
+        if stickers:
+            for sticker in self.messages[msg_index]["stickers"]:
+                sticker_url = discord.get_sticker_url(sticker)
+                if sticker_url:
+                    urls.append(sticker_url)
         return urls
 
 
@@ -3870,7 +3910,6 @@ class Endcord:
             return messages
 
         self.request_missing_members(current_guild, messages)
-
         return messages
 
 
@@ -3894,8 +3933,8 @@ class Endcord:
 
         # request missing members
         if missing_members:
-            self.missing_memmbers_nonce = discord.generate_nonce()
-            self.gateway.request_members(current_guild, missing_members, nonce=self.missing_memmbers_nonce)
+            self.missing_members_nonce = discord.generate_nonce()
+            self.gateway.request_members(current_guild, missing_members, nonce=self.missing_members_nonce)
 
 
     def get_chat_chunk(self, past=True, scroll=False):
@@ -5359,11 +5398,11 @@ class Endcord:
                 self.update_tree()
 
 
-    def set_channel_seen(self, channel_id, message_id=None, ack=True, force=False, update_tree=True):
+    def set_channel_seen(self, channel_id, message_id=None, ack=True, force=False, update_tree=True, force_remove_notify=False):
         """Set one channel as seen"""
         channel = self.read_state.get(channel_id)
         if channel:
-            remove_notification = False
+            remove_notification = force_remove_notify
             this_channel = channel_id == self.active_channel["channel_id"]
             last_message_id = channel["last_message_id"]
             unseen = not last_message_id or int(channel["last_acked_message_id"]) < int(last_message_id)
@@ -5389,14 +5428,14 @@ class Endcord:
                         break
 
 
-    def set_channel_unseen(self, channel_id, message_id, ping, skip_unread, last_acked_message_id=1, set_line=True):
+    def set_channel_unseen(self, channel_id, message_id, ping, skip_unread, last_acked_message_id=1, set_line=True, set_line_now=False):
         """Set one channel as unseen"""
         update_tree = False
         channel = self.read_state.get(channel_id)
         if channel:
             last_message_id = channel["last_message_id"]
             if last_message_id and int(channel["last_acked_message_id"]) >= int(last_message_id):
-                update_tree = True   # only  update tree if previous state is "read"
+                update_tree = True   # only update tree if previous state is "read"
             self.read_state[channel_id]["last_message_id"] = message_id
             if last_acked_message_id != 1 or not channel["last_acked_message_id"]:
                 self.read_state[channel_id]["last_acked_message_id"] = last_acked_message_id
@@ -5404,7 +5443,10 @@ class Endcord:
                 self.read_state[channel_id]["mentions"].append(message_id)
             if channel.get("last_acked_unreads_line") is None and set_line:
                 # last_acked_unreads_line is used to persist unreads line even after channel is acked
-                self.read_state[channel_id]["last_acked_unreads_line"] = self.read_state[channel_id]["last_acked_message_id"]
+                if set_line_now:
+                    self.read_state[channel_id]["last_acked_unreads_line"] = message_id
+                else:
+                    self.read_state[channel_id]["last_acked_unreads_line"] = self.read_state[channel_id]["last_acked_message_id"]
         else:
             self.read_state[channel_id] = {
                 "last_acked_message_id": last_acked_message_id,
@@ -5824,8 +5866,8 @@ class Endcord:
         """Process message events that should ping and send notification"""
         data = new_message["d"]
         op = new_message["op"]
-        this_channel = data["channel_id"] == self.active_channel["channel_id"]
         new_message_channel_id = data["channel_id"]
+        this_channel = self.active_channel["channel_id"] == new_message_channel_id
         if op == "MESSAGE_CREATE":
             if data["user_id"] == self.my_id:
                 self.set_channel_me_seen(new_message_channel_id, data["id"])
@@ -5835,11 +5877,16 @@ class Endcord:
                 for guild in self.guilds:
                     if guild["guild_id"] == data["guild_id"]:
                         if guild.get("muted"):
+                            muted = True
                             break
                         for channel in guild["channels"]:
                             if new_message_channel_id == channel["id"] and (channel.get("muted") or channel.get("hidden")):
                                 muted = True
                                 break
+                        break
+                for dm in self.dms:
+                    if dm["id"] == new_message_channel_id:
+                        muted = dm.get("muted")
                         break
                 if not muted:
                     # check if this message should ping
@@ -5872,16 +5919,17 @@ class Endcord:
                         this_channel and not self.new_unreads,
                         last_acked_message_id,
                         set_line=not(self.new_unreads and this_channel),
+                        set_line_now=this_channel and not self.new_unreads,
                     )
                     if this_channel and self.new_unreads:
                         self.update_chat(scroll=False)
 
 
     def process_msg_events_ghost_ping(self, new_message):
-        """Check message events for deleted message and remove ghost pings"""
+        """Check message events for deleted message and remove ghost pings/notifications"""
         if new_message["op"] == "MESSAGE_DELETE" and not self.keep_deleted:
             channel_id = new_message["d"]["channel_id"]
-            if channel_id in self.read_state and new_message["d"]["id"] in self.read_state.get(channel_id, {}).get("mentions"):
+            if channel_id in self.read_state and new_message["d"]["id"] in self.read_state.get(channel_id, {}).get("mentions", []):
                 # if channel is from ready event - message is unknown
                 self.read_state[channel_id]["mentions"].remove(new_message["d"]["id"])
                 self.update_tree()
@@ -6923,10 +6971,10 @@ class Endcord:
             new_member_roles, nonce = self.gateway.get_member_roles()
             if new_member_roles:
                 self.member_roles = new_member_roles
-                if nonce == self.missing_memmbers_nonce:
+                if nonce is not True and (nonce == self.missing_members_nonce or nonce == self.active_channel["channel_id"]):
                     self.select_current_member_roles()
                     self.update_chat(scroll=False)
-                    self.missing_memmbers_nonce = False
+                    self.missing_members_nonce = False
 
             # check for tree format changes
             self.check_tree_format()

@@ -1,3 +1,5 @@
+Fix new channels not added when guild has no settings
+
 Voice channels
     add voice channels to tree
     show voice channel activity

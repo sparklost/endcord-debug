@@ -646,9 +646,9 @@ def clean_type(embed_type):
 
 def get_global_name(data, use_nick):
     """Get nick or global name, fallback to username"""
-    if use_nick and "nick" in data and data["nick"]:
+    if use_nick and data.get("nick"):
         return data["nick"]
-    if data["global_name"]:
+    if data.get("global_name"):
         return data["global_name"]
     return data["username"]
 
@@ -898,14 +898,18 @@ def generate_chat(messages, roles, channels, max_length, my_id, my_roles, member
             else:
                 continue
 
-        # get member role color
+        # get member role color and nick
         role_color = None
         alt_role_color = None
+        nick = None
         for member in member_roles:
             if member["user_id"] == user_id:
                 role_color = member.get("primary_role_color")
                 alt_role_color = member.get("primary_role_alt_color")
+                nick = member.get("nick")
                 break
+        if not message["nick"]:
+            message["nick"] = nick
 
         reply_color_format = color_base
 
@@ -963,6 +967,11 @@ def generate_chat(messages, roles, channels, max_length, my_id, my_roles, member
                     ref_message["nick"] = "blocked"
                     ref_message["content"] = "Blocked message"
                     reply_color_format = color_blocked
+                for member in member_roles:
+                    if member["user_id"] == user_id:
+                        if not ref_message["nick"]:
+                            ref_message["nick"] = nick
+                        break
                 global_name = get_global_name(ref_message, use_nick)
                 reply_embeds = ref_message["embeds"].copy()
                 content = ""

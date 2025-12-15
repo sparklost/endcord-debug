@@ -27,17 +27,19 @@ from discord_protos import PreloadedUserSettings
 from google.protobuf.json_format import MessageToDict
 
 from endcord import debug, perms
-from endcord.message import prepare_message, prepare_special_message_types
+from endcord.message import prepare_message
 
 DISCORD_HOST = "discord.com"
 LOCAL_MEMBER_COUNT = 50   # members per guild, CPU-RAM intensive
 ZLIB_SUFFIX = b"\x00\x00\xff\xff"
 VOICE_FLAGS = 3   # CLIPS_ENABLED and ALLOW_VOICE_RECORDING
+DEFAULT_CAPABILITIES = 30717
+DEFAULT_INTENTS = 50364033
 QOS_HEARTBEAT = True
 QOS_PAYLOAD = {"ver": 26, "active": True, "reason": "foregrounded"}
 inflator = zlib.decompressobj()
 logger = logging.getLogger(__name__)
-code_unpacker = struct.Struct("!H")
+status_unpacker = struct.Struct("!H")
 
 
 def zlib_decompress(data):
@@ -58,6 +60,13 @@ def reset_inflator():
     global inflator
     del inflator
     inflator = zlib.decompressobj()   # noqa
+
+
+def double_get(data, key1, key2, default=None):
+    """Get value from 2 nested dicts"""
+    if key1 in data:
+        return data[key1].get(key2, default)
+    return default
 
 
 class Gateway():
@@ -175,7 +184,6 @@ class Gateway():
             self.extension_cache.append((method_name, methods))
 
 
-
     def thread_guard(self):
         """Check if reconnect is requested and run reconnect thread if its not running"""
         while self.run:
@@ -204,6 +212,19 @@ class Gateway():
             )
         else:
             self.ws.connect(gateway_url + "/?v=9&encoding=json&compress=zlib-stream", header=self.header)
+
+
+    def disconnect_ws(self, timeout=2, status=1000):
+        """Close websocket with timeout"""
+        if self.ws:
+            try:
+                self.ws.settimeout(timeout)
+                self.ws.close(status=status)
+                logger.info(f"Disconnected with status code {status}")
+            except Exception as e:
+                logger.warn("Error closing websocket:", e)
+            finally:
+                self.ws = None
 
 
     def connect(self):
@@ -277,7 +298,7 @@ class Gateway():
             self.reconnect_requested = True
 
 
-    def add_member_roles(self, guild_id, user_id, roles):
+    def add_member_roles(self, guild_id, user_id, roles, nick=None, nonce=None):
         """Add member-role pair to corresponding guild, number of users per guild is limited"""
         num = -1
         for num, guild in enumerate(self.member_roles):
@@ -295,11 +316,12 @@ class Gateway():
         self.member_roles[num]["members"].insert(0, {
             "user_id": user_id,
             "roles": roles,
+            "nick": nick,
         })
         if len(self.member_roles[num]) > LOCAL_MEMBER_COUNT:
             self.member_roles[num].pop(-1)
         if not self.roles_changed:
-            self.roles_changed = True
+            self.roles_changed = nonce if nonce else True
 
 
     def process_hidden_channels(self):
@@ -595,10 +617,11 @@ class Gateway():
                 if not data:
                     self.resumable = True
                     break
-                code = code_unpacker.unpack(data[0:2])[0]
+                status = status_unpacker.unpack(data[0:2])[0]
                 reason = data[2:].decode("utf-8", "replace")
-                logger.warning(f"Gateway error code: {code}, reason: {reason}")
-                self.resumable = code in (4000, 4009)
+                if status not in (1000, 1001):
+                    logger.warning(f"Gateway status code: {status}, reason: {reason}")
+                self.resumable = status in (4000, 4009)
                 break
             try:
                 data = zlib_decompress(data)
@@ -693,7 +716,7 @@ class Gateway():
                     # unread messages and pings
                     read_state = []
                     msg_ping = []
-                    for channel in data["read_state"]["entries"]:
+                    for channel in double_get(data, "read_state", "entries", default=[]):
                         # last_message_id in unread_state is actually last_ACKED_message_id
                         if "last_message_id" in channel and "mention_count" in channel:
                             read_state.append((channel["id"], channel["last_message_id"]))
@@ -717,7 +740,7 @@ class Gateway():
                     time_log_string += f"    read state ({len(self.read_state)} channels) - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
                     ready_time_mid = time.time()
                     # guild and dm settings
-                    for guild in data["user_guild_settings"]["entries"]:
+                    for guild in double_get(data, "user_guild_settings", "entries", default=[]):
                         if guild["guild_id"]:
                             # find this guild in self.guilds
                             for guild_num, guild_g in enumerate(self.guilds):
@@ -973,49 +996,24 @@ class Gateway():
 
                 elif optext == "MESSAGE_CREATE" and "content" in response["d"]:
                     message = response["d"]
-                    if message["channel_id"] in self.subscribed_channels or True:
-                        message_done = prepare_message(message)
-                        # saving roles to cache
-                        if "member" in message and "roles" in message["member"]:
-                            self.add_member_roles(
-                                message.get("guild_id"),
-                                message["author"]["id"],
-                                message["member"]["roles"],
-                            )
-                        message_done.update({
-                            "channel_id": message["channel_id"],
-                            "guild_id": message.get("guild_id"),
-                        })
-                        self.messages_buffer.append({
-                            "op": "MESSAGE_CREATE",
-                            "d": message_done,
-                        })
-                    else:   # all other non-active channels
-                        mentions = []
-                        if message["mentions"]:
-                            for mention in message["mentions"]:
-                                mentions.append({
-                                    "username": mention.get("username"),   # spacebar_fix - get
-                                    "global_name": mention.get("global_name"),   # spacebar_fix - get
-                                    "id": mention["id"],
-                                })
-                        message = prepare_special_message_types(message)
-                        ready_data = {   # minimal message object so it uses less cpu and ram
-                            "id": message["id"],
-                            "channel_id": message["channel_id"],
-                            "guild_id": message.get("guild_id"),
-                            "content": message["content"],
-                            "mentions": mentions,
-                            "mention_roles": message["mention_roles"],
-                            "mention_everyone": message["mention_everyone"],
-                            "user_id": message["author"]["id"],
-                            "username": message["author"]["username"],
-                            "global_name": message["author"].get("global_name"),   # spacebar_fix - get
-                        }
-                        self.messages_buffer.append({
-                            "op": "MESSAGE_CREATE",
-                            "d": ready_data,
-                        })
+                    # saving roles to cache
+                    if  message["channel_id"] in self.subscribed_channels and "member" in message and "roles" in message["member"]:
+                        self.add_member_roles(
+                            message.get("guild_id"),
+                            message["author"]["id"],
+                            message["member"]["roles"],
+                            nick=message["member"].get("nick"),
+                            nonce=message["channel_id"],
+                        )
+                    message_done = prepare_message(message)
+                    message_done.update({
+                        "channel_id": message["channel_id"],
+                        "guild_id": message.get("guild_id"),
+                    })
+                    self.messages_buffer.append({
+                        "op": "MESSAGE_CREATE",
+                        "d": message_done,
+                    })
 
                 elif optext == "MESSAGE_UPDATE":
                     message = response["d"]
@@ -1143,11 +1141,11 @@ class Gateway():
                         guild_id = data["guild_id"]
                         for member in data["members"]:
                             if "roles" in member and "roles" in member:
-                                # for now, saving only first role, used for username color
                                 self.add_member_roles(
                                     guild_id,
                                     member["user"]["id"],
                                     member["roles"],
+                                    nick=member.get("nick"),
                                 )
                                 if data.get("nonce"):
                                     self.roles_changed = data["nonce"]
@@ -1293,6 +1291,7 @@ class Gateway():
                     self.proto_changed = True
 
                 elif optext == "USER_GUILD_SETTINGS_UPDATE":
+
                     if data["guild_id"]:   # guild and channel
                         for guild_num_search, guild_g in enumerate(self.guilds):
                             if guild_g["guild_id"] == data["guild_id"]:
@@ -1692,7 +1691,7 @@ class Gateway():
             "op": 2,
             "d": {
                 "token": self.token,
-                "capabilities": 30717,
+                "capabilities": DEFAULT_CAPABILITIES,
                 "properties": self.client_prop,
                 "presence": {
                     "activities": [],
@@ -1702,6 +1701,9 @@ class Gateway():
                 },
             },
         }
+        if self.token.startswith("Bot"):
+            payload["d"].pop("capabilities")
+            payload["d"]["intents"] = DEFAULT_INTENTS
         self.send(payload)
 
 
@@ -1817,6 +1819,8 @@ class Gateway():
         Subscribe to the channel to receive "typing" events from gateway for specified channel,
         and threads updates, and member presence updates for this guild.
         """
+        if self.my_user_data["bot"]:
+            return
         if guild_id:
             # when subscribing, add channel to list of subscribed channels
             # then send whole list
