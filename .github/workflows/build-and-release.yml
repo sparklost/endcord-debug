@@ -20,19 +20,19 @@ jobs:
           #   clang-version: 21.1.8
           - os: windows-latest
             platform: windows
-            python-version: 3.13   # https://github.com/zephyrproject-rtos/windows-curses/issues/76
+            python-version: 3.12   # https://github.com/zephyrproject-rtos/windows-curses/issues/76
             nuitka: true
             clang: true
             clang-version: 21.1.8
           # - os: macos-15
           #   platform: macos
-          #   python-version: 3.13
+          #   python-version: 3.14
           #   nuitka: false
           #   clang: true
           #   clang-version: 21.1.7
           # - os: macos-15-intel
           #   platform: macos
-          #   python-version: 3.13
+          #   python-version: 3.14
           #   nuitka: false
           #   clang: true
           #   clang-version: 21.1.7
