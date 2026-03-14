@@ -20,7 +20,7 @@ jobs:
           #   clang-version: 21.1.8
           - os: windows-latest
             platform: windows
-            python-version: 3.13
+            python-version: 3.13   # https://github.com/zephyrproject-rtos/windows-curses/issues/76
             nuitka: true
             clang: true
             clang-version: 21.1.8
@@ -107,7 +107,7 @@ jobs:
             args=()
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
-            python build.py "${args[@]}"
+            uv run build.py "${args[@]}"
 
       - name: Run build lite script
         shell: bash
@@ -115,7 +115,7 @@ jobs:
             args=()
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
-            python build.py --lite "${args[@]}"
+            uv run build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
