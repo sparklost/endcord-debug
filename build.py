@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tomllib
 
+PYTHON_MAX_MINOR = 14
+PYTHON_FREETHREADED = 14
+PYTHON_LAST_SAFE = 13
 
 def get_app_name():
     """Get app name from pyproject.toml"""
@@ -18,10 +21,10 @@ def get_app_name():
             data = tomllib.load(f)
         if "project" in data and "version" in data["project"]:
             return str(data["project"]["name"])
-        print("App name not specified in pyproject.toml")
-        sys.exit()
-    print("pyproject.toml file not found")
-    sys.exit()
+        print("App name not specified in pyproject.toml", file=sys.stderr)
+        sys.exit(1)
+    print("pyproject.toml file not found", file=sys.stderr)
+    sys.exit(1)
 
 
 def get_version_number():
@@ -31,10 +34,26 @@ def get_version_number():
             data = tomllib.load(f)
         if "project" in data and "version" in data["project"]:
             return str(data["project"]["version"])
-        print("Version not specified in pyproject.toml")
-        sys.exit()
-    print("pyproject.toml file not found")
-    sys.exit()
+        print("Version not specified in pyproject.toml", file=sys.stderr)
+        sys.exit(1)
+    print("pyproject.toml file not found", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_python_version():
+    """Get python major and minor versions"""
+    if shutil.which("uv"):
+        try:
+            version_result = subprocess.run(["uv", "run", "--no-sync", "python", "-VV"], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"uv error: {e}", file=sys.stderr)
+            return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
+        all_parts = version_result.stdout.strip().split(" ")
+        version_parts = all_parts[1].split(".")
+        if len(version_parts) < 2:
+            return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
+        return int(version_parts[0]), int(version_parts[1]), "free-threading" in all_parts[2]
+    return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
 
 
 def supports_color():
@@ -63,6 +82,65 @@ def fprint(text, color_code="\033[1;35m", prepend=f"[{PKGNAME.capitalize()} Buil
         print(f"{prepend}{text}")
 
 
+def check_python():
+    """Check python version and print warning, and return True if runing inside pure python (no uv)"""
+    if sys.version_info.major != 3:
+        print(f"Python {sys.version_info.major} is not supported. Only Python 3 is supported.", file=sys.stderr)
+        sys.exit(1)
+
+    if os.environ.get("UV", ""):
+        if sys.version_info.minor < 12 or sys.version_info.minor > PYTHON_MAX_MINOR:
+            fprint(f'WARNING: Python {sys.version_info.major}.{sys.version_info.minor} is not supported but build may succeed. Run "python build.py" to let uv download and setup recommended temporary python interpreter.', color_code="\033[1;31m")
+        else:
+            try:
+                version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+                fprint(f"Using {version.stdout.strip()}")
+            except Exception:
+                pass
+            fprint(f"Using Python {sys.version}")
+        if not sys._is_gil_enabled():
+            if sys.version_info.minor == PYTHON_FREETHREADED:
+                fprint("WARNING: While endcord works with freethreaded python, final binary is much larger. Nutka doesnt yet support freethreaded python, so build is likely to fail.", color_code="\033[1;31m")
+            else:
+                fprint(f'WARNING: Endcord is known to only build with freethreaded python version 3.{PYTHON_FREETHREADED}. Buil is likely to fail on other versions. Run "python build.py" to let uv download and setup recommended temporary python interpreter, optionally with flag "--freethreaded".', color_code="\033[1;31m")
+        return False
+
+    try:
+        version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"uv error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("uv command not found, please ensure uv is installed and in PATH", file=sys.stderr)
+        sys.exit(1)
+    return True
+
+
+def ensure_python(freethreaded, safe=False):
+    """Check current python and download correct python if needed"""
+    if safe:
+        selected_version = PYTHON_LAST_SAFE
+    else:
+        selected_version = PYTHON_MAX_MINOR
+
+    _, minor, have_freethreaded = get_python_version()
+    if minor == selected_version and freethreaded == have_freethreaded:
+        return None, have_freethreaded
+
+    if freethreaded:
+        version = f"3.{PYTHON_FREETHREADED}+freethreaded"
+    else:
+        version = f"3.{selected_version}"
+        # ensure there is no same-name freethreaded python
+        subprocess.run(["uv", "python", "uninstall", f"3.{minor}+freethreaded"], check=False)
+
+    freethreaded_string = "freethreaded " if freethreaded else ""
+    fprint(f"Setting up {freethreaded_string}python {version} for this project")
+    subprocess.run(["uv", "python", "install", version], check=True)
+
+    return version, have_freethreaded or freethreaded
+
+
 def check_media_support():
     """Check if media is supported"""
     return (
@@ -83,13 +161,23 @@ def remove_media():
     """Remove media support"""
     if check_media_support():
         fprint("Removing media support dependencies")
-        subprocess.run(["uv", "pip", "uninstall", "pillow" , "av", "pynacl"], check=True)
+        subprocess.run(["uv", "pip", "uninstall", "pillow", "av", "pynacl"], check=True)
 
 
 def check_dev():
     """Check if its dev environment and set it up"""
     if importlib.util.find_spec("PyInstaller") is None or importlib.util.find_spec("nuitka") is None:
         subprocess.run(["uv", "sync", "--group", "build"], check=True)
+
+
+def force_ujson():
+    """Remove orjson and force installing ujson instead. WARNING: this modifies pyproject.toml"""
+    try:
+        subprocess.run(["uv", "remove", "orjson"], check=True, stderr=subprocess.DEVNULL)
+        fprint("Switching orjson -> ujson   !! pyproject.toml is modified !!")
+        subprocess.run(["uv", "add", "ujson"], check=True)
+    except subprocess.CalledProcessError:
+        pass
 
 
 def build_third_party_licenses(exclude=[]):
@@ -117,19 +205,26 @@ def get_cython_bins(directory="endcord_cython", startswith=None):
     return bins
 
 
-def find_file_in_venv(lib_name, file_name):
+def find_file_in_venv(lib_name, file_name, silent=False, recurse=False):
     """Search for file in specified library in current venv"""
     if isinstance(file_name, list):
         file_name = os.path.join(*file_name)
     for root, dirs, files in os.walk(".venv"):
         if lib_name in dirs:
             lib_dir = os.path.join(root, lib_name)
-            path = os.path.join(lib_dir, file_name)
-            if os.path.isfile(path):
-                return path
-    else:
+            if not recurse:
+                path = os.path.join(lib_dir, file_name)
+                if os.path.isfile(path):
+                    return path
+            else:
+                for sub_root, sub_dirs, sub_files in os.walk(lib_dir):
+                    path = os.path.join(sub_root, file_name)
+                    if os.path.isfile(path):
+                        return path
+            break
+    if not silent:
         print(f"{lib_name}/{file_name} not found")
-        return
+    return None
 
 
 def patch_soundcard():
@@ -238,6 +333,20 @@ def clean_emoji():
 
     if not changed:
         print("Emoji data is already cleaned")
+
+
+def clean_qrcode():
+    """Clean qrcode library from unused code to reduce binary size"""
+    blacklist = ["console_scripts.py", "release.py", "styledpil.py", "svg.py", "pil.py", "tests"]
+    for file in blacklist:
+        path = True
+        path = find_file_in_venv("qrcode", file, silent=True, recurse=True)
+        while path:
+            try:
+                os.remove(path)
+            except Exception:
+                break
+            path = find_file_in_venv("qrcode", file, silent=True, recurse=True)
 
 
 def toggle_experimental(check_only=False):
@@ -397,7 +506,7 @@ def build_cython(clang, mingw):
     )
     for line in process.stdout:
         line_clean = line.rstrip("\n")
-        if len(line_clean) < 100 and "Cythonizing" not in line_clean and "Compiling" not in line_clean and "creating" not in line_clean:
+        if len(line_clean) < 100 and not any(s in line_clean for s in ("Cythonizing", "Compiling", "creating", "  warn(")):
             print(line_clean)
     process.wait()
     if process.returncode != 0:
@@ -409,14 +518,17 @@ def build_cython(clang, mingw):
     shutil.rmtree("build")
 
 
-def build_with_pyinstaller(onedir, nosoundcard):
+def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     """Build with pyinstaller"""
-    if check_media_support():
-        pkgname = PKGNAME
-        fprint("ASCII media support is enabled")
+    if not print_cmd:
+        if check_media_support():
+            pkgname = PKGNAME
+            fprint("ASCII media support is enabled")
+        else:
+            pkgname = f"{PKGNAME}-lite"
+            fprint("ASCII media support is disabled")
     else:
-        pkgname = f"{PKGNAME}-lite"
-        fprint("ASCII media support is disabled")
+        pkgname = PKGNAME
 
     mode = "--onedir" if onedir else "--onefile"
     hidden_imports = ["--hidden-import=uuid"]
@@ -443,6 +555,7 @@ def build_with_pyinstaller(onedir, nosoundcard):
         hidden_imports += ["--hidden-import=win32timezone"]
     elif sys.platform == "darwin":
         options = []
+        package_data += ["--collect-data=certifi"]
 
     # prepare command and run it
     cmd = [
@@ -458,11 +571,14 @@ def build_with_pyinstaller(onedir, nosoundcard):
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
+    if print_cmd:
+        print(" ".join(cmd))
+        sys.exit(0)
     fprint("Starting pyinstaller")
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}")
+        print(f"Build failed: {e}", file=sys.stderr)
         sys.exit(e.returncode)
 
     # cleanup
@@ -475,18 +591,23 @@ def build_with_pyinstaller(onedir, nosoundcard):
     fprint(f"Finished building {pkgname}")
 
 
-def build_with_nuitka(onedir, clang, mingw, nosoundcard, experimental=False):
+def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experimental=False):
     """Build with nuitka"""
-    if check_media_support():
-        pkgname = PKGNAME
-        fprint("ASCII media support is enabled")
-    else:
-        pkgname = f"{PKGNAME}-lite"
-        fprint("ASCII media support is disabled")
+    if not print_cmd:
+        if check_media_support():
+            pkgname = PKGNAME
+            fprint("ASCII media support is enabled")
+        else:
+            pkgname = f"{PKGNAME}-lite"
+            fprint("ASCII media support is disabled")
 
-    build_numpy_lite(clang)
-    patch_soundcard()
-    clean_emoji()
+        build_numpy_lite(clang)
+        patch_soundcard()
+        clean_emoji()
+        clean_qrcode()
+    else:
+        pkgname = PKGNAME
+    full = pkgname == PKGNAME
 
     mode = "--standalone" if onedir else "--onefile"
     compiler = ""
@@ -499,6 +620,7 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, experimental=False):
     # excluding zstandard because its nuitka dependency bu also urllib3 optional dependency, and uses lots of space
     exclude_imports = [
         "--nofollow-import-to=cython",
+        "--nofollow-import-to=tkinter",
         "--nofollow-import-to=zstandard",
         "--nofollow-import-to=google._upb",
     ]
@@ -513,6 +635,8 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, experimental=False):
         package_data.remove("--include-package-data=soundcard")
     if clang:
         os.environ["CFLAGS"] = "-Wno-macro-redefined"
+    if full:
+        hidden_imports += ["--include-module=av.sidedata.encparams"]
 
     # platform-specific
     if sys.platform == "linux":
@@ -534,6 +658,7 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, experimental=False):
             f"--macos-app-version={get_version_number()}",
             "--macos-app-protected-resource=NSMicrophoneUsageDescription:Microphone access for recording voice message.",
         ]
+        package_data += ["--include-package-data=certifi:cacerts.pem"]
 
     # prepare command and run it
     cmd = [
@@ -551,11 +676,14 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, experimental=False):
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
+    if print_cmd:
+        print(" ".join(cmd))
+        sys.exit(0)
     fprint("Starting nuitka")
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}")
+        print(f"Build failed: {e}", file=sys.stderr)
         sys.exit(e.returncode)
 
     # cleanup
@@ -616,9 +744,29 @@ def parser():
         help="toggle experimental mode and exit",
     )
     parser.add_argument(
+        "--freethreaded",
+        action="store_true",
+        help="build with freethreaded python, will noticeably improve terminal media player performance at the cost of much larger binary",
+    )
+    parser.add_argument(
+        "--safe",
+        action="store_true",
+        help=f"Use python 3.{PYTHON_LAST_SAFE} which is known to build endcord without any issues",
+    )
+    parser.add_argument(
+        "--nobuild",
+        action="store_true",
+        help="only configure environment, but dont build endcord",
+    )
+    parser.add_argument(
         "--disable-extensions",
         action="store_true",
         help="disable extensions support in the code, overriding option in the config",
+    )
+    parser.add_argument(
+        "--print-cmd",
+        action="store_true",
+        help="print build command for nuitka or pyinstaller and exit",
     )
     parser.add_argument(
         "--build-licenses",
@@ -631,10 +779,30 @@ def parser():
 if __name__ == "__main__":
     args = parser()
 
+    if args.print_cmd:
+        if args.nuitka:
+            build_with_nuitka(args.onedir, args.clang, args.mingw, args.nosoundcard, print_cmd=True)
+        else:
+            build_with_pyinstaller(args.onedir, args.nosoundcard, print_cmd=True)
+        sys.exit(0)
+
+    if check_python():
+        version, freethreaded = ensure_python(args.freethreaded, args.safe)
+        if version:
+            if freethreaded:
+                force_ujson()
+            os.execvp("uv", ["uv", "run", "-p", version, *sys.argv])
+        else:
+            os.execvp("uv", ["uv", "run", *sys.argv])
+        sys.exit(0)
+
+    if args.freethreaded:
+        force_ujson()
+
     check_dev()
     if args.toggle_experimental:
         toggle_experimental()
-        sys.exit()
+        sys.exit(0)
     if args.lite or args.nosoundcard:
         remove_media()
     else:
@@ -649,11 +817,17 @@ if __name__ == "__main__":
         fprint("Experimental windowed mode enabled!")
 
     if sys.platform not in ("linux", "win32", "darwin"):
-        sys.exit(f"This platform is not supported: {sys.platform}")
+        print(f"This platform is not supported: {sys.platform}", file=sys.stderr)
+        sys.exit(1)
 
     enable_extensions(enable=(not args.disable_extensions))
 
-    if not args.nocython:
+    if args.nocython:
+        bins = get_cython_bins(directory="endcord_cython")
+        for file in bins:
+            os.remove(os.path.join("endcord_cython", file))
+        fprint("Deleted compiled cython extensions")
+    else:
         try:
             build_cython(args.clang, args.mingw)
         except Exception as e:
@@ -663,11 +837,12 @@ if __name__ == "__main__":
         exclude = ["ordered-set", "zstandard", "altgraph", "packaging", "pyinstaller-hooks-contrib", "packaging", "setuptools"]
         build_third_party_licenses(exclude)
 
-    if args.nuitka:
-        build_with_nuitka(args.onedir, args.clang, args.mingw, args.nosoundcard, experimental)
-    else:
-        build_with_pyinstaller(args.onedir, args.nosoundcard)
+    if not args.nobuild:
+        if args.nuitka:
+            build_with_nuitka(args.onedir, args.clang, args.mingw, args.nosoundcard, experimental=experimental)
+        else:
+            build_with_pyinstaller(args.onedir, args.nosoundcard)
 
     enable_extensions(enable=True, silent=True)
 
-    sys.exit()
+    sys.exit(0)

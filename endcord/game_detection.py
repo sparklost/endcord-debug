@@ -5,7 +5,6 @@ import sys
 import threading
 import time
 import traceback
-from datetime import datetime
 
 try:
     import orjson as json
@@ -71,14 +70,17 @@ def get_user_processes_diff_linux():
         except Exception:
             continue
 
-        # skip libraries
-        if cmdline.startswith("/usr/lib"):
+        # skip libraries and bash
+        if cmdline.startswith("/usr/lib") or cmdline.startswith("bash"):
             continue
 
         # if path doesnt have / or \ its definitely not a game
         path = cmdline.replace("\\", "/").replace("\x00", "")
         if "/" not in path:
             continue
+
+        # cleanup path
+        path = path.lower().replace(":", "")
 
         # add to cache and newly added processes
         proc_cache[pid] = [path, True]
@@ -138,6 +140,9 @@ def get_user_processes_diff_windows():
         if "/" not in path:
             continue
 
+        # cleanup path
+        path = path.lower().replace(":", "")
+
         # add to cache and newly added processes
         proc_cache[pid] = [path, True]
         if path not in added:
@@ -191,8 +196,11 @@ def get_user_processes_diff_darwin():
             continue
         cmdline = cmdline[0]
 
-        # add to cache and newly added processes
+        # cleanup path
         path = cmdline.replace("\\", "/").replace("\x00", "")
+        path = path.lower().replace(":", "")
+
+        # add to cache and newly added processes
         proc_cache[pid] = [path, True]
         if path not in added:
             added.append(path)
@@ -219,15 +227,16 @@ else:
 
 
 def find_detectable_apps_file(directory):
-    """Find detectable_apps_[date].ndjson path and extract date"""
-    pattern = os.path.join(directory, "detectable_apps_*.ndjson")
+    """Find detectable_apps_[etag].ndjson path and extract etag"""
+    pattern = os.path.expanduser(os.path.join(directory, "detectable_apps_*.ndjson"))
     matches = glob.glob(pattern)
     if not matches:
-        return None, None
+        return None, None, 0
     path = matches[0]
-    filename = os.path.basename(path)
-    date_str = filename[len("detectable_apps_"):-7]
-    return path, date_str
+    filename_parts = os.path.basename(path)[:-7].split("_")
+    etag = filename_parts[2]
+    save_time = int(filename_parts[3]) * 1000 if len(filename_parts) >= 4 else 0
+    return path, etag, save_time
 
 
 def find_app(proc_path, list_path, my_platform):
@@ -265,12 +274,15 @@ def find_app(proc_path, list_path, my_platform):
 class GameDetection:
     """Main game detection class"""
 
-    def __init__(self, app, discord):
+    def __init__(self, app, discord, blacklist, download_delay=7):
         self.app = app
         self.discord = discord
         self.run = True
         self.changed = False
+        self.cache = []
         self.activities = []
+        self.blacklist = blacklist
+        self.download_delay = download_delay * 86400
         threading.Thread(target=self.main, daemon=True, args=()).start()
 
 
@@ -294,33 +306,27 @@ class GameDetection:
             logger.warning(f"Game detection service cannot be started on this platform: {sys.platform}")
             return
 
-        # find existing detectable apps and check version
-        path, old_date = find_detectable_apps_file(os.path.expanduser(peripherals.config_path))
-        new_date = self.discord.check_detectable_apps_version()
-        dt = None
-        if new_date:
-            dt = datetime.strptime(new_date[:-4], "%a, %d %b %Y %H:%M:%S")
-            new_date = dt.strftime("%Y-%m-%d")
-
-        # download new detectable apps
-        if new_date != old_date:
-            if path:
-                os.remove(path)
-            path = os.path.expanduser(os.path.join(peripherals.config_path, f"detectable_apps_{new_date}.ndjson"))
-            saved = self.discord.get_detectable_apps(path)
-            if saved:
-                logger.info(f"Downloaded new detectable applications list: {old_date} -> {new_date}")
-            else:
-                logger.info("Cound not start game detection service: failed to download detectable applications list")
+        # download new detectable apps list if N days passed and resource changed on the server
+        old_path, old_etag, save_time = find_detectable_apps_file(peripherals.config_path)
+        if self.download_delay == 0 or time.time() - save_time > self.download_delay:
+            path, etag = self.discord.get_detectable_apps(peripherals.config_path, old_etag)
+            if not path:
+                logger.info("Could not start game detection service: failed to download detectable applications list")
                 return
-        del (dt, new_date, old_date)
+            if old_etag != etag:
+                logger.info(f'Downloaded new detectable applications list with ETag: W/"{etag}"')
+                if old_path:
+                    os.remove(old_path)
+            del (old_path, old_etag)
+        else:
+            path = old_path
 
         # load cached processes and remove outdated
-        cache = peripherals.load_json("detected_apps_cache.json", {})   # {proc_path: [app_id, app_name, app_path, last_seen]...}
+        self.cache = peripherals.load_json("detected_apps_cache.json", {})   # {proc_path: [app_id, app_name, app_path, last_seen]...}
         now = int(time.time())
-        outdated = [key for key, val in cache.items() if now - val[3] > MAX_CACHE_AGE]
+        outdated = [key for key, val in self.cache.items() if now - val[3] > MAX_CACHE_AGE]
         for key in outdated:
-            del cache[key]
+            del self.cache[key]
         del outdated
 
         # update last seen times in cache
@@ -328,13 +334,14 @@ class GameDetection:
             added, _ = get_user_processes_diff()
         except BaseException as e:
             logger.error(f"Game detection service stopped because of error:/n{"".join(traceback.format_exception(e))}")
+            self.run = False
             return
         global proc_cache
         proc_cache = {}
         for proc_path in added:
-            proc = cache.get(proc_path)
+            proc = self.cache.get(proc_path)
             if proc:
-                cache[proc_path][3] = now
+                self.cache[proc_path][3] = now
 
         # main loop
         logger.info("Game detection service started")
@@ -345,24 +352,27 @@ class GameDetection:
                 added, removed = _get_user_processes_diff()
             except BaseException as e:
                 logger.error(f"Game detection service stopped because of error:/n{"".join(traceback.format_exception(e))}")
+                self.run = False
                 return
 
             for proc_path in added:
-                proc = cache.get(proc_path)
+                proc = self.cache.get(proc_path)
                 if proc:
                     app_id, app_name, app_path = proc[0], proc[1], proc[2]
                 else:
                     app_id, app_name, app_path = find_app(proc_path, path, platform)
-                    cache[proc_path] = [app_id, app_name, app_path, int(time.time())]
+                    self.cache[proc_path] = [app_id, app_name, app_path, int(time.time())]
                     cache_changed = True
 
                 # skip unindentified
                 if not app_id:
                     continue
+                if app_id in self.blacklist:
+                    continue
 
                 # when identified app appears
                 # update activity session
-                self.discord.send_update_activity_session(
+                self.discord.update_activity_session(
                     app_id,
                     exe_path=app_path,
                     closed=False,
@@ -383,15 +393,17 @@ class GameDetection:
             # when identified app disappears
             for proc_path in removed:
                 # find app_name and app_path
-                data = cache.get(proc_path)
+                data = self.cache.get(proc_path)
                 if not data:
                     continue
                 app_id, app_name, app_path, _ = data
                 if not app_id:
                     continue
+                if app_id in self.blacklist:
+                    continue
 
                 # update activity session
-                self.discord.send_update_activity_session(
+                self.discord.update_activity_session(
                     app_id,
                     exe_path=app_path,
                     closed=True,
@@ -409,14 +421,58 @@ class GameDetection:
 
             if cache_changed:
                 cache_changed = False
-                peripherals.save_json(cache, "detected_apps_cache.json")
+                peripherals.save_json(self.cache, "detected_apps_cache.json")
 
             time.sleep(GAME_DETECTION_DELAY)
 
 
-    def get_activities(self, force=False):
-        """Get activities for all detected games, only when they changed"""
-        if self.changed or force:
-            self.changed = False
-            return self.activities
-        return None
+    def get_activities(self):
+        """Get activities for all detected games, and if they changed"""
+        cache = self.changed
+        self.changed = False
+        return self.activities, cache
+
+
+    def get_detected(self):
+        """Get all detected games from cache"""
+        detected = []
+        for app in self.cache.values():
+            if app[0]:
+                detected.append((app[0], app[1]))
+        return detected
+
+
+    def set_blacklist(self, blacklist):
+        """Set blacklisted games"""
+        self.blacklist = blacklist
+        global proc_cache
+        proc_cache = {}
+
+        for app_id in blacklist:
+            if not app_id:
+                return
+            # find app_name and app_path
+            for app in self.cache.values():
+                if app[0] == app_id:
+                    app_name = app[1]
+                    app_path = app[2]
+                    break
+            else:
+                continue
+
+            # update activity session
+            self.discord.update_activity_session(
+                app_id,
+                exe_path=app_path,
+                closed=True,
+                session_id=self.app.session_id,
+                media_session_id=self.app.get_media_session_id(),
+                voice_channel_id=self.app.get_voice_channel_id(),
+            )
+            # remove activity
+            for num, activity in enumerate(self.activities):
+                if activity["application_id"] == app_id:
+                    del self.activities[num]
+                    break
+            self.changed = True
+            logger.info(f"Game removed from activities: {app_name}")

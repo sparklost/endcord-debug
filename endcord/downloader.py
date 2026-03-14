@@ -34,10 +34,10 @@ class Downloader:
         self.proxy = proxy
 
 
-    def download(self, url):
+    def download(self, url, file_id=None):
         """Thread that downloads file and stores it in temp folder"""
         if not os.path.exists(os.path.expanduser(peripherals.temp_path)):
-            os.makedirs(os.path.expanduser(os.path.dirname(os.path.expanduser(peripherals.temp_path))), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.expanduser(peripherals.temp_path)), exist_ok=True)
         url_object = urllib.parse.urlsplit(url)
         filename = os.path.basename(url_object.path)
         proxy = urllib.parse.urlsplit(self.proxy)
@@ -52,7 +52,11 @@ class Downloader:
                 logger.warning("Invalid proxy, continuing without proxy")
         response = http.request("GET", url, preload_content=False)
         extension = response.headers.get("Content-Type", None).split("/")[-1].replace("jpeg", "jpg")
-        destination = os.path.join(os.path.expanduser(peripherals.temp_path), filename)
+        if file_id:
+            unique_filename = file_id + "_" + filename
+        else:
+            unique_filename = filename
+        destination = os.path.join(os.path.expanduser(peripherals.temp_path), unique_filename)
         if os.path.splitext(destination)[-1] == "" and extension:
             destination = destination + "." + extension
         self.active += 1
@@ -70,9 +74,9 @@ class Downloader:
         if self.active == 0:
             self.downloading = True
         if complete:
-            return destination
+            return destination, filename
         logger.erorr("Error downloading file")
-        return None
+        return None, None
 
     def cancel(self):
         """Stops all active downloads"""

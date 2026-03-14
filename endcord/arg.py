@@ -7,6 +7,7 @@ def parser(app_name, version, default_config_path, log_path):
         prog=app_name,
         description="Feature rich Discord client in terminal using ncurses",
     )
+    parser.suggest_on_error = True
     parser._positionals.title = "arguments"
     parser.add_argument(
         "-c",
@@ -55,20 +56,20 @@ def parser(app_name, version, default_config_path, log_path):
         "--token",
         type=str,
         action="store",
-        help="Discord user authentication token, see readme for more info, it is recommended to provide it in token manager",
+        help="Discord user authentication token, it is recommended to provide it in profile manager",
     )
     parser.add_argument(
         "-p",
         "--profile",
         type=str,
         action="store",
-        help="Name of selected profile to load, profiles are managed in token manager",
+        help="Name of selected profile to load, profiles are managed in profile manager",
     )
     parser.add_argument(
         "-a",
         "--manager",
         action="store_true",
-        help="show token manager",
+        help="show profile manager",
     )
     parser.add_argument(
         "-m",

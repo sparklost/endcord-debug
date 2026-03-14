@@ -3,8 +3,9 @@ from datetime import datetime
 
 PLATFORM_TYPES = ("Desktop", "Xbox", "Playstation", "IOS", "Android", "Nitendo", "Linux", "MacOS")
 CONTENT_TYPES = ("Played Game", "Watched Media", "Top Game", "Listened Media", "Listened Session", "Top Artist", "Custom Status", "Launched Activity", "Leaderboard")
-DISCORDAPP_CDN_ATTACHMENTS = "https://cdn.discordapp.com/attachments/"
-match_discord_attachment_url = re.compile(r"https:\/\/cdn\.discord(?:app)?\.com\/attachments\/\d+\/\d+\/([^\?\s)\]>]+)(?:\?.+)?")
+DISCORDAPP_CDN_ATTACHMENTS = ("https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments")
+match_discord_attachment_url = re.compile(r"https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\/attachments\/\d+\/\d+\/([^\?\s)\]>]+)(?:\?.+)?")
+match_url = re.compile(r"https?:\/\/[\w-]+(\.[\w-])+[^\s)\]>]*")
 
 
 def get_newlined_value(embed, name):
@@ -33,40 +34,63 @@ def prepare_embeds(embeds, message_content):
         content = ""
         main_url = None
         skip_main_url = False
+        media = []
         embed_type = embed.get("type", "unknown")
+
         if "tenor.com/" not in embed.get("url", ""):
             content += get_newlined_value(embed, "url")
             main_url = embed.get("url")
             skip_main_url = True
+
+        if "author" in embed:
+            content += get_newlined_value(embed["author"], "name")
         content += get_newlined_value(embed, "title")
         content += get_newlined_value(embed, "description")
+
+        # check for all urls in content so far and set to media = false
+        for match in re.finditer(match_url, content):
+            media.append(False)
+
         if "fields" in embed:
             for field in embed["fields"]:
                 content += "\n" + field["name"] + "\n" + field["value"]  + "\n"
+                for match in re.finditer(match_url, field["name"] + "\n" + field["value"]):
+                    media.append(False)
         if "image" in embed and "url" in embed["image"]:
             content += embed["image"]["url"] + "\n"
             main_url = embed["image"]["url"]
+            media.append(True)
         if "video" in embed and "url" in embed["video"]:
             content += embed["video"]["url"] + "\n"
             if not skip_main_url:
                 main_url = embed["video"]["url"]
+            media.append(True)
         if "footer" in embed:
             content += get_newlined_value(embed["footer"], "text")
+            for match in re.finditer(match_url, embed["footer"].get("text")):
+                media.append(False)
+
         content = content.strip("\n")
-        if content and (content not in message_content or DISCORDAPP_CDN_ATTACHMENTS in content):
-            ready_embeds.append({
+        if content:
+            if content == message_content:
+                message_content = ""
+            ready_data = {
                 "type": embed_type,   # spacebar_fix - get
                 "name": None,
                 "url": content,
                 "main_url": main_url,
-            })
-    return ready_embeds
+            }
+            if embed_type == "rich":
+                ready_data["media"] = media
+            ready_embeds.append(ready_data)
+
+    return ready_embeds, message_content
 
 
 def content_to_attachment(message, embeds):
     """Convert attachment url in message content into real attachment"""
     content = message["content"]
-    if DISCORDAPP_CDN_ATTACHMENTS in content:
+    if any(x in content for x in DISCORDAPP_CDN_ATTACHMENTS):
 
         matches = []
         def collect(m):
@@ -76,7 +100,7 @@ def content_to_attachment(message, embeds):
 
         for attachment in matches:
             for embed in embeds:
-                if embed["url"] == attachment[0]:
+                if embed["url"].split("?")[0] == attachment[0].split("?")[0]:   # query url part usually changes
                     break
             else:
                 embeds.append({
@@ -106,13 +130,13 @@ def prepare_message(message):
                         "global_name": ref_mention.get("global_name"),   # spacebar_fix - get
                         "id": ref_mention["id"],
                     })
-            if "message_snapshots" in message["referenced_message"]:
+            if message["referenced_message"].get("message_snapshots"):
                 forwarded = message["referenced_message"]["message_snapshots"][0]["message"]
                 # additional text with forwarded message is sent separately
                 message["referenced_message"]["content"] = f"[Forwarded]: {forwarded.get("content")}"
                 message["referenced_message"]["embeds"] = forwarded.get("embeds")
                 message["referenced_message"]["attachments"] = forwarded.get("attachments")
-            reference_embeds = prepare_embeds(message["referenced_message"]["embeds"], "")
+            reference_embeds, _ = prepare_embeds(message["referenced_message"]["embeds"], "")
             for attachment in message["referenced_message"].get("attachments", []):
                 reference_embeds.append({
                     "type": attachment.get("content_type", "unknown"),
@@ -157,7 +181,7 @@ def prepare_message(message):
         nick = message["member"]["nick"]
 
     # forwarded messages
-    if "message_snapshots" in message:
+    if message.get("message_snapshots"):
         forwarded = message["message_snapshots"][0]["message"]
         # additional text with forwarded message is sent separately
         message["content"] = f"[Forwarded]: {forwarded.get("content")}"
@@ -172,7 +196,7 @@ def prepare_message(message):
         poll = None
 
     # embeds and attachments
-    embeds = prepare_embeds(message["embeds"], message["content"])
+    embeds, message["content"] = prepare_embeds(message["embeds"], message["content"])
     for attachment in message["attachments"]:
         embeds.append({
             "type": attachment.get("content_type", "unknown"),
@@ -217,7 +241,7 @@ def prepare_message(message):
         "channel_id": message["channel_id"],
         "guild_id": message.get("guild_id"),
         "timestamp": message["timestamp"],
-        "edited": bool(message["edited_timestamp"]),
+        "edited": bool(message.get("edited_timestamp")),   # spacebar_fix - get
         "content": message["content"],
         "mentions": mentions,
         "mention_roles": message["mention_roles"],
@@ -236,8 +260,10 @@ def prepare_message(message):
         message_dict["poll"] = poll
     if component_info:
         message_dict["component_info"] = component_info
-    # if message["author"].get("bot"):
-    #     message_dict["bot"] = True
+    if "bot" in message["author"]:
+        message_dict["bot"] = True
+    if "webhook_id" in message:
+        message_dict["webhook"] = True
     return message_dict
 
 
@@ -568,7 +594,10 @@ def prepare_special_message_types(message):
             elif field["name"] == "victor_answer_votes":
                 data["victor_answer_votes"] = field["value"]
         if "victor_answer_votes" in data and "total_votes" in data:
-            value = round((int(data["victor_answer_votes"]) / int(data["total_votes"])) * 100)
+            if int(data["total_votes"]):
+                value = round((int(data["victor_answer_votes"]) / int(data["total_votes"])) * 100)
+            else:
+                value = 0
             percent = f", {value}%"
         else:
             percent = ", 0%"

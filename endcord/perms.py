@@ -7,15 +7,16 @@ def decode_permission(permission, flag):
     """
     Return value for specified permission flag (binary shifted)
     Some useful flags:
-    ADMINISTRATOR   0x8
-    MANAGE_MESSAGES 0x10
-    ADD_REACTIONS   0x40
-    VIEW_CHANNEL    0x400
-    SEND_MESSAGES   0x800
-    EMBED_LINKS     0x4000
-    ATTACH_FILES    0x8000
-    MENTION_EVERYONE    0x20000
-    USE_EXTERNAL_EMOJIS 0x40000
+    ADMINISTRATOR   0x8 (1 << 3)
+    MANAGE_MESSAGES 0x10 (1 << 4)
+    ADD_REACTIONS   0x40 (1 << 6)
+    VIEW_CHANNEL    0x400 (1 << 10)
+    SEND_MESSAGES   0x800 (1 << 11)
+    EMBED_LINKS     0x4000 (1 << 14)
+    ATTACH_FILES    0x8000 (1 << 15)
+    MENTION_EVERYONE    0x20000 (1 << 17)
+    USE_EXTERNAL_EMOJIS 0x40000 (1 << 18)
+    BYPASS_SLOWMODE     0x10000000000000 (1 << 52)
     """
     return (permission & flag) == flag
 
@@ -94,6 +95,8 @@ def compute_permissions(guilds, this_guild_roles, this_guild_id, my_roles, my_id
         guild["channels"][num]["permitted"] = decode_permission(permissions, 0x400)    # VIEW_CHANNEL
         guild["channels"][num]["allow_write"] = decode_permission(permissions, 0x800)    # SEND_MESSAGES
         guild["channels"][num]["allow_attach"] = decode_permission(permissions, 0x8000)   # ATTACH_FILES
+        if decode_permission(permissions, 0x10000000000000):   # BYPASS_SLOWMODE
+            guild["channels"][num]["bypass_slowmode"] = True
     return guilds
 
 

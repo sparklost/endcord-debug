@@ -13,10 +13,10 @@ def get_version_number():
             data = tomllib.load(f)
         if "project" in data and "version" in data["project"]:
             return str(data["project"]["version"])
-        print("Version not specified in pyproject.toml")
-        sys.exit()
-    print("pyproject.toml file not found")
-    sys.exit()
+        print("Version not specified in pyproject.toml", file=sys.stderr)
+        sys.exit(1)
+    print("pyproject.toml file not found", file=sys.stderr)
+    sys.exit(1)
 
 
 def get_file_list():
@@ -61,7 +61,7 @@ def main():
         print(f"New version: {version}")
     else:
         print("Version in all files is already the latest")
-    sys.exit()
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

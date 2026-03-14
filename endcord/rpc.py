@@ -6,6 +6,7 @@ import struct
 import sys
 import threading
 import time
+import traceback
 
 if sys.platform == "win32":
     import pywintypes
@@ -18,7 +19,8 @@ GATEWAY_RATE_LIMIT_SAME = 60   # delay between each same activity that rpc serve
 REQUEST_DELAY = 1.5   # delay to decrease error 429 - too many requests
 logger = logging.getLogger(__name__)
 if sys.platform == "linux":
-    DISCORD_SOCKET = f"/run/user/{os.getuid()}/discord-ipc-0"
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/{os.getuid()}")
+    DISCORD_SOCKET = os.path.join(runtime_dir, "discord-ipc-0")
 else:
     DISCORD_SOCKET = ""
 DISCORD_WIN_PIPE = r"\\?\pipe\discord-ipc-0"
@@ -99,6 +101,7 @@ class RPC:
         self.changed = False
         self.external = config["rpc_external"]
         self.activities = []
+        self.not_exist = []
         if user["bot"]:
             logger.warning("RPC server cannot be started for bot accounts")
             return
@@ -110,7 +113,7 @@ class RPC:
         if sys.platform == "win32":
             self.rpc_thread = threading.Thread(target=self.server_thread_win, daemon=True, args=())
             self.rpc_thread.start()
-        elif sys.platform == "linux":
+        elif sys.platform in ("linux", "darwin"):
             self.rpc_thread = threading.Thread(target=self.server_thread_linux, daemon=True, args=())
             self.rpc_thread.start()
         else:
@@ -170,6 +173,7 @@ class RPC:
     def client_thread(self, connection):
         """Thread that handles receiving and sending data from one client"""
         app_id = None
+        rpc_data = None
 
         try:   # lets keep server running even if there is error in one thread
             op, init_data = receive_data(connection)
@@ -182,11 +186,19 @@ class RPC:
                     connection.close()
                 return
             app_id = init_data["client_id"]
+
+            if app_id in self.not_exist:
+                if sys.platform == "win32":
+                    win32file.CloseHandle(connection)
+                else:
+                    connection.close()
+                return
+
             logger.debug(f"RPC app id: {app_id}")
-            rpc_data = self.discord.get_rpc_app(app_id)
+            status, rpc_data = self.discord.get_rpc_app(app_id)
             rpc_assets = self.discord.get_rpc_app_assets(app_id)
-            logger.info(f"RPC client connected: {rpc_data["name"]}")
             if rpc_data and rpc_assets:
+                logger.info(f"RPC client connected: {rpc_data["name"]}")
                 send_data(connection, 1, self.dispatch)
                 sent_time = time.time() - (GATEWAY_RATE_LIMIT + 1)
                 prev_activity = None
@@ -196,20 +208,14 @@ class RPC:
                         break
                     logger.debug(f"Received: {json.dumps(data, indent=2)}")
 
-                    if data["cmd"] == "SET_ACTIVITY":
-                        # prevent sending same activity too often
-                        if data["args"]["activity"] == prev_activity and time.time() - sent_time < GATEWAY_RATE_LIMIT_SAME:
-                            response = self.build_response(data)
-                            send_data(connection, op, response)
-                            return
-                        prev_activity = data["args"]["activity"]
-
+                    if data["cmd"] == "SET_ACTIVITY" and "activity" in data["args"]:
                         # prevent sending presences too often
-                        while time.time() - sent_time < GATEWAY_RATE_LIMIT:
+                        delay = GATEWAY_RATE_LIMIT_SAME if data["args"]["activity"] == prev_activity else GATEWAY_RATE_LIMIT
+                        if time.time() - sent_time < delay:
                             response = self.build_response(data)
                             send_data(connection, op, response)
-                            continue
-                        sent_time = time.time()
+                            prev_activity = data["args"]["activity"]
+                            sent_time = time.time()
 
                         activity = data["args"]["activity"]
                         if not activity:
@@ -289,6 +295,8 @@ class RPC:
                             "nonce": data["nonce"],
                         }
                         send_data(connection, op, response)
+                    elif data["cmd"] == "SET_ACTIVITY":
+                        pass
                     else:
                         # all other commands are currently unimplemented
                         # returning them to client so it can keep running with rich presence only
@@ -304,9 +312,11 @@ class RPC:
                         send_data(connection, op, response)
 
             else:
+                if status == 2:   # not found
+                    self.not_exist.append(app_id)
                 logger.warning("Failed retrieving RPC app data from discord")
-        except Exception as e:
-            logger.error(e)
+        except BaseException as e:
+            logger.error("".join(traceback.format_exception(e)))
 
         # remove presence from list
         if app_id:
@@ -319,7 +329,7 @@ class RPC:
             win32file.CloseHandle(connection)
         else:
             connection.close()
-        logger.info("RPC client disconnected")
+        logger.info(f"RPC client disconnected: {rpc_data["name"] if rpc_data else "Unknown"}")
 
 
     def server_thread_win(self):
@@ -340,12 +350,12 @@ class RPC:
                 win32pipe.ConnectNamedPipe(pipe, None)
                 threading.Thread(target=self.client_thread, daemon=True, args=(pipe,)).start()
             except pywintypes.error as e:
-                logger.error(f"Named pipe error: {e}")
+                logger.error(e)
 
 
     def server_thread_linux(self):
         """Thread that listens for new connections on socket and starts new client_thread for each connection"""
-        if sys.platform in ("linux", "darwin"):
+        try:
             if not os.path.isdir(os.path.dirname(DISCORD_SOCKET)):
                 logger.warning("Error starting RPC server: could not create socket")
                 return
@@ -353,6 +363,9 @@ class RPC:
                 os.unlink(DISCORD_SOCKET)
             self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server.bind(DISCORD_SOCKET)
+        except Exception as e:
+            logger.error(e)
+            return
         logger.info("RPC server started")
         while self.run:
             self.server.listen(1)
@@ -360,10 +373,10 @@ class RPC:
             threading.Thread(target=self.client_thread, daemon=True, args=(client, )).start()
 
 
-    def get_activities(self, force=False):
-        """Get activities for all connected apps, only when they changed."""
-        if self.changed or force:
+    def get_activities(self):
+        """Get activities for all connected apps, and if they changed."""
+        cache = self.changed
+        if self.changed:
             self.changed = False
             logger.debug(f"Sending: {json.dumps(self.activities, indent=2)}")
-            return self.activities
-        return None
+        return self.activities, cache

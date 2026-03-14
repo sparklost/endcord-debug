@@ -8,7 +8,7 @@ DISCORD_EPOCH_MS = 1420070400000
 STATUS_STRINGS = ("online", "idle", "dnd", "invisible")
 TIME_FORMATS = ("%Y-%m-%d", "%Y-%m-%d-%H-%M", "%H:%M:%S", "%H:%M")
 TIME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
-NOTIFICATION_VALUES = ("all", "mention", "nothing", "suppress_everyone", "suppress_roles")
+NOTIFICATION_VALUES = ("all", "mentions", "nothing", "default", "suppress_everyone", "suppress_roles")
 
 match_from = re.compile(r"from:<@\d*>")
 match_mentions = re.compile(r"mentions:<@\d*>")
@@ -79,6 +79,26 @@ def time_string_seconds(time_str):
     if not total:
         return 0
     return total
+
+
+def read_value(text, idx):
+    """Read quited and unquoted value from string index"""
+    length = len(text)
+    # quoted value
+    if idx < length and text[idx] == '"':
+        idx += 1
+        start = idx
+        while idx < length and text[idx] != '"':
+            idx += 1
+        value = text[start:idx]
+        return value, idx + 1
+
+    # unquoted value
+    start = idx
+    while idx < length and text[idx] != " ":
+        idx += 1
+    return text[start:idx], idx
+
 
 
 def search_string(text):
@@ -325,6 +345,13 @@ def app_command_string(text, my_commands, guild_commands, permitted_guild_comman
     return command_data, app_id, need_attachment
 
 
+def split_command_binding(text):
+    """Split string into multiple strings on ";" and ignore whitespace and newline"""
+    # Using null chaacter as placeholder
+    parts = text.replace("\\;", "\x00").split(";")
+    return [p.replace("\x00", ";").strip() for p in parts]
+
+
 def command_string(text):
     """Parse command string"""
 
@@ -354,8 +381,8 @@ def command_string(text):
     elif text_lower.startswith("bottom"):
         cmd_type = 2
 
-    # 3 - GO_REPLY
-    elif text_lower.startswith("go_reply"):
+    # 3 - GOTO_REPLY
+    elif text_lower.startswith("goto_reply"):
         cmd_type = 3
 
     # 4 - DOWNLOAD
@@ -388,6 +415,14 @@ def command_string(text):
     # 7 - CANCEL
     elif text_lower.startswith("cancel"):
         cmd_type = 7
+        value_part = text_lower[7:]
+        cmd_args = {"type": 0}
+        if "download" in value_part or "1" in value_part:
+            cmd_args = {"type": 1}
+        if "upload" in value_part or "2" in value_part:
+            cmd_args = {"type": 2}
+        if "attachment" in value_part or "3" in value_part:
+            cmd_args = {"type": 3}
 
     # 8 - COPY_MESSAGE
     elif text_lower.startswith("copy_message"):
@@ -440,7 +475,7 @@ def command_string(text):
             cmd_args = {"channel_id": match.group(1)}
 
     # 16 - SEARCH
-    elif text_lower.startswith("search"):
+    elif text_lower.startswith("search "):
         cmd_type = 16
         search_text = text[7:].strip(" ")
         cmd_args = {"search_text": search_text}
@@ -509,6 +544,7 @@ def command_string(text):
             cmd_args = {"channel_id": "special"}
         else:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 26 - VIEW_PFP
     elif text_lower.startswith("view_pfp"):
@@ -521,8 +557,8 @@ def command_string(text):
     elif text_lower.startswith("check_standing"):
         cmd_type = 27
 
-    # 28 - PASTE_CLIPBOARD_IMAGE
-    elif text_lower.startswith("paste_clipboard_image"):
+    # 28 - PASTE
+    elif text_lower.startswith("paste"):
         cmd_type = 28
 
     # 29 - TOGGLE_MUTE
@@ -539,11 +575,17 @@ def command_string(text):
     # 31 - SWITCH_TAB
     elif text_lower.startswith("switch_tab"):
         cmd_type = 31
-        try:
-            num = int(text.split(" ")[1])
-            cmd_args = {"num": num}
-        except (IndexError, ValueError):
-            cmd_type = 0
+        value_part = text_lower[11:]
+        if "next" in value_part:
+            cmd_args = {"num": "next"}
+        elif "prev" in value_part:
+            cmd_args = {"num": "prev"}
+        else:
+            try:
+                num = int(text.split(" ")[1]) - 1
+                cmd_args = {"num": num}
+            except (IndexError, ValueError):
+                cmd_type = 0
 
     # 32 - MARK_AS_READ
     elif text_lower.startswith("mark_as_read"):
@@ -551,6 +593,8 @@ def command_string(text):
         match = re.search(match_channel, text)
         if match:
             cmd_args = {"channel_id": match.group(1)}
+        elif text.split(" ")[1] == "*":
+            cmd_args = {"channel_id": "*"}
 
     # 33 - INSERT_TIMESTAMP
     elif text_lower.startswith("insert_timestamp"):
@@ -561,6 +605,7 @@ def command_string(text):
             cmd_args = {"timestamp": timestamp}
         except (IndexError, ValueError):
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 34 - VOTE
     elif text_lower.startswith("vote"):
@@ -570,6 +615,7 @@ def command_string(text):
             cmd_args = {"num": num}
         except (IndexError, ValueError):
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 35 - SHOW_PINNED
     elif text_lower.startswith("show_pinned"):
@@ -590,6 +636,7 @@ def command_string(text):
             cmd_args = {"name": name}
         except IndexError:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 38 - STRING_SELECT
     elif text_lower.startswith("string_select"):
@@ -601,6 +648,7 @@ def command_string(text):
             cmd_args = {"num": num, "text": string}
         else:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 39 - DUMP_CHAT
     elif text_lower.startswith("dump_chat"):
@@ -622,6 +670,7 @@ def command_string(text):
                 cmd_args["setting"] = cmd_split[1 + have_id].lower()
             else:
                 cmd_type = 0
+                cmd_args = {"value": 1}
 
     # 41 - GIF
     elif text_lower.startswith("gif"):
@@ -644,12 +693,14 @@ def command_string(text):
             cmd_args = {"emoji": text[20:]}
             if len(text) <= 20:
                 cmd_type = 0
+                cmd_args = {"value": 1}
         elif text_lower.startswith("custom_status_remove"):
             pass
         else:
             cmd_args = {"text": text[14:]}
             if len(text) <= 14:
                 cmd_type = 0
+                cmd_args = {"value": 1}
 
     # 45 - BLOCK
     elif text_lower.startswith("block"):
@@ -662,6 +713,7 @@ def command_string(text):
             }
         else:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 46 - UNBLOCK
     elif text_lower.startswith("unblock"):
@@ -674,6 +726,7 @@ def command_string(text):
             }
         else:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 47 - TOGGLE_BLOCKED_MESSGAES
     elif text_lower.startswith("toggle_blocked_messages"):
@@ -737,15 +790,17 @@ def command_string(text):
             cmd_args = {"name": name}
         else:
             cmd_type = 0
+            cmd_args = {"value": 1}
 
     # 57 - VIEW_EMOJI
     elif text_lower.startswith("view_emoji"):
         cmd_type = 57
-        name = text[11:].strip(" ")
-        if name:
+        try:
+            num = int(text.split(" ")[1])
+            cmd_args = {"num": num}
+        except (IndexError, ValueError):
+            name = text[11:].strip(" ")
             cmd_args = {"name": name}
-        else:
-            cmd_type = 0
 
     # 58 - QUIT
     elif text_lower.split(" ")[0] == "quit":
@@ -759,13 +814,125 @@ def command_string(text):
     elif text_lower.split(" ")[0] == "toggle_thread":
         cmd_type = 60
 
+    # 61 - GAME_DETECTION_BLACKLIST
+    elif text_lower.split(" ")[0] == "game_detection_blacklist":
+        cmd_type = 61
+        name = text[25:].strip(" ")
+        if name:
+            cmd_args = {"name": name}
+        else:
+            cmd_type = 0
+            cmd_args = {"value": 1}
+
+    # 62 - OPEN_CONFIG_DIR
+    elif text_lower.split(" ")[0] == "open_config_dir":
+        cmd_type = 62
+
+    # 63 - SEND_MESSAGE
+    elif text_lower.split(" ")[0] == "send_message":
+        cmd_type = 63
+        channel_id = None
+        reply_id = None
+        ping = True
+        attachments = []
+        length = len(text_lower)
+        i = 13
+        while i < length and text[i] == " ":   # skip spaces
+            i += 1
+        while i < length:
+            if text.startswith("--channel_id=", i):
+                i += len("--channel_id=")
+                value, i = read_value(text, i)
+                try:
+                    int(value)
+                    channel_id = value
+                except ValueError:
+                    match = re.search(match_channel, value)
+                    if match:
+                        channel_id = match.group(1)
+            elif text.startswith("--reply_id=", i):
+                i += len("--reply_id=")
+                reply_id, i = read_value(text, i)
+            elif text.startswith("--ping=", i):
+                i += len("--ping=")
+                value, i = read_value(text, i)
+                ping = value.lower() == "true"
+            elif text.startswith("--attachment=", i):
+                i += len("--attachment=")
+                value, i = read_value(text, i)
+                attachments.append(value)
+            else:
+                break
+            while i < length and text[i] == " ":   # skip spaces
+                i += 1
+        content = text[i:].lstrip()
+        cmd_args = {
+            "content": content,
+            "channel_id": channel_id,
+            "reply_id": reply_id,
+            "ping": ping,
+            "attachments": attachments,
+        }
+
+    # 64 - COPY_LINK
+    elif text_lower.startswith("copy_link"):
+        cmd_type = 64
+        try:
+            num = int(text.split(" ")[1])
+            cmd_args = {"num": num}
+        except (IndexError, ValueError):
+            pass
+
+    # 65 - TOGGLE_AFK
+    elif text_lower.startswith("toggle_afk"):
+        cmd_type = 65
 
     # 66 - 666
-    elif text_lower == "666":
+    elif text_lower.startswith("666"):
         cmd_type = 66
 
-    # 66 - TOGGLE_SNOW
-    elif text_lower == "toggle_snow":
+    # 67 - TOGGLE_SNOW
+    elif text_lower.startswith("toggle_snow"):
         cmd_type = 67
+
+    # 68 - REMOVE_ALL_TABS
+    elif text_lower.startswith("remove_all_tabs"):
+        cmd_type = 68
+
+    # 69 - COLLAPSE_ALL_EXCEPT
+    elif text_lower.startswith("collapse_all_except"):
+        cmd_type = 69
+        value_part = text_lower[20:].strip(" ")
+        if value_part == "current":
+            cmd_args = {"value": 2}
+        elif value_part == "selected":
+            cmd_args = {"value": 0}
+        elif value_part == "above":
+            cmd_args = {"value": 1}
+        elif value_part == "bellow":
+            cmd_args = {"value": -1}
+
+    # 70 - TREE_SELECT
+    elif text_lower.startswith("tree_select"):
+        cmd_type = 70
+        all_args = text_lower[12:].strip(" ").split(" ")
+        cmd_args = {
+            "type": "server" in all_args,
+            "value": "prev" in all_args,
+        }
+
+    # 71 - CHECK_FOR_UPDATES
+    elif text_lower.startswith("check_for_updates"):
+        cmd_type = 71
+        cmd_args = {"open": "open" in text_lower}
+
+    # 72 - INSTALL_EXTENSION
+    elif text_lower.startswith("install_extension"):
+        cmd_type = 72
+        cmd_args = {"text": text[18:]}
+
+    # 73 - SEARCH_EXTENSIONS
+    elif text_lower.startswith("search_extensions"):
+        cmd_type = 73
 
     return cmd_type, cmd_args

@@ -1,11 +1,22 @@
 ## Installing extensions
 Extensions can be installed in `Extensions` directory located in endcord config directory.  
-Installation can be done by simply git cloning extension github repo into the extensions directory or by running `endcord -i extension_url`.  
-Each extension should be placed there as a folder containing at least `.py` file with same name as folder.  
+Installation can be done by simply git cloning extension repo into the extensions directory or by running `endcord -i [url]`.  
+There is also client command available: `install_extension [url]`. Running it without url will update all installed extensions.    
+Instead `url` can also be used `repo_owner/repo_name` which assumes github.  
 Extension loading can be toggled in config and is ON by default.  
 During loading process some extensions may fail to load or are invalid, check log for more info.  
 If extension is built for different version of endcord, there is a chance it may misbehave or even cause a crash. But that should be rare.  
-**Disclaimer: You are installing extension at your own risk!** Depending on extension content it may increase risk or even cause your account to be banned. Extensions can be used to steal your token! See [Checking Extensions](#checking-extensions) for some red flags.  
+Extensions can be used to steal your token! See [Checking Extensions](#checking-extensions) for some red flags.  
+
+
+## Disclaimer
+> [!WARNING]
+> Using third-party client is against Discord's Terms of Service and may cause your account to be banned!  
+> **Use endcord and/or this extension at your own risk!**  
+> Depending on extension content it may increase risk or even cause your account to be banned.  
+> Extensions can be used to steal your token! See [Checking Extensions](#checking-extensions) for some red flags.  
+> Extensions may be used for harmful or unintended purposes.  
+> **Endcord developer is not responsible for any misuse or for actions taken by users.**  
 
 
 ## Misc useful information when installing and writing extensions
@@ -15,7 +26,7 @@ Extensions are loaded in alphanumeric order, and in some cases it can matter bec
 
 ### Settings
 Extensions can access settings loaded from main settings - `config.ini` in config directory.  
-Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name.  
+Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name. Extension name should be same as repo name, use underscore instead dash, and remove prepended "endcord".
 Settings can be accessed in extension as `app.settings` in extensions `__init__`, it is a dict so do `app.settings.get("ext_extension_name_setting_name", "default_value")`.  
 
 ### Forced build-time disable
@@ -24,7 +35,7 @@ But extension can modify almost everything in endcord, and can even access all t
 To prevent extension injection (malware can modify endcord config to enable extensions and inject extension in extensions directory) - which is very unlikely, there is build script option: `--disable-extensions` which disables extension loading in the code itself, overriding config.  
 
 ### Extension search and publishing
-It is recommended to use `endcord-extension` or `endcord` tags on github and other git hosting services for easier extension search.  
+It is recommended to use `endcord-extension` tag on github and other git hosting services for easier extension search. Repo name should be prepended with `endcord` eg. `endcord-your-extension-name`.  
 
 ### Logging
 Extensions can add log entries at any level and will have their name in the module name section of log entry.  
@@ -37,19 +48,23 @@ To import any endcord module simply do `from endcord import endcord_module`.
 To import other modules just do `import module`, extension directory is temporarily added to sys.path.  
 To access files from extension directory: `file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "file.json")`.  
 
+### Extension updates
+Only extensions published on github can be updated with endcord built-in system.  
+To publish new update, simply create new release named with version number.  
+
 
 ## Extension structure
 
 ### Files structure
 Extension should be one directory containing all extension files.  
-This directory should contain same named `.py` file, which is main extension file. Extension will not be loaded if this is wrong.  
-There can be other `.py` files imported by this main file and any other relevant data, documentation, license or even compiled cython modules.  
-If extension is a git repo then make repo name same as main `.py` file, which is stored in the repo root. (this helps in extension installing process).  
+This directory should contain `.py` file with same name, which is main extension file. Extension will not be loaded if this is wrong.  
+There can be other `.py` files imported by this main file, and files for any other relevant data, documentation, license or even compiled cython modules.  
+If extension is a git repo, then main `.py` file will have same name as repo, and should be placed in repo root. (this helps in extension installing process).  
 
 ### Main extension file structure
 Main extension file has some requirements that must be followed otherwise extension will be flagged as invalid and not loaded.  
 These requirements are:
-- Extension metadata at the global space of the file, in form of constants: `EXT_NAME`, `EXT_VERSION`, `EXT_ENDCORD_VERSION`, `EXT_DESCRIPTION` and `EXT_SOURCE` (url to the source coe). They should all be strings and not empty.
+- Extension metadata at the global space of the file, in form of constants: `EXT_NAME`, `EXT_VERSION`, `EXT_ENDCORD_VERSION`, `EXT_DESCRIPTION` and `EXT_SOURCE` (url to the source code). They should all be strings and not empty.
 - `Extension` class.
 - `Extension` class must contain `__init__` method that takes one argument - `app` which is entire endcord app class. it is recommended to keep `app` as `self.app` so other methods can access anything from app class later.
 
@@ -112,6 +127,17 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
     - Return `True` only if binding is matched
 
 
+## Executing existing command
+Extensions can execute existing client-side commands with this code:
+```py
+command_text = "some_command argument_1 some text"
+command_type, command_args = self.app.parser.command_string(command_text)
+chat_sel = self.app.tui.get_chat_selected()[0]
+tree_sel = self.app.tui.get_tree_selected()
+self.app.execute_command(command_type, command_args, command_text, chat_sel, tree_sel)
+```
+
+
 ## Modifying existing code
 Existing code in endcord `app` class can be modified, by replacing `app` class methods with custom methods.  
 But be warned: replacing method like this will also replace any updates made to it in new endcord version, so extension muss be updated accordingly.  
@@ -138,7 +164,7 @@ It is possible to add entire library to extension directory, which can be import
 ## Checking extensions
 Extensions can be malicious, trying to steal your token.  
 Always check extension contents before running it, few red flags are:
-- Any usage of word `token`
+- Any usage of word `token`, unless its only checking for `"Bot"`
 - Attempting to access: `app.discord.headers`, `app.profiles`
 - Modifying app.discord methods to change their host
 - Having discord snowflakes hardcoded or in some of the files

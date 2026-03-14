@@ -56,6 +56,23 @@ if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endc
     from endcord_cython.search import fuzzy_match_score
 
 
+def search_options(options, query, prompt, limit=50, score_cutoff=15):
+    """Generic search for options"""
+    results = []
+    worst_score = score_cutoff
+
+    for option in options:
+        score = fuzzy_match_score(query, option)
+        if score < worst_score and query:
+            continue
+        heapq.heappush(results, (option, prompt + " " + option, score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
 def search_channels_guild(channels, query, limit=50, score_cutoff=15):
     """Search for channels in one guild"""
     results = []
@@ -84,22 +101,32 @@ def search_channels_guild(channels, query, limit=50, score_cutoff=15):
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_channels_all(guilds, dms, query, full_input, limit=50, score_cutoff=15):
+def search_channels_all(guilds, dms, query, full_input, recent=None, limit=50, score_cutoff=15):
     """Search for guilds/categories/channels/DMs"""
     results = []
     worst_score = score_cutoff
 
     for dm in dms:
+        bonus_score = 0
+        if recent:
+            if dm["id"] in recent:
+                bonus_score = score_cutoff
+            elif not query:
+                continue
         formatted = f"{dm["name"]} (DM)"
-        score = fuzzy_match_score(query, formatted) * 4   # dms get more score so they are on top
-        if score < worst_score:
+        score = fuzzy_match_score(query, formatted) * 4 + bonus_score   # dms get more score so they are on top
+        if score < worst_score * 4:
             continue
-        heapq.heappush(results, (formatted, dm["id"], score))
+        if recent:
+            completion = f"goto <#{dm["id"]}>"
+        else:
+            completion = dm["id"]
+        heapq.heappush(results, (formatted, completion, score))
         if len(results) > limit:
             heapq.heappop(results)
             worst_score = results[0][2]
 
-    if full_input.startswith("toggle_mute") or full_input.startswith("mark_as_read") or full_input.startswith("goto"):
+    if (full_input.startswith("toggle_mute") or full_input.startswith("mark_as_read") or full_input.startswith("goto")) and (not recent or query):
         full = True   # include guilds and categories
     else:
         full = False
@@ -114,6 +141,12 @@ def search_channels_all(guilds, dms, query, full_input, limit=50, score_cutoff=1
                     worst_score = results[0][2]
 
         for channel in guild["channels"]:
+            bonus_score = 0
+            if recent:
+                if channel["id"] in recent:
+                    bonus_score = score_cutoff
+                elif not query:
+                    continue
             if channel["permitted"]:
                 if channel["type"] == 2:
                     formatted = f"{channel["name"]} - voice ({guild["name"]})"
@@ -125,18 +158,27 @@ def search_channels_all(guilds, dms, query, full_input, limit=50, score_cutoff=1
                     formatted = f"{channel["name"]} - forum ({guild["name"]})"
                 else:
                     formatted = f"{channel["name"]} ({guild["name"]})"
-                score = fuzzy_match_score(query, formatted)
+                score = fuzzy_match_score(query, formatted) + bonus_score
                 if score < worst_score:
                     continue
-                heapq.heappush(results, (formatted, channel["id"], score))
+                if recent:
+                    completion = f"goto <#{channel["id"]}>"
+                else:
+                    completion = channel["id"]
+                heapq.heappush(results, (formatted, completion, score))
                 if len(results) > limit:
                     heapq.heappop(results)
                     worst_score = results[0][2]
 
-    return sorted(results, key=lambda x: x[2], reverse=True)
+    results = sorted(results, key=lambda x: x[2], reverse=True)
+    if recent and not query:
+        order = {ch_id: i for i, ch_id in enumerate(recent)}
+        results.sort(key=lambda t: order.get(t[1], len(order)), reverse=True)
+
+    return results
 
 
-def search_usernames_roles(roles, query_results, guild_id, gateway, query, limit=50, score_cutoff=15):
+def search_usernames_roles(roles, query_results, guild_id, gateway, query, presences=[], limit=50, score_cutoff=15):
     """Search for usernames and roles"""
     results = []
     worst_score = score_cutoff
@@ -162,7 +204,13 @@ def search_usernames_roles(roles, query_results, guild_id, gateway, query, limit
                 member_name = f" ({member["name"]})"
             else:
                 member_name = ""
-            heapq.heappush(results, (f"{member["username"]}{member_name}", member["id"], score))
+            formatted = f"{member["username"]}{member_name}"
+            for presence in presences:
+                if presence["id"] == member["id"]:
+                    status = presence["status"].capitalize().replace("Dnd", "DnD")
+                    formatted += f" - {status}"
+                    break
+            heapq.heappush(results, (formatted, member["id"], score))
             if len(results) > limit:
                 heapq.heappop(results)
                 worst_score = results[0][2]
@@ -183,15 +231,16 @@ def search_emojis(all_emojis, premium, guild_id, query, safe_emoji=False, limit=
     worst_score = score_cutoff
 
     # guild emoji
-    if not premium:
+    if premium:
+        emojis = all_emojis
+    else:
         for guild in all_emojis:
             if guild["guild_id"] == guild_id:
                 emojis = [guild]
                 break
         else:
             emojis = []
-    else:
-        emojis = all_emojis
+
     for guild in emojis:
         guild_name = guild["guild_name"]
         for guild_emoji in guild["emojis"]:
@@ -231,15 +280,16 @@ def search_stickers(all_stickers, default_stickers, premium, guild_id, query, li
     results = []
     worst_score = score_cutoff
 
-    if not premium:
+    if premium:
+        stickers = all_stickers
+    else:
         for pack in all_stickers:
             if pack["pack_id"] == guild_id:
                 stickers = [pack]
                 break
         else:
             stickers = []
-    else:
-        stickers = all_stickers
+
     for pack in stickers + default_stickers:
         pack_name = pack["pack_name"]
         for sticker in pack["stickers"]:
@@ -309,9 +359,9 @@ def search_string_selects(message, query_in, limit=50, score_cutoff=15):
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_set_notifications(guilds, dms, guild_id, channel_id, ping_options, query_in):
+def search_set_notifications(guilds, dms, guild_id, channel_id, ping_options, query_in, score_cutoff=15):
     """Search for notification settings"""
-    results = []
+    options = []
     query = query_in.lower()
     query_words = query.split(" ")
 
@@ -325,33 +375,51 @@ def search_set_notifications(guilds, dms, guild_id, channel_id, ping_options, qu
                 break
         if channel:
             message_notifications = channel.get("message_notifications", 0)
-            for num, option in enumerate(ping_options):
-                if num == message_notifications:
-                    results.append((f"* {option}", f"{" ".join(query_words[:2])}{option}"))
+            if channel["type"] == 4:
+                default_val = guild["message_notifications"]
+            else:
+                for category in guild["channels"]:
+                    if category["type"] == 4 and category["id"] == channel["parent_id"]:
+                        default_val = category["message_notifications"]
+                        default_val = default_val - 10 if default_val >= 10 else default_val
+                        break
                 else:
-                    results.append((option, f"{" ".join(query_words[:2])}{option}"))
+                    default_val = 2
+            default = "default" + f" ({"server" if channel["type"] == 4 else "category"}: {ping_options[default_val]})"
+            message_notifications = 3 if message_notifications >= 10 else message_notifications
+            for num, option in enumerate(ping_options[:-1] + [default]):
+                if num == message_notifications:
+                    options.append((f"* {option}", query_words[0] + " " + option.split(" ")[0]))
+                else:
+                    options.append((option, query_words[0] + " " + option.split(" ")[0]))
     else:
         for dm in dms:
             if dm["id"] == channel_id:
-                results.append(("No notification settings for DM", None))
+                options.append(("No notification settings for DM", None))
+                return options
         else:   # guild
+            guild = None
             for guild in guilds:
                 if guild["guild_id"] == channel_id:
                     break
-            else:
-                guild = None
-                results.append(("Server/channel not found", None))
             if guild:
                 message_notifications = guild.get("message_notifications", 0)
                 for num, option in enumerate(ping_options):
                     if num == message_notifications:
-                        results.append((f"* {option}", f"{" ".join(query_words[:2])}{option}"))
+                        options.append((f"* {option}", f"{" ".join(query_words[:2])}{option}"))
                     else:
-                        results.append((option, f"{" ".join(query_words[:2])}{option}"))
-                results.append((f"suppress_everyone = {guild.get("suppress_everyone", False)}", f"{" ".join(query_words[:2])}suppress_everyone"))
-                results.append((f"suppress_roles = {guild.get("suppress_roles", False)}", f"{" ".join(query_words[:2])}suppress_roles"))
+                        options.append((option, f"{" ".join(query_words[:2])}{option}"))
+                options.append((f"suppress_everyone = {guild.get("suppress_everyone", False)}", f"{" ".join(query_words[:2])}suppress_everyone"))
+                options.append((f"suppress_roles = {guild.get("suppress_roles", False)}", f"{" ".join(query_words[:2])}suppress_roles"))
 
-    return results
+    results = []
+    for option in options:
+        score = fuzzy_match_score(query_words[1], option[0].replace("*", " ").strip())
+        if query_words[1] and score < score_cutoff:
+            continue
+        results.append((option[0], option[1], score))
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
 
 
 def search_client_commands(commands, query, limit=50, score_cutoff=15):
@@ -364,6 +432,45 @@ def search_client_commands(commands, query, limit=50, score_cutoff=15):
         if score < worst_score:
             continue
         heapq.heappush(results, (*command, score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_games(games, blacklist, query, limit=50, score_cutoff=15):
+    """Search for settings"""
+    results = []
+    worst_score = score_cutoff
+
+    for game_id, game_name in games:
+        if game_id in blacklist:
+            formatted = game_name + " (blacklisted)"
+        else:
+            formatted = game_name
+        score = fuzzy_match_score(query, formatted)
+        if score < worst_score and query:
+            continue
+        heapq.heappush(results, (formatted, f"game_detection_blacklist {game_name}", score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_tabs(tabs, query, limit=50, score_cutoff=15):
+    """Search for tabs"""
+    results = []
+    worst_score = score_cutoff
+
+    for num, tab in enumerate(tabs):
+        formatted = f"{num + 1} - {tab["channel_name"]} ({tab["guild_name"]})"
+        score = fuzzy_match_score(query, formatted)
+        if score < worst_score and query:
+            continue
+        heapq.heappush(results, (formatted, f"switch_tab {num + 1}", score))
         if len(results) > limit:
             heapq.heappop(results)
             worst_score = results[0][2]

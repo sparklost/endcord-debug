@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import sys
+import time
 import traceback
 
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"   # fix for https://github.com/Nuitka/Nuitka/issues/3442
@@ -11,17 +12,15 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"   # fix for http
 from endcord import arg, defaults, peripherals
 
 APP_NAME = "endcord"
-VERSION = "1.1.3"
+VERSION = "1.3.0"
 default_config_path = peripherals.config_path
 log_path = peripherals.log_path
 uses_pgcurses = hasattr(curses, "PGCURSES")
 
-if not os.path.exists(log_path):
-    os.makedirs(os.path.expanduser(os.path.dirname(log_path)), exist_ok=True)
 logger = logging
 logging.basicConfig(
     level="INFO",
-    filename=os.path.expanduser(f"{log_path}{APP_NAME}.log"),
+    filename=os.path.expanduser(os.path.join(log_path, APP_NAME + ".log")),
     encoding="utf-8",
     filemode="w",
     format="{asctime} - {levelname}\n  [{module}]: {message}\n",
@@ -63,29 +62,46 @@ def main(args):
         section="keybindings",
         gen_config=gen_config,
     )
+    command_bindings = peripherals.load_config(
+        config_path,
+        defaults.command_bindings,
+        section="command_bindings",
+        gen_config=gen_config,
+        merge=True,
+    )
+    if config["vim_mode"]:
+        vim_keybindings = peripherals.load_config(
+            config_path,
+            defaults.vim_mode_bindings,
+            section="vim_mode_bindings",
+            gen_config=gen_config,
+            merge=True,
+        )
+        keybindings = peripherals.merge_keybindings(keybindings, vim_keybindings, command_bindings)
     if not uses_pgcurses:
         keybindings = peripherals.convert_keybindings(keybindings)
+        command_bindings = peripherals.convert_keybindings_cmd(command_bindings)
+
+    keybindings = peripherals.normalize_keybindings(keybindings)
 
     os.environ["ESCDELAY"] = "25"   # 25ms
-    if os.environ.get("TERM", "") in ("xterm", "linux"):
-        os.environ["TERM"] = "xterm-256color"
-    if sys.platform == "linux":
-        cert_path = "/etc/ssl/certs/ca-certificates.crt"
-        if os.path.exists(cert_path):
-            os.environ["SSL_CERT_FILE"] = cert_path
+    if os.environ.get("TERM", "") == "linux" or os.environ.get("TERM", "").startswith("xterm"):   # for xterm-ghostty
+        os.environ["REALTERM"] = os.environ["TERM"]
+        os.environ["TERM"] = "xterm-256color"   # try to force 256-color mode
+    peripherals.ensure_ssl_certificates()
 
     if args.colors:
         # import here for faster startup
         from endcord import color
         if uses_pgcurses:
             curses.enable_tray = False
-        curses.wrapper(color.color_palette)
+        color.color_palette()
         sys.exit(0)
     elif args.keybinding:
         from endcord import keybinding
         if uses_pgcurses:
             curses.enable_tray = False
-        keybinding.picker(keybindings)
+        keybinding.picker(keybindings, command_bindings)
         sys.exit(0)
     elif args.media:
         if not (
@@ -93,30 +109,35 @@ def main(args):
             importlib.util.find_spec("av") is not None and
             importlib.util.find_spec("nacl") is not None
         ):
-            sys.exit("Ascii media player is not supported")
+            print("Terminal media player is not supported", file=sys.stderr)
+            sys.exit(1)
         from endcord import media
         if uses_pgcurses:
             curses.enable_tray = False
         try:
-            curses.wrapper(media.ascii_runner, args.media, config, keybindings)
+            media.runner(args.media, config, keybindings)
         except curses.error as e:
             if str(e) != "endwin() returned ERR":
                 logger.error(traceback.format_exc())
                 sys.exit("Curses error, see log for more info")
         sys.exit(0)
     elif args.install_extension:
-        peripherals.install_extension(args.install_extension)
+        from endcord import git
+        _, text = git.install_extension(args.install_extension, cli=True)
+        print(text)
         sys.exit(0)
 
     if args.proxy:
         config["proxy"] = args.proxy
     if args.host:
         config["custom_host"] = args.host
+    if args.debug or config["debug"]:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     from endcord import profile_manager
     logger.info(f"Started endcord {VERSION}")
     if args.token:
-        profiles = {"selected": "default", "profiles": [{"name": "default", "token": args.token}]}
+        profiles = {"selected": "default", "plaintext": [{"name": "default", "token": args.token, "time": int(time.time())}], "keyring": []}
         proceed = True
     else:
         profiles_path = os.path.join(peripherals.config_path, "profiles.json")
@@ -124,17 +145,16 @@ def main(args):
             selected = args.profile
         else:
             selected = None
-        profiles, selected, proceed = profile_manager.manage(profiles_path, selected, force_open=args.manager)
+        profiles, selected, proceed = profile_manager.manage(profiles_path, selected, config, force_open=args.manager)
         if not profiles:
-            sys.exit("Token not provided in token manager nor as argument")
+            print("Token not provided in profile manager nor as argument")
+            sys.exit(0)
     if not proceed:
         sys.exit(0)
 
-    if args.debug or config["debug"]:
-        logging.getLogger().setLevel(logging.DEBUG)
     try:
         from endcord import app
-        curses.wrapper(app.Endcord, config, keybindings, profiles, VERSION)
+        curses.wrapper(app.Endcord, config, keybindings, command_bindings, profiles, VERSION)
     except curses.error as e:
         if str(e) != "endwin() returned ERR":
             logger.error(traceback.format_exc())

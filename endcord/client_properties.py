@@ -34,6 +34,23 @@ else:
     system_locale = "en_US"
 
 
+def get_os_version():
+    """ Get OS version and architecture"""
+    arch = "x64"
+    if sys.platform == "linux":
+        os_version = subprocess.check_output(["uname", "-r"], text=True).strip()
+    elif sys.platform == "win32":
+        win_ver = sys.getwindowsversion()
+        os_version = f"{win_ver.major}.{win_ver.minor}.{win_ver.build}"
+    elif sys.platform == "darwin":
+        output = subprocess.check_output(["sw_vers"], text=True)
+        os_version = output.split("\n")[1].split(":\t")[1]
+        arch = "arm64"   # guessing
+    else:
+        os_version = ""
+    return os_version, arch
+
+
 def get_anonymous_properties():
     """
     Get anonymous client properties which might look more suspicious to discord.
@@ -70,18 +87,7 @@ def get_default_properties():
     Get default client properties which might look less suspicious to discord.
     This is approximately what desktop client sends.
     """
-    arch = "x64"
-    if sys.platform == "linux":
-        os_version = subprocess.check_output(["uname", "-r"], text=True).strip()
-    elif sys.platform == "win32":
-        win_ver = sys.getwindowsversion()
-        os_version = f"{win_ver.major}.{win_ver.minor}.{win_ver.build}"
-    elif sys.platform == "darwin":
-        output = subprocess.check_output(["sw_vers"], text=True)
-        os_version = output.split("\n")[1].split(":\t")[1]
-        arch = "arm64"   # guessing
-    else:
-        os_version = ""
+    os_version, arch = get_os_version()
 
     data = {
         "os": operating_system,
@@ -190,3 +196,11 @@ def adjust_user_agent_os(user_agent, platform, ver):
 def encode_properties(data):
     """Encode properties dict into base64 string"""
     return base64.b64encode(json.dumps(data, separators=(",", ":")).encode("utf-8")).decode("utf-8")
+
+
+def get_user_agent(anonymous=False):
+    """Get only user agent string"""
+    if anonymous:
+        return adjust_user_agent_os(USER_AGENT_WEB, sys.platform, None)
+    os_version, _ = get_os_version()
+    return adjust_user_agent_os(USER_AGENT_DESKTOP, sys.platform, os_version)

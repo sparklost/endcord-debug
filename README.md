@@ -6,7 +6,7 @@
 <a href="https://github.com/sparklost/endcord?tab=readme-ov-file#usage">Usage</a> |
 <a href="https://github.com/sparklost/endcord?tab=readme-ov-file#installing">Installing</a> |
 <a href="https://github.com/sparklost/endcord?tab=readme-ov-file#building">Building</a> |
-<a href="https://github.com/sparklost/endcord/blob/main/extensions.md">Extensions</a> |
+<a href="https://github.com/sparklost/endcord/blob/main/docs/extensions.md">Extensions</a> |
 <a href="https://github.com/sparklost/endcord/blob/main/.github/CONTRIBUTING.md">Contributing</a> |
 <a href="https://github.com/sparklost/endcord?tab=readme-ov-file#faq">FAQ</a> |
 <a href="https://discord.gg/judQSxw5K2">Discord</a>
@@ -14,24 +14,23 @@
 </div>
 
 Endcord is a third-party feature rich Discord client, running entirely in terminal.  
-It is built with python and ncurses library, to deliver lightweight yet feature rich experience.  
-Discord token is required in order to run endcord! see [Token](#token).  
+It is built with Python (this [doesnt mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
-
 
 ## Features
 - Extremely low CPU and RAM usage (values greatly depend on number of servers and channels)
-- Extension API
 - Voice calls (WIP)
+- Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
 - Mouse controls
+- Login with email, 2fa, QR code, or paste token
 - Desktop notifications
 - View images, gifs, videos, audio, stickers and YouTube with ASCII art or in external app
 - Download/upload attachments
 - Select message and: reply, edit, delete, go to replied, react, vote in a poll...
 - Member list
 - Search messages
-- Client commands with history
+- Client commands with history, custom commands can be bound to key
 - App commands and some interactions
 - View user profile
 - Channel tree
@@ -39,8 +38,8 @@ Discord token is required in order to run endcord! see [Token](#token).
     - Don't show hidden channels
     - Show muted channels as gray
     - Show unread channels as bold
-    - Show channels with mention as red
-    - Expand categories and servers
+    - Show channels with mention as red with number of mentions
+    - Collapse categories and servers
     - DMs in separate drop-down, show DM status
     - Forums, channel threads
     - Folders with custom naming
@@ -71,16 +70,17 @@ Discord token is required in order to run endcord! see [Token](#token).
 - Customizable status, title and prompt lines
 - Customizable chat lines (message, newline, reaction, reply)
 - Customizable colors and ASCII art
-- Show discord emoji as `:emoji_name:`
+- Show discord emoji as `:emoji_name:` and view them in media player
 - Show mentions as `@username`, `@role`, `#channel_name`
 - Channel chat caching
-- Remember last open channel and tree state
+- Extension API, builtin extensions search
+- Macro keybindings support (bind key to chain of commands)
 - Proxy support
-- Can connect to spacebar
 - Profile manager for multiple accounts
 - Store token in system keyring
 - Experimental windowed mode with tray icon
 - Works in termux, with android notifications
+- Auto endcord and extensions check for updates
 - Lots of easter eggs
 
 
@@ -89,6 +89,7 @@ Settings, logs, state and themes location:
 - On Linux: `~/.config/endcord/` or `$XDG_DATA_HOME/endcord/`  
 - On Windows: `%USERPROFILE%/AppData/Local/endcord/`  
 - On macOS: `~/Library/Application Support/endcord/`  
+- Or run `open_config_dir` command inside endcord.
 
 Run `endcord -h` or `endcord --help` to see available command arguments.  
 
@@ -98,12 +99,12 @@ If config is not found at that path, default will be written.
 There can be missing entries in config, they will be filled with defaults.  
 
 ### Config options
-Go to [configuration](configuration.md).
+Go to [configuration](docs/configuration.md).
 
 ### Profile manager
-Profile manager is used for easier switching between multiple accounts.  
-It allows creating, editing, deleting and loading token for different accounts.  
-Each token is saved as "profile", it has custom "name" as identifier, and last date of usage is also stored.  
+Profile manager is used for login and easier switching between multiple accounts.  
+It allows logging in with standard email and password, 2fa, QR code, or to paste token.  
+Each account is saved as "profile", it has custom "name" as identifier, and last date of usage is also stored.  
 Profiles can be saved either in keyring or as plaintext json.  
 Keyring is OS managed secure storage for secrets (like passwords and tokens) - recommended.  
 Plaintext means that tokens will be saved non-encrypted in `profiles.json` file in endcord settings directory.  
@@ -113,28 +114,17 @@ Profile manager will always automatically load last used profile.
 Unless other profile is selected in manager TUI, or profile name is provided with `--profile` flag.  
 Manager can be re-opened using `--manager` flag.  
 
-### Token
-Token is used to access Discord through your account without logging-in.  
-It is required to use endcord.  
-See [FAQ](#FAQ) for more info on obtaining your Discord token.  
-After obtaining token, you can either:  
-- Provide token in profile manager - recommended,
-- Pass token to endcord as command argument: `endcord -t [YOUR_TOKEN]`.  
-Note that if you use it as argument, it might get saved in your terminal history file.  
-**Do not share your token!** Remove it form config before sharing it.  
+### Logging in
+- Email/phone number and password - credentials are used only while logging in and will never be kept in storage
+- Scan QR code - note that some terminals may fail to render QR code
+- Token - used to access Discord through your account without logging-in
+- Token as an argument: `endcord -t [YOUR_TOKEN]`, but note that it might get saved in your terminal history file  
+Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then youll have to use token method.  
+If you want to verify what is happening with credentials, look in profile_manager.py and auth.py.  
+**Do not share your token!**    
 
-### Keybinding
-Keybindings are configured in separate section in `config.ini`.  
-Key combinations are saved as integer codes, that can be generated by running `endcord -k`.  
-`Alt+Key` codes are stored as string with format: `"ALT+[KEY]"`, where `[KEY]` is integer.
-On Windows they are integers but `ALT+Key` string in keymap will still work.  
-In xterm they are also integers (not the same as on Windows) and `ALT+Key` string in keymap will still work.  
-`Ctrl+Shift+Key` combinations are not supported by most terminal emulators, but `Alt+Shift+Key` are.  
-Keybindings can also be chained like this (maximum 2 bindings in chain, separated with `-`):  
-`"25-97"` for `Ctrl+X-A` which means: press `Ctrl+X` then `A`,  
-`"ALT+120-ALT+100"` for `Alt+X-Alt+D` and so on.  
-To specify multiple keybindings for same action put them in a tuple, eg.: `(2, "25-97", "ALT+120")`.  
-Switch tab keybinding is special - `NUM` is placeholder for 1-9 number keys, eg.:`ALT+NUM` or `ALT+120-NUM`.  
+### Configuring keybindings
+Go to [keybindings](docs/keybindings.md#configuring-keybindings).
 
 ### Debug mode
 Debug mode can be enabled with `-d` flag.  
@@ -145,69 +135,8 @@ Current log can be accessed with `show_log` command or in config directory.
 
 
 ## Usage
-### Keybindings
-Navigating messages - `Arrow-Up/Down`  
-Navigating channel tree - `Ctrl+Up/Down` *  
-Open command palette - `Ctrl+/`  
-Insert newline - `Ctrl+N`  
-Scroll back to bottom - `Ctrl+H`  
-Expand selected categories and servers - `Ctrl+Space` *  
-Enter selected channel - `Ctrl+Space`  
-Reply to selected message - `Ctrl+R`  
-Edit selected message - `Ctrl+E`  
-Delete selected message - `Ctrl+D`  
-Toggle reply ping when replying - `Ctrl+P`  
-Open external editor to type message in it - `Alt+E`  
-Add reaction with assist to selected message - `Ctrl+L`  
-Show reactions details for selected message - `Alt+W`  
-Go to replied message - `Ctrl+G`  
-View user profile (selected message) - `Alt+P`  
-View channel info (selected in tree) - `Alt+I`  
-Show summaries for current channel - `Alt+S`  
-Search messages in current channel - `Ctrl+F`  
-Search gifs - `Alt+F`  
-Copy message to clipboard - `Ctrl+B` *  
-Open selected link in browser - `Ctrl+O` *  
-Download selected attachment - `Ctrl+W`  
-View selected attached media (image, gif, video, audio) - `Ctrl+V` *  
-Upload attachments - `Ctrl+U`  
-Preview selected file in upload assist or when searching gif - `Alt+V`  
-Cancel all downloads/uploads - `Ctrl+X`  
-Cancel selected attachment - `Ctrl+K`  
-Reveal one spoiler in selected messages - `Alt+T`  
-Paste text - terminal paste, usually `Ctrl+Shift+V`  
-Undo input line - `Alt+Z`  
-Redo input line - `Alt+Shift+Z`  
-Show pinned messages in current channel - `Alt+N`  
-Un/collapse channel with threads in tree - `Alt+H`  
-Join/leave selected thread in tree - `Alt+J`  
-Cycle status (online/away/DnD/invisible) - `Alt+D`  
-Open selected post in forum - `Enter`  
-Copy selected message url to clipboard - `Alt+U`  
-Copy selected channel (in tree) url to clipboard - `Alt+Shift+U`  
-Go to channel/message mentioned in selected message - `Alt+G`  
-Toggle channel tabbed (pinned) state - `Ctrl+T`  
-Switch to tab: `Alt+NUM` (`NUM`: 1-9 in number row, not numeric keypad)  
-Media player: quit - `escape`, pause - `Space`, seek - `Left/Right`, replay - `Z`  
-Cancel action, leave media viewer - `Escape`  
-Quit - `Ctrl+C`  
-\* - Rebound keybinding on some OS, see [OS specific keybindings](#os-specific-keybindings).  
-
-### Mouse controls
-Scroll up/down in all windows  
-Single click to select in all windows, in tree also: un/collapse  
-Double click in:  
-Tree - or enter channel  
-Extra window - select item  
-Member list - view member profile  
-Input line - select a word  
-Double click in chat:  
-On message time - start replying to message  
-On message reply line - go to that message  
-On username - view profile  
-On reaction - toggle that reaction  
-On URL - open media / download file / open in browser  
-On spoiler - reveal that spoiler  
+### Controls and keybindings
+Go to [keybindings](docs/keybindings.md).
 
 ### Channel Tree
 If tree object has `>` before the object name, it means it has sub-objects (its drop-down).  
@@ -237,6 +166,7 @@ Downloads are parallel. `Ctrl+X` will cancel ALL downloads and attachments, with
 
 ### Uploading
 Uploading is initiated by pressing `Ctrl+U`. Previously typed content will be cached.  
+If `native_file_dialog` is set to `True` in config, it will open system native file dialog instead.  
 Type path to file that should be uploaded and press enter. Cached content will be restored.  
 Wait until file is uploaded and then send the message. Multiple files can be added this way.  
 Path can be absolute or relative, and has autocomplete on `tab` key.  
@@ -264,7 +194,7 @@ Assist triggers are (the first character): `@username`, `@role`, `#channel`, `:e
 Press `Esc` to stop assist. Re-type trigger to start it again.  
 Navigation: `Alt+Up/Down` - Go up/down, `Alt+Enter` or `Enter` - insert selected item.  
 When inserted in input line, item will usually be shown as `<some_numbers>` - that is intended - do not alter it.  
-Stickers and emojis are sorted into packs, and will be shown as `pack name - emoji/sticker name`, and search is performed on that string.  
+Stickers and emoji are sorted into packs, and will be shown as `pack name - emoji/sticker name`, and search is performed on that string.  
 Sticker will also be added to message text and removed when sending.  
 
 ### Adding/Removing reactions
@@ -278,7 +208,7 @@ If this account reacted to the message, that reaction will have `*` prepended to
 Stop recording, close extra window, stop replying, everything else.
 
 ### Client-side commands
-Press `Ctrl+/` to switch to command mode. Command mode has its own assist but can also trigger regular assist. [Commands list](commands.md).
+Press `Ctrl+/` to switch to command mode. Command mode has its own assist but can also trigger regular assist. [Commands list](docs/commands.md).
 
 ### App commands
 App commands assist is initiated by typing `/` at the start of input line.  
@@ -301,7 +231,7 @@ Emoji names can be found [here](https://unicode.org/emoji/charts/full-emoji-list
 
 # s/ replacements with regex
 Type `s/old/new` as a message and send it to edit your last message by replacing `old` with `new`.  
-Note that this is using regex. And is very simmilar to how sed works.  
+Note that this is using regex. And is very similar to how sed works.  
 Features other than full regex support:
 - Full regex support
 - Append `/g` to repeat for all matches
@@ -334,6 +264,7 @@ If this happens, more info about what is going on can be found in log, when endc
 ### Game detection
 Game detection service is ON by default and can be disabled in config.  
 Occasionally, it will download ~10MB json file, clean it up, and save it as ~1MB file. When this happens there will be small spike in CPU usage at startup.  
+Games can be blacklisted using `game_detection_blacklist` command.  
 
 ### Theming
 Custom theme path can be provided with `-c [PATH_TO_THEME]` flag or in `config.ini`.
@@ -343,41 +274,40 @@ If theme is not found at provided path, default theme will be written to it.
 If only file name is provided, without `.ini` extension, theme will be searched in `Themes` directory, see [Configuration](#configuration) for path.  
 Default themes are assumed to be drawn on dark terminal background (preferably black).  
 
+### Vim mode
+Vim-like mode can be enabled in the config by setting `vim_mode = True`. Keybindings list can be found [here](docs/keybindings.md#vim-mode-keybindings).  
+In vim mode there are currently 2 modes: "normal" and "insert".  
+Normal mode is the default mode and allows using many "single-key" keybindings, fully disabling the input line.  
+As usual, press `i` to switch to insert mode and `Esc` to leave it. Insert mode will allow typing in input line.  
+Pressing enter in insert mode will not send the message but insert newline instead.  
+Note that original keybindings are not disabled and can be used from any mode. Any keybinding collisions are resolved in favor of vim mode bindings.  
+
 ### Media support
 Very large number of image and video formats are supported thanks to pillow and PyAV.  
-All the visual media is converted to ASCII art that can be additionally configured in [theme](configuration.md).  
+All the visual media is converted to ASCII art that can be additionally configured in [theme](docs/configuration.md#theme).  
 But there is also setting in config to open media in external app (cross-system, will use default system app for that file format).  
 "endcord-lite" (without voice calls and ASCII media support), can be built by specifying `--lite` flag to build script. Lite version is significantly smaller, cant make voice calls, but still can open media in external app.  
-
-### OS specific keybindings
-Some keybindings are used by terminals or OS itself, so they are by default rebound to something else.  
-#### Windows:  
-Expand selected categories and servers - `Ctrl+A`  
-Copy message to clipboard - `Alt+L`  
-View attached media (image, gif, video, audio) - `Alt+Y`  
-#### macOS:
-Navigating channel tree - `Shift+Up/Down`  
-Open link in browser - `Alt+O`  
 
 ### Experimental windowed mode
 This mode entirely replaces curses with pygame-ce GUI library. This means Endcord runs in its own window, not in terminal, but UI remains terminal-like.  
 Tray icon will also be enabled, so closing window will only minimize it to tray.  
 Keybinding remain the same, but all codes are like on Linux, so old keybinding codes may not work on Windows.  
-If using external editor, use some with graphical interface. TUI editors will not work, as this is no longer in terminal.  
+If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.  
+Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All meda will be opened in native player.  
 Building with nuitka on python >=3.13 will create executable that segfaults! Building with pyinstaller is not recommended because it generates huge binary.  
-You can toggle experimental mode bu running: `uv run build.py --experimental`.  
+You can toggle experimental mode by running: `python build.py --experimental`.  
 Then run endcord from source: `uv run main.py`.  
-After first run in experimental mode, extra config will be generated in endcord config path in file called `pgcurses.json`. More info in [configuration](configuration.md).
+After first run in experimental mode, extra config will be generated in endcord config path in file called `pgcurses.json`. More info in [configuration](docs/configuration.md).
 
-### Spacebar and other custom hosts
-Connecting to [Spacebar](https://github.com/spacebarchat) or any other discord-like instance can be configured in `config.ini`. Set `custom_host = ` to preferred host domain, like `old.server.spacebar.chat`. Set to `None` to use default host (`discord.com`).  
-Then endcord will try to connect to that host instead discord. Token is different on different hosts!  
-Only connecting to spacebar instances is known to work, but endcord may crash at any time. Further, each host may have different spam filters, so **use at your own risk** still applies.
+### Custom hosts
+Connecting to other discord-like instance can be configured in `config.ini` by setting `custom_host = ` to preferred host domain. Set to `None` to use default host (`discord.com`) or use `--custom-host=` command argument.  
+Ebut endcord may crash at any time. Further, each host may have different spam filters, so **use at your own risk** still applies.  
+Wether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the rish of a crash.  If endcord crashes its hosts fault. Do not report bugs related to this.
 
 ### Termux
-Endcord does work under termux, but some keybindings dont (`Ctrl/Alt+Space`). It is recommended to rebind them in endcord config or use endcord in desktop environment (like `openbox`) in a terminal emulator with xterm256-colors (like `alacritty`) and with Termux:X11 app.  
+Endcord does work under termux, but some keybindings don't (`Ctrl/Alt+Space`). It is recommended to rebind them in endcord config or use endcord in desktop environment (like `openbox`) in a terminal emulator with xterm256-colors (like `alacritty`) and with Termux:X11 app.  
 Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson`.
-To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord ntifications.  
+To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
 Notifications will work as ling as endcord is running, so it might be necessary for termux to "Acquire wakelock".  
 
 ### Extensions warning
@@ -399,63 +329,64 @@ To prevent extension injection (malware can modify endcord config and inject ext
 Optional dependencies:
 - `xclip` - Clipboard support on X11
 - `wl-clipboard` - Clipboard support on Wayland
+- `yazi` / `zenity` / `kdialog` - File dialog when uploading
 - `aspell` - Spellchecking (and `aspell-en` dictionary)
+- `git` - Install and update extensions from other sources than github
 - `yt-dlp` - youtube support
 - `mpv` - Play youtube videos in native player (non-ascii)
 - `libsecret` - Store token in system keyring (`gnome-keyring` is also required, with `dbus` as dependency)
 - `libappindicator-gtk3` - Tray support under wayland, for [experimental windowed mode](#experimental-windowed-mode) only.
 
 ### Windows
-Install [windows terminal](https://github.com/microsoft/terminal) or [cmder](https://github.com/cmderdev/cmder), or any other modern terminal.  
 - Pre-built binaries (built with nuitka using clang) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`
-Run exe from wt or cmder. In cmder settings, under "Font" check "Treat font height as device units", so font is always monospace.  
-If built with experimental windowed mode, terminal is not required to use endcord.  
-Optional dependency, for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. If it is not, please open an issue and provide the actual install path. Alongside with base aspell, dictionary must be installed, even en_US.  
-Emoji and Ctrl+key support depends on terminal.  
-To enable youtube support, download [yt-dlp](https://github.com/yt-dlp/yt-dlp) and provide its executable path in config.  
+Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with experimental windowed mode, terminal is not required to use endcord.  
+WezTerm proved to introduce the least drawing issues.  
+Cmder settings: "Mouse" > check "Send mouse events to console" and "Mark/Copy" > uncheck "Intelligent mode", and set "Main console font" and "Alternative font" to same monospace font.  
+Emoji are known to work only with  WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
+Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.  
 
 ### macOS
 - Pre-built binaries (built with nuitka using clang) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/`.  
 Optional dependency, for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). Can be installed with: `brew aspell`.  
-Never tested on macOS. Feedback is welcome.
 
 
 ## Disclaimer
 > [!WARNING]
 > Using third-party client is against Discord's Terms of Service and may cause your account to be banned!  
-> **Use endcord at your own risk!**
-> For more info see [FAQ](#FAQ).
+> **Use endcord at your own risk!**  
+> For more info see [FAQ](#FAQ).  
+
+Third party endcord forks may add features that can lead to account ban, or contain malicious code, cause instability, especially if they include LLM generated/modified code.
 
 
 ## Building
-To see all build script options, run: `uv run build.py -h`.  
+To see all build script options, run: `python build.py -h`.  
 To build endcord-lite, add `--lite` flag. No voice calls and ascii media, slightly less RAM usage, smaller executable, faster startup.  
 To build into directory, not as a single executable, add `--onedir` flag. Will speed up startup.  
-To build with Nuitka, add `--nuitka` flag. Optimized, smaller executable, long compile time. See [Nuitka](#nuitka) for more info.  
+To build with Nuitka, add `--nuitka` flag. More optimized, smaller executable, long compile time. See [Nuitka](#nuitka) for more info.  
 If compiler is not available, or built binary is failing, try building with `--nocython`, which will produce slightly less optimized binaries.  
-To toggle [experimental windowed mode](#experimental-windowed-mode) run: `uv run build.py --toggle-experimental`.  
-If you want to build without `orjson` (uses rust), run `uv remove orjson` for the first time, before running anything else. This will make it fallback to standard json (more CPU usage by game detection). Optionally it can use `ujson`, run `uv add ujson` to install it.  
+To toggle [experimental windowed mode](#experimental-windowed-mode) run: `python build.py --toggle-experimental`.  
 
 ### Linux
 1. Clone this repository: `git clone https://github.com/sparklost/endcord.git`
 2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 3. `cd endcord`
-4. run build script: `uv run build.py`  
+4. run build script: `python build.py`  
 
 ### Windows
-1. Install [Python](https://www.python.org/) 3.13 or later
+1. Install [Python](https://www.python.org/) 3.12 or later
 2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 3. Clone this repository, unzip it
 4. Open terminal, cd to unzipped folder
-5. run build script: `uv run build.py`
+5. run build script: `python build.py`
 
 ### macOS
-1. Install [Python](https://www.python.org/) 3.13 or later
+1. Install [Python](https://www.python.org/) 3.12 or later
 2. Clone this repository, unzip it
 3. Open terminal, cd to unzipped folder
-4. run build script: `uv run build.py`
+4. run build script: `python build.py`
 
 ### Nuitka
 To enable building with Nuitka, add `--nuitka` flag (takes a long time).  
@@ -467,12 +398,16 @@ Nuitka requirements:
 - on macOS install XCode via Apple Store
 
 ### Free-threaded Python
-Endcord does work with free-threaded python, and it significantly improves media player performance with large video resolutions, by allowing decoding, video and sound to be played in separate threads, completely removing crackling sound when playing on high "terminal resolution".  
-But currently building does not work in this mode, nuitka [doesn't support free-threaded mode](<https://github.com/Nuitka/Nuitka/issues/3062>) yet.  
-Anyway, to run it from source:  
-First install python with uv: `uv python install 3.14t`, it must be >= 3.14t (because some libraries dont have free-threaded support for < 3.14).  
-Install dependencies: `uv sync --python 3.14t --group media`  
-Run main.py: `uv run --python 3.14t main.py`  
+Endcord does work with free-threaded python (3.14 only), and it significantly improves media player performance with large video resolutions, by allowing decoding, video and sound playing to be run in separate CPU threads, completely removing crackling sound when playing on high "terminal resolution".  
+This comes at the cost of much larger binary, increased CPU and RAM usage.  
+Currently nuitka [doesn't support free-threaded mode](<https://github.com/Nuitka/Nuitka/issues/3062>) yet. Pyinstaller (without `--nutka` flag) does build it successfully.  
+To make it use freethreaded python run `python build.py` (not `uv`!) with `--freethreaded` arument.  
+
+### Building without orjson
+If you want to build without `orjson` (uses rust), run `uv remove orjson` for the first time, before running anything else.  
+This will make it fallback to standard json (more CPU usage by game detection).  
+Optionally it can use `ujson`, run `uv add ujson` to install it.  
+Then force build.py to skip auto-python setup: `uv run -p 3.13 build.py`, and add other preferred arguments after build.py.  
 
 
 ## FAQ
@@ -489,15 +424,16 @@ Run main.py: `uv run --python 3.14t main.py`
 Endcord does its best to avoid causing any suspicious activity, so using it as-is is pretty much enough, but most important steps are:
 - Do not use endcord to perform any out-of-ordinary actions (i.e. self-bots). Third party clients can sometimes trip anti-spam heuristic algorithm for catching self-bots.
 - Do not use endcord at the same time with the client from which you coped token from, it might be it suspicios to have 2 clients using same token at the same time.
+- Do not use same token across different third party clients.
+- Do not use `--token` flag, endcord automatically refreshes token stored with profile manager, so there is no need to update it manually.
 - Increase `limit_channel_cache` in config - so REST API is not called on every channel switch. This will also slightly increase RAM and CPU usage.
 - `anonymous` mode in `client_properties` setting might be more risky than `default` mode.
+- If endcord hasnt been updated in a while, set `custom_user_agent` to the one found in API requests in official Discord client.
 - Do not set invalid `custom_user_agent` setting, and try to match it with your OS.
-- If endcord hasnt been updated in a while, set `custom_user_agent` to the one found in API requests in offiial Discord client.
-- Endcord automatically refreshes token stored in keyring or plaintext, so there is no need to update it manually unless token is revoked.
+- Do not use public proxy, like VPN or TOR.
 Less important steps is to decrease REST API calls, which might have little to no effect:
 - Discord REST API is called (most notably) each time client is started, when channel is changed, app command is sent and message is seen or sent. It would be best to not abuse these actions in order to reduce REST API calls.
 - Do not leave endcord on busy channels running in background.
-- Do not repeatedly view user profiles.
 - Sending ack (when channel is marked as seen) is throttled by endcord to 5s (configurable).
 - Disable `rpc_external` in config - it calls REST API for fetching external resources for Rich Presence, but it shouldn't be critical.
 - Disable `send_typing` in config - it calls REST API every 7s when typing, but it shouldn't be critical.
@@ -509,6 +445,9 @@ If you did something particular with endcord that caused the ban, open an issue 
 ### Debug files
 Anonymized data that might help in debugging is saved in `Debug` directory, see [Configuration](#configuration) for path.  
 All channel and server names, topics, descriptions are replaced. All channel and server IDs are added to random number and hashed, so they are irreversible changed, and will be different on each run.
+
+### Note on Python performance misconceptions
+Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka). And all CPU-critical components are implemented in Cython. Python was chosen because it enables rapid development.
 
 ### Some role colors are wrong
 This is an [issue](https://github.com/python/cpython/issues/119138) with cpython ncurses API. It is ignoring color pairs with ID larger than 255. This means only 255 color pairs can actually be used. Only role colors can reach this limit, because they are initialized last.
@@ -540,15 +479,16 @@ This happens with `Alt+Key` keybindings, but may happen with other modifiers too
 But this also means that it can be added to keybinding config, instead byte, provide character itself eg.: `β` or `ALT+β`.  
 See [keybinding](#keybinding) for instructions on how to add multiple keybindings for same action.
 
-### If some keybindings still dont work
+### If some keybindings still don't work
 Its probably terminal emulator sending different key codes than those in default settings. Check this by running endcord with `-k` or `--keybinding` to start keybinding resolver.  
 Then press key combination and see printed code. Put this code in settings to use it.  
 This mostly happens with `Ctrl+Arrow` and `Alt+Arrow` combinations, on some non-standard terminal emulators like kitty or cmder.
 
-### No colors in headless Linux tty
+### Running in tty
 If there are no colors in Linux tty (but there should be), endcord can run inside [fbterm](https://salsa.debian.org/debian/fbterm).  
 Follow [fbterm setup instructions](https://wiki.archlinux.org/title/Fbterm#Installation), then set environment variable: `export TERM=fbterm` and run endcord.  
-Note: keybinding `Ctrl+Up/Down/Left/Right` does not work in tty.  
+Some characters may fail to render so set `emoji_as_text = True` in config and `compact = True` in theme. Some theme characters should also be tweaked.  
+Note: keybinding `Ctrl+Up/Down/Left/Right` does not work in tty, either rebind them or add custom keymap, or in `/etc/vconsole.conf`.  
 
 ### Adding desktop launcher on Linux
 Simply make launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.
@@ -566,12 +506,16 @@ So to run endcord, either allow it in anti-virus/windows-defender or run it from
 Open an issue in [issue tracker](https://github.com/sparklost/endcord/issues).  
 Or, if you don't have a github account, want more interactive support, to share a theme or have a question: [Endcord Discord Server](https://discord.gg/judQSxw5K2).
 
+### Creating and maintaining package for Linux distribution
+As endcord build script requires network access in order to install dependencies, it is impossible to use it to build endcord binaries for many distributions/repositories.  
+If thats the case, custom build script must be made, guidelines and commands for writing such are available in [contributing.md](.github/CONTRIBUTING.md#build-steps-for-package-maintainers).  
+After submitting a package to distributions package repository, open an issue here, so I can review it and add it to readme after it gets accepted.
 
 ## Planned features
 Go to [TODO](todo.txt).
 
 ### Features that will not be added
 Following features have significant risk of triggering discords spam filter, and may cause account to be limited or even banned:  
-Sending friend request, opening new DM, creating new thread, scriptable command macros, anything payment related.  
+Sending friend request, opening new DM, creating new thread, editing profile, anything payment related.  
 
 Therefore, they will NOT be implemented in endcord.  

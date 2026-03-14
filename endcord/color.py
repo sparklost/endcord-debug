@@ -1,5 +1,6 @@
 import curses
 import importlib.util
+import sys
 
 from endcord import xterm256
 
@@ -50,9 +51,10 @@ def convert_role_colors(all_roles, guild_id=None, role_id=None, default=-1):
                 continue
             color = role["color"]
             if color == 0:
-                color = default
-            rgb = int_to_rgb(color)
-            ansi = closest_color(rgb)[0]
+                ansi = default
+            else:
+                rgb = int_to_rgb(color)
+                ansi = closest_color(rgb)[0]
             role["color"] = ansi
             if role_id:
                 break
@@ -102,19 +104,21 @@ def check_color_formatted(color_format):
 
 def extract_colors(config):
     """Extract simple colors from config if any value is None, default is used"""
-    return (
+    return (   # DO NOT CHANGE ORDER
         check_color(config["color_default"]),
         check_color(config["color_chat_mention"]),
         check_color(config["color_chat_blocked"]),
         check_color(config["color_chat_deleted"]),
+        check_color(config["color_chat_pending"]),
         check_color(config["color_chat_separator"]),
         check_color(config["color_chat_code"]),
+        check_color(config["color_chat_standout"]),
     )
 
 
 def extract_colors_formatted(config):
     """Extract complex formatted colors from config"""
-    return (
+    return (   # DO NOT CHANGE ORDER
         check_color_formatted(config["color_format_message"]),
         check_color_formatted(config["color_format_newline"]),
         check_color_formatted(config["color_format_reply"]),
@@ -127,21 +131,44 @@ def extract_colors_formatted(config):
     )
 
 
-def color_palette(screen):
+def color_palette_internal(screen):
     """Show all available colors and their codes, wait for input, then exit"""
     curses.use_default_colors()
-    for i in range(0, curses.COLORS):
-        curses.init_pair(i, i, -1)
-    screen.addstr(1, 1, "Press any key to close")
-    h, w = screen.getmaxyx()
-    x = 1
-    y = 2
-    for i in range(0, curses.COLORS):
-        screen.addstr(y, x, str(i), curses.color_pair(i))
-        x += 5
-        if x + 3 > w:
-            y += 1
-            x = 1
-        if y >= h:
+    curses.curs_set(0)
+    draw_bg = False
+    while True:
+
+        # drawing
+        for i in range(0, curses.COLORS):
+            if draw_bg:
+                curses.init_pair(i, 232, i)
+            else:
+                curses.init_pair(i, i, -1)
+        screen.addstr(1, 1, "Press Space to toggle fg/bg, any other key to close")
+        h, w = screen.getmaxyx()
+        x = 1
+        y = 3
+        for i in range(0, curses.COLORS):
+            screen.addstr(y, x, str(i) + " " * (3 - len(str(i))), curses.color_pair(i))
+            x += 5
+            if x + 3 > w:
+                y += 1
+                x = 1
+            if y >= h:
+                break
+
+        # ckeck key
+        key_code = screen.getch()
+        if key_code == 32:   # space
+            draw_bg = not draw_bg
+        else:
             break
-    screen.getch()
+
+
+def color_palette():
+    """Show all available colors and their codes, wait for input, then exit"""
+    try:
+        curses.wrapper(color_palette_internal)
+    except curses.error as e:
+        if str(e) != "endwin() returned ERR":
+            sys.exit("Curses error")

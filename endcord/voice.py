@@ -39,6 +39,17 @@ CODECS = [
 rtp_unpacker = struct.Struct(">xxHII")
 
 
+def strip_rtp_extension(payload):
+    """Remove rtp extension from opus payload"""
+    if len(payload) < 4:
+        return payload
+    profile = int.from_bytes(payload[0:2], "big")
+    if profile == 0xBEDE:
+        length = int.from_bytes(payload[2:4], "big") * 4
+        return payload[4 + length:]
+    return payload
+
+
 # get speaker
 if have_soundcard:
     try:
@@ -120,7 +131,7 @@ class Gateway():
             self.client_port = struct.unpack_from(">H", data, 72)[0]
             logger.debug("Rceived IP discovery packet")
         except socket.timeout:
-            logger.error(f"Failed to receive IP discovery: timeout after {UDP_TIMEOUT}s")
+            logger.error(f"Failed to receive IP discovery: timeout after {UDP_TIMEOUT} s")
             self.disconnect()
 
 
@@ -286,7 +297,7 @@ class Gateway():
 
     def send_heartbeat(self):
         """Send heartbeat to voice gateway, will stop if response is not received, should be run in a thread"""
-        logger.info(f"Heartbeater started, interval={self.heartbeat_interval/1000}s")
+        logger.info(f"Heartbeater started, interval={self.heartbeat_interval/1000} s")
         self.heartbeat_received = True
         # wait for ready event for some time
         sleep_time = 0
@@ -498,7 +509,6 @@ class VoiceHandler:
             counter = data[-4:]
             ciphertext = data[cutoff:-4]
 
-
             if 200 <= data[1] <= 204:   # RTCP
                 pass
 
@@ -508,11 +518,15 @@ class VoiceHandler:
                     if self.mode == "aead_aes256_gcm_rtpsize":
                         nonce = bytearray(12)
                         nonce[:4] = counter
-                        payload = nacl.bindings.crypto_aead_aes256gcm_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)[8:]
+                        payload = nacl.bindings.crypto_aead_aes256gcm_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
                     elif self.mode == "aead_xchacha20_poly1305_rtpsize":
                         nonce = bytearray(24)
                         nonce[:4] = counter
-                        payload = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)[8:]
+                        payload = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
+                    else:
+                        logger.error(f"Unknown mode: {self.mode}")
+                        continue
+                    payload = strip_rtp_extension(payload)
                 except Exception as e:
                     logger.error(f"Decryption failed for mode: {self.mode}. Error: {e}")
                     continue
@@ -525,6 +539,7 @@ class VoiceHandler:
                         self.audio_queue.put(frame)
                 except Exception as e:
                     logger.error(f"PyAV opus decoding failed. Error: {e}")
+
         self.gateway.disconnect()
 
 

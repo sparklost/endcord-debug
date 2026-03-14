@@ -26,12 +26,21 @@ So, before even thinking about putting it through a LLM, open an issue and save 
 2. Run main.py: `uv run main.py`
 
 
+## Architecture
+Endcord is developed in "Modular composition and component-based architecture using singleton services with a central orchestrator".
+Explanation:
+- Modular component-based - program is split into independent modules (classes in separate files), each responsible for a specific thing.
+- Composition - main app class contains and uses instances of other classes instead of inheriting from them.
+- Singleton services - for each class only one instance is used.
+- Central orchestrator - Main app class is controller that: creates all instances, wires them together, does core logic.
+
 ## Useful debugging things
 
 ### Debug points in the code
 - `debug_events` - save all received events from gateway
 - `debug_guilds_tree` - print all tree data in jsons
 - `255_curses_bug` - this part of the code should be changed after [ncurses bug](https://github.com/python/cpython/issues/119138) is fixed. If there is no note, just remove the code
+- `fix_member_list_selection` - properly select member list when figured out how to use `id` in `GUILD_MEMBER_LIST_UPDATE`.
 
 ### Network tab filter
 Filter for network tab in dev tools:  
@@ -162,6 +171,7 @@ user/flags - missing
 /interaction - should be removed if its `null`  
 /mentions/username - missing  
 /embeds/type - missing  
+/edited_timestamp - missing for some messages
 
 - `READY`:  
 /merged_members/id - should be /merged_members/user_id  
@@ -192,3 +202,50 @@ user/flags - missing
 
 - Misc:
 Spacebar is still using old `user_settings` instead new protobuf settings.  
+Gateway returns error code 4000 if event "update presence" (opcode 3) is sent.  
+
+
+## Build steps for package maintainers
+1. setup dependencies  
+- Any python virtual environment manager can be used that can read dependencies from pyproject.toml, here uv is used by default.  
+- Only python versions 3.12-3.13 can currently build binaries.  
+- `uv sync --all-groups` - full endcord  
+    Will install all dependencies from pyproject.toml under `dependencies`, `build`, and `media`.  
+- `uv sync --group build` - endcord-lite  
+    Will install all dependencies from pyproject.toml under `dependencies` and `build`.  
+
+2. Check if numpy without openblas is already installed, if returns 1 them it must download and build numpy  
+- Numpy build can be skipped if its impossible, but binary will be few MB larger.  
+- If building with pyinstaller skip numpy build.  
+- This command will print `1` if openblas is found in numpy, and then it has to be built locally.  
+```bash
+uv run python -c "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))"
+```
+
+3. Download and build numpy  
+- Clang is optional everywhere, but it's recommended as it provides better binary.  
+```bash
+export CC=clang
+export CXX=clang++
+uv pip install pip
+.venv/bin/python -m pip uninstall --yes numpy
+.venv/bin/python  -m pip install --no-cache-dir --no-binary=:all: numpy --config-settings=setup-args=-Dblas=None --config-settings=setup-args=-Dlapack=None
+uv pip uninstall pip
+```
+
+4. Build cython extensions  
+- Skip this step only if final binary gives error `Dynamic module does not define module export function`.
+```bash
+export CC=clang
+export CXX=clang++
+uv run python setup.py build_ext --inplace
+```
+
+5. Run patches and cleanups
+- run `patch_soundcard()` from build.py - **required!**
+- run `clean_emoji()` from build.py - will remove many non-standard emoji.
+- run `clean_qrcode()` from build.py - will reduce binary by ~100KB.
+
+6. Get and run build command
+- Build commands can be obtained by running `python build.py --print-cmd`, adding other arguments will change the printed command.  
+- Recommended: `python build.py --print-cmd --nuitka --clang`.  

@@ -1,4 +1,19 @@
-Fix new channels not added when guild has no settings
+Switch to python 3.14
+    why uses more ram ???
+    update workflow
+    try workflow on windows and macos
+Fix build tkinter error on macos
+Make cython code freethreading compatible
+
+Optimize gateway message events
+Add pfp to notifications
+    add option to disable
+    download if missing
+    load from persistent cache
+    make view_pfp search persistent cache too
+    include icon in notification "-i /path/to/img"
+    make it round ?
+Add ability to resize extra window
 
 Voice channels
     add voice channels to tree
@@ -8,14 +23,24 @@ Voice channels
     handle multiple speaking at the same time
 
 Voice calls
-    fix playing sound
+    fix opus decoding and playing audio
     start recorder thread, record, encode, encrypt, pack, send, stop when leave call, leave call on error
     pause recorder when muted
     send and receive RTCP?
     send speaking event?
 
-Optimize main loop with queues and threading
-Fix member list not updating when switching between same-guild channels
-Vim-like bindings
+after fixing https://github.com/python/cpython/issues/119138
+    Add colors for status sign in selected and active dm in tree
+    Add red fg white bg color for selected and unread in tree
+    Add red fg gray bg color for active and unread in tree
+    Show inline media in chat
+    Add bg color for mentions and channels in chat
+    Add status dot color to active and muted line in tree
+
+Add binding to toggle tree
+Fix issues with wide characters in input line
+Add option to select individual message
+Add scrollbar to chat
+Fix per-channel member list
 Video calls
 Localization

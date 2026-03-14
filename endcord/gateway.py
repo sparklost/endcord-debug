@@ -6,6 +6,7 @@ import random
 import socket
 import ssl
 import struct
+import sys
 import threading
 import time
 import traceback
@@ -44,12 +45,10 @@ status_unpacker = struct.Struct("!H")
 
 def zlib_decompress(data):
     """Decompress zlib data, if it is not zlib compressed, return data instead"""
-    buffer = bytearray()
-    buffer.extend(data)
     if len(data) < 4 or data[-4:] != ZLIB_SUFFIX:
         return data
     try:
-        return inflator.decompress(buffer)
+        return inflator.decompress(data)
     except zlib.error as e:
         logger.error(f"zlib error: {e}")
         return None
@@ -72,7 +71,7 @@ def double_get(data, key1, key2, default=None):
 class Gateway():
     """Methods for fetching and sending data to Discord gateway through websocket"""
 
-    def __init__(self, token, host, client_prop, user_agent, proxy=None):
+    def __init__(self, token, host, client_prop, user_agent, proxy=None, capablities=None):
         if host:
             host_obj = urllib.parse.urlsplit(host)
             if host_obj.netloc:
@@ -81,11 +80,19 @@ class Gateway():
                 self.host = host_obj.path
         else:
             self.host = DISCORD_HOST
+
         self.header = [
             "Connection: keep-alive, Upgrade",
             "Sec-WebSocket-Extensions: permessage-deflate",
             f"User-Agent: {user_agent}",
         ]
+        self.capabilities = None
+        if capablities is not None:
+            try:
+                self.capabilities = int(capablities)
+            except ValueError:
+                pass
+
         self.extensions = []
         self.client_prop = client_prop
         self.init_time = time.time() * 1000
@@ -222,7 +229,7 @@ class Gateway():
                 self.ws.close(status=status)
                 logger.info(f"Disconnected with status code {status}")
             except Exception as e:
-                logger.warn("Error closing websocket:", e)
+                logger.warning("Error closing websocket:", e)
             finally:
                 self.ws = None
 
@@ -257,7 +264,7 @@ class Gateway():
         except (socket.gaierror, TimeoutError):
             connection.close()
             logger.warning("No internet connection. Exiting...")
-            raise SystemExit("No internet connection. Exiting...")
+            sys.exit("No internet connection. Exiting...")
         response = connection.getresponse()
         if response.status == 200:
             data = response.read()
@@ -266,7 +273,7 @@ class Gateway():
         else:
             connection.close()
             logger.error(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
-            raise SystemExit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
+            sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
 
         self.connect_ws()
         self.state = 1
@@ -321,7 +328,7 @@ class Gateway():
         if len(self.member_roles[num]) > LOCAL_MEMBER_COUNT:
             self.member_roles[num].pop(-1)
         if not self.roles_changed:
-            self.roles_changed = nonce if nonce else True
+            self.roles_changed = nonce or True
 
 
     def process_hidden_channels(self):
@@ -349,6 +356,48 @@ class Gateway():
                                     if not channel["hidden"]:
                                         self.guilds[guild_num]["channels"][category_num]["hidden"] = False
                                         break
+
+
+    def process_one_channel_overrides(self, channel_overrides, guild_num, guild_message_notifications):
+        """Process channel_overrides for one guild"""
+
+        # first pass to get values and process message_notifications for categories
+        for channel in channel_overrides:
+            for channel_num, channel_g in enumerate(self.guilds[guild_num]["channels"]):
+                if channel_g["id"] == channel["channel_id"]:
+                    break
+            else:
+                continue
+            if channel_g["type"] in (0, 2, 4, 5, 15):
+                flags = int(channel.get("flags", 0))
+                hidden = not perms.decode_flag(flags, 12)   # manually hidden
+            else:
+                hidden = False
+            self.guilds[guild_num]["channels"][channel_num].update({
+                "message_notifications": channel["message_notifications"],
+                "muted": channel["muted"],
+                "hidden": hidden,
+                "collapsed": channel.get("collapsed", False),   # spacebar_fix - get
+            })
+
+        # second pass to process message_notifications for categories
+        for channel in self.guilds[guild_num]["channels"]:
+            if channel["type"] == 4 and ("message_notifications" not in channel or channel["message_notifications"] == 3):    # category with server defaults notifications
+                channel["message_notifications"] = 10 + guild_message_notifications
+
+        # third pass to process message_notifications for channels
+        for channel in self.guilds[guild_num]["channels"]:
+            if channel["type"] != 4 and ("message_notifications" not in channel or channel["message_notifications"] == 3):   # channel with category defaults notifications
+                category_id = channel["parent_id"]
+                for category in self.guilds[guild_num]["channels"]:
+                    if category["id"] == category_id:
+                        category_message_notifications = category["message_notifications"]
+                        if category_message_notifications >= 10:
+                            category_message_notifications -= 10
+                        break
+                else:
+                    category_message_notifications = guild_message_notifications
+                channel["message_notifications"] = 10 + category_message_notifications
 
 
     def add_guild(self, guild):
@@ -423,17 +472,19 @@ class Gateway():
             "base_permissions": base_permissions,
             "community": community,
             "premium": properties["premium_tier"],
+            "opt_in_channels": True,   # will be overwritten later if opted-out
         })
 
         # threads
         threads = []
         for thread in guild.get("threads", []):
-            if thread["member"]["flags"] == 3:
+            if "member" not in thread or thread["member"]["flags"] == 3:
                 message_notifications = 0
             elif thread["member"]["flags"] == 5:
                 message_notifications = 1
             else:
                 message_notifications = 2
+            muted = "member" in thread and thread["member"]["muted"]
             threads.append({
                 "id": thread["id"],
                 "type": thread["type"],
@@ -446,7 +497,7 @@ class Gateway():
                 "suppress_everyone": False,   # no config for threads
                 "suppress_roles": False,
                 "message_notifications": message_notifications,
-                "muted": thread["member"]["muted"],
+                "muted": muted,
                 "joined": True,
             })
         self.threads_buffer.append({
@@ -632,6 +683,7 @@ class Gateway():
                     except ValueError:
                         response = None
                         opcode = None
+                    del data
                 else:
                     response = None
                     opcode = None
@@ -695,7 +747,7 @@ class Gateway():
                                     "message_id": thread.get("last_message_id", 0),   # really last message id
                                     "channel_id": thread["id"],
                                 })
-                    time_log_string += f"    guilds - {round((time.time() - ready_time_start) * 1000, 3)}ms\n"
+                    time_log_string += f"    guilds - {round((time.time() - ready_time_start) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # DM channels
                     for dm in data["private_channels"]:
@@ -711,33 +763,29 @@ class Gateway():
                         dm.pop("last_message_id")
                     for dm in self.dms:
                         self.dms_id.append(dm["id"])
-                    time_log_string += f"    DMs - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    DMs - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # unread messages and pings
-                    read_state = []
-                    msg_ping = []
                     for channel in double_get(data, "read_state", "entries", default=[]):
                         # last_message_id in unread_state is actually last_ACKED_message_id
                         if "last_message_id" in channel and "mention_count" in channel:
-                            read_state.append((channel["id"], channel["last_message_id"]))
-                            if channel["mention_count"]:
-                                msg_ping.append(channel["id"])
-                    for channel_id, last_acked in read_state:   # add relevant data
-                        for last_message in last_messages:
-                            if last_message["channel_id"] == channel_id:
-                                last_message_id = last_message["message_id"]
-                                break
-                        else:
-                            continue
-                        unseen_channel = {
-                            "last_message_id": last_message_id,
-                            "last_acked_message_id": last_acked if last_acked else 0,   # dont allow it to be None
-                            "mentions": ["True"] if channel_id in msg_ping else [],   # message_id is unknown
-                        }
-                        if not last_message_id or int(unseen_channel["last_acked_message_id"]) < int(last_message_id):
-                            unseen_channel["last_acked_unreads_line"] = unseen_channel["last_acked_message_id"]
-                        self.read_state[channel_id] = unseen_channel
-                    time_log_string += f"    read state ({len(self.read_state)} channels) - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                            channel_id = channel["id"]
+                            last_acked = channel["last_message_id"]
+                            for last_message in last_messages:
+                                if last_message["channel_id"] == channel_id:
+                                    last_message_id = last_message["message_id"]
+                                    break
+                            else:
+                                continue
+                            unseen_channel = {
+                                "last_message_id": last_message_id,
+                                "last_acked_message_id": last_acked or 0,   # dont allow it to be None
+                                "mentions": ["True"] * channel["mention_count"] if channel["mention_count"] else [],   # message_id is unknown
+                            }
+                            if not last_message_id or int(unseen_channel["last_acked_message_id"]) < int(last_message_id):
+                                unseen_channel["last_acked_unreads_line"] = unseen_channel["last_acked_message_id"]
+                            self.read_state[channel_id] = unseen_channel
+                    time_log_string += f"    read state ({len(self.read_state)} channels) - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # guild and dm settings
                     for guild in double_get(data, "user_guild_settings", "entries", default=[]):
@@ -758,41 +806,26 @@ class Gateway():
                             # opt_in_channels means: show all guild channels - when guild is joined
                             opt_in_channels = not perms.decode_flag(guild_flags, 14) or perms.decode_flag(guild_flags, 13)
                             self.guilds[guild_num]["opt_in_channels"] = opt_in_channels
-                            for channel in guild["channel_overrides"]:
-                                found = False
-                                for channel_num, channel_g in enumerate(self.guilds[guild_num]["channels"]):
-                                    if channel_g["id"] == channel["channel_id"]:
-                                        found = True
-                                        break
-                                if found:
-                                    if channel_g["type"] in (0, 2, 4, 5, 15):
-                                        flags = int(channel.get("flags", 0))
-                                        hidden = not perms.decode_flag(flags, 12)   # manually hidden
-                                    else:
-                                        hidden = False
-                                    self.guilds[guild_num]["channels"][channel_num].update({
-                                        "message_notifications": channel["message_notifications"],
-                                        "muted": channel["muted"],
-                                        "hidden": hidden,
-                                        "collapsed": channel.get("collapsed", False),   # spacebar_fix - get
-                                    })
+                            self.process_one_channel_overrides(guild["channel_overrides"], guild_num, guild["message_notifications"])
                         else:
                             for dm in guild["channel_overrides"]:
                                 for dm_num, dm_g in enumerate(self.dms):
                                     if dm_g["id"] == dm["channel_id"]:
                                         break
+                                else:
+                                    continue
                                 self.dms[dm_num].update({
                                     "message_notifications": dm["message_notifications"],
                                     "muted": dm["muted"],
                                 })
                     self.process_hidden_channels()
                     self.guilds_changed = True
-                    time_log_string += f"    channel settings - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    channel settings - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     for user in data["relationships"]:
                         if user["type"] == 2 or user.get("user_ignored"):
                             self.blocked.append(user["id"])
-                    time_log_string += f"    blocked users - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    blocked users - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # get user settings
                     if "user_settings_proto" in data and not self.legacy:
@@ -813,7 +846,7 @@ class Gateway():
                         if old_user_settings.get("custom_status"):
                             self.user_settings_proto["status"]["customStatus"] = old_user_settings["custom_status"]
                     self.proto_changed = True
-                    time_log_string += f"    protobuf - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    protobuf - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # get my roles
                     if self.guilds:
@@ -827,15 +860,15 @@ class Gateway():
                                 "guild_id": guild_id,
                                 "roles": roles,
                             })
-                    time_log_string += f"    roles - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    roles - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # write debug data
                     if logger.getEffectiveLevel() == logging.DEBUG:
                         debug.save_json(debug.anonymize_guilds(self.guilds), "guilds.json")
                     # blocked users
-                    time_log_string += f"    debug data - {round((time.time() - ready_time_mid) * 1000, 3)}ms\n"
+                    time_log_string += f"    debug data - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     self.ready = True
-                    time_log_string += f"    total - {round((time.time() - ready_time_start) * 1000, 3)}ms"
+                    time_log_string += f"    total - {round((time.time() - ready_time_start) * 1000, 3)} ms"
                     logger.debug(time_log_string)
                     # READY is huge so lets save some memory
                     del (response, data, guild, guild_channels, role, guild_roles, last_messages, time_log_string)
@@ -997,7 +1030,7 @@ class Gateway():
                 elif optext == "MESSAGE_CREATE" and "content" in response["d"]:
                     message = response["d"]
                     # saving roles to cache
-                    if  message["channel_id"] in self.subscribed_channels and "member" in message and "roles" in message["member"]:
+                    if message["channel_id"] in self.subscribed_channels and "member" in message and "roles" in message["member"]:
                         self.add_member_roles(
                             message.get("guild_id"),
                             message["author"]["id"],
@@ -1010,6 +1043,10 @@ class Gateway():
                         "channel_id": message["channel_id"],
                         "guild_id": message.get("guild_id"),
                     })
+                    if message_done["user_id"] == self.my_id:
+                        message_done.update({
+                            "nonce": message.get("nonce"),
+                        })
                     self.messages_buffer.append({
                         "op": "MESSAGE_CREATE",
                         "d": message_done,
@@ -1179,11 +1216,12 @@ class Gateway():
 
                 elif self.want_member_list and optext == "GUILD_MEMBER_LIST_UPDATE":
                     guild_id = data["guild_id"]
+                    list_id = data["id"]
                     for guild_index, guild in enumerate(self.activities):
-                        if guild["guild_id"] == guild_id:
+                        if guild[0] == guild_id:
                             break
                     else:
-                        self.activities.append({"guild_id": guild_id, "members": []})
+                        self.activities.append([guild_id, {}])   # [guild_id, member_lists]
                         guild_index = -1
                     for memlist in data["ops"]:
                         # keeping only necessary data, because the rest can be fetched with discord.get_user_guild()
@@ -1196,22 +1234,23 @@ class Gateway():
                                 if "group" in item:
                                     members_sync.append({"group": item["group"]["id"]})
                                 else:
-                                    custom_status = None
                                     member_data = item["member"]
-                                    activities = []
-                                    for activity in member_data["presence"]["activities"]:
-                                        if activity["type"] == 4:
-                                            custom_status = activity.get("state", "")
-                                        elif activity["type"] in (0, 2):
-                                            assets = activity.get("assets", {})
-                                            activities.append({
-                                                "type": activity["type"],
-                                                "name": activity["name"],
-                                                "state": activity.get("state"),
-                                                "details": activity.get("details"),
-                                                "small_text": assets.get("small_text"),
-                                                "large_text": assets.get("large_text"),
-                                            })
+                                    ## unused for now
+                                    # custom_status = None
+                                    # activities = []
+                                    # for activity in member_data["presence"]["activities"]:
+                                    #     if activity["type"] == 4:
+                                    #         custom_status = activity.get("state", "")
+                                    #     elif activity["type"] in (0, 2):
+                                    #         assets = activity.get("assets", {})
+                                    #         activities.append({
+                                    #             "type": activity["type"],
+                                    #             "name": activity["name"],
+                                    #             "state": activity.get("state"),
+                                    #             "details": activity.get("details"),
+                                    #             "small_text": assets.get("small_text"),
+                                    #             "large_text": assets.get("large_text"),
+                                    #         })
                                     members_sync.append({
                                         "id": member_data["user"]["id"],
                                         "username": member_data["user"]["username"],
@@ -1219,26 +1258,27 @@ class Gateway():
                                         "nick": member_data["nick"],
                                         "roles": member_data["roles"],
                                         "status": member_data["presence"]["status"],
-                                        "custom_status": custom_status,
-                                        "activities": activities,
+                                        # "custom_status": custom_status,
+                                        # "activities": activities,
                                     })
-                            self.activities[guild_index]["members"] = members_sync
-                            self.activities[guild_index]["last_index"] = 0
+                            self.activities[guild_index][1][list_id] = [0, members_sync]
                             self.activities_changed.append(guild_id)
                         elif memlist["op"] == "DELETE":
                             try:
-                                del self.activities[guild_index]["members"][memlist["index"]]
-                            except IndexError:
+                                del self.activities[guild_index][1][list_id][1][memlist["index"]]
+                            except (IndexError, NameError):
                                 pass
                         elif memlist["op"] in ("UPDATE", "INSERT"):
                             custom_status = None
+                            if list_id not in self.activities[guild_index][1]:
+                                self.activities[guild_index][1][list_id] = [0, []]   # [last_index, members]
                             if "group" in memlist["item"]:
                                 # group can only be inserted
-                                self.activities[guild_index]["members"].insert(memlist["index"], {"group": memlist["item"]["group"]["id"]})
-                                if len(self.activities[guild_index]["members"]) > 100:
-                                    self.activities[guild_index]["members"].pop(-1)
+                                self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": memlist["item"]["group"]["id"]})
+                                if len(self.activities[guild_index][1][list_id][1]) > 100:
+                                    self.activities[guild_index][1][list_id][1].pop(-1)
                                 self.activities_changed.append(guild_id)
-                                self.activities[guild_index]["last_index"] = int(memlist["index"])
+                                self.activities[guild_index][1][list_id][0] = int(memlist["index"])
                                 continue
                             member_data = memlist["item"]["member"]
                             activities = []
@@ -1263,24 +1303,24 @@ class Gateway():
                                 "nick": member_data["nick"],
                                 "roles": member_data["roles"],
                                 "status": member_data["presence"]["status"],
-                                "custom_status": custom_status,
-                                "activities": activities,
+                                # "custom_status": custom_status,
+                                # "activities": activities,
                             }
                             if memlist["op"] == "UPDATE":
                                 try:
-                                    if self.activities[guild_index]["members"][memlist["index"]].get("id") == member_id:
-                                        self.activities[guild_index]["members"][memlist["index"]].update(ready_data)
+                                    if self.activities[guild_index][1][list_id][1][memlist["index"]].get("id") == member_id:
+                                        self.activities[guild_index][1][list_id][1][memlist["index"]].update(ready_data)
                                     else:   # failsafe
-                                        for num, member in enumerate(self.activities[guild_index]["members"]):
+                                        for num, member in enumerate(self.activities[guild_index][1][list_id][1]):
                                             if member.get("id") == member_id:
-                                                self.activities[guild_index]["members"][num].update(ready_data)
+                                                self.activities[guild_index][1][list_id][1][num].update(ready_data)
                                 except IndexError:
                                     pass
                             else:   # INSERT
-                                self.activities[guild_index]["members"].insert(memlist["index"], ready_data)
-                                if len(self.activities[guild_index]["members"]) > 100:   # lets have some limits
-                                    self.activities[guild_index]["members"].pop(-1)
-                            self.activities[guild_index]["last_index"] = int(memlist["index"])
+                                self.activities[guild_index][1][list_id][1].insert(memlist["index"], ready_data)
+                                if len(self.activities[guild_index][1][list_id][1]) > 100:   # lets have some limits
+                                    self.activities[guild_index][1][list_id][1].pop(-1)
+                            self.activities[guild_index][1][list_id][0] = int(memlist["index"])
                         self.activities_changed.append(guild_id)
 
                 elif optext == "USER_SETTINGS_PROTO_UPDATE":
@@ -1291,7 +1331,6 @@ class Gateway():
                     self.proto_changed = True
 
                 elif optext == "USER_GUILD_SETTINGS_UPDATE":
-
                     if data["guild_id"]:   # guild and channel
                         for guild_num_search, guild_g in enumerate(self.guilds):
                             if guild_g["guild_id"] == data["guild_id"]:
@@ -1316,24 +1355,14 @@ class Gateway():
                         # reset all to defaults
                         for channel_num, channel in enumerate(self.guilds[guild_num]["channels"]):
                             if channel["type"] in (0, 2, 4, 5, 15):
-                                hidden = True   # hidden by default
+                                flags = int(channel.get("flags", 0))
+                                hidden = not perms.decode_flag(flags, 12)   # manually hidden
                             else:
                                 hidden = False
                             self.guilds[guild_num]["channels"][channel_num]["hidden"] = hidden
                             self.guilds[guild_num]["channels"][channel_num]["muted"] = False
-                        for channel in data["channel_overrides"]:
-                            for channel_num, channel_g in enumerate(self.guilds[guild_num]["channels"]):
-                                if channel_g["id"] == channel["channel_id"]:
-                                    break
-                            else:
-                                continue
-                            flags = int(channel.get("flags", 0))
-                            hidden = not perms.decode_flag(flags, 12)
-                            self.guilds[guild_num]["channels"][channel_num].update({
-                                "message_notifications": channel["message_notifications"],
-                                "muted": channel["muted"],
-                                "hidden": hidden,
-                            })
+                            self.guilds[guild_num]["channels"][channel_num]["message_notifications"] = 3
+                        self.process_one_channel_overrides(data["channel_overrides"], guild_num, data["message_notifications"])
                         self.process_hidden_channels()
                     else:   # dm
                         for dm_g in self.dms:
@@ -1520,9 +1549,13 @@ class Gateway():
                 elif optext in ("GUILD_CREATE", "GUILD_UPDATE", "GUILD_DELETE"):
                     guild_id = data["id"]
                     if optext == "GUILD_CREATE":
+                        have_it = False
                         for guild in self.guilds:
                             if guild["guild_id"] == guild_id:
-                                continue
+                                have_it = True
+                                break
+                        if have_it:
+                            continue
                         self.add_guild(data)
                         # add my roles
                         for member in data.get("members", []):
@@ -1595,7 +1628,7 @@ class Gateway():
                                 # update default role
                                 if role["id"] == guild_id:
                                     for num_g, guild in enumerate(self.guilds):
-                                        if guild["guild_id"] == num_guild:
+                                        if guild["guild_id"] == guild_id:
                                             self.guilds[num_g]["permissions"] = role["permissions"]
                                             break
                                 if not self.user_update:
@@ -1631,7 +1664,7 @@ class Gateway():
 
     def send_heartbeat(self):
         """Send heartbeat to gateway, if response is not received, triggers reconnect, should be run in a thread"""
-        logger.debug(f"Heartbeater started, interval={self.heartbeat_interval/1000}s")
+        logger.debug(f"Heartbeater started, interval={self.heartbeat_interval/1000} s")
         self.heartbeat_running = True
         self.heartbeat_received = True
         # wait for ready event for some time
@@ -1639,7 +1672,7 @@ class Gateway():
         while not self.ready:
             if sleep_time >= self.heartbeat_interval / 100:
                 logger.error("Ready event could not be processed in time, probably because of too many servers. Exiting...")
-                raise SystemExit("Ready event could not be processed in time, probably because of too many servers. Exiting...")
+                sys.exit("Ready event could not be processed in time, probably because of too many servers. Exiting...")
             time.sleep(0.5)
             sleep_time += 5
         heartbeat_interval_rand = int(self.heartbeat_interval * (0.8 - 0.6 * random.random()) / 1000)
@@ -1691,7 +1724,7 @@ class Gateway():
             "op": 2,
             "d": {
                 "token": self.token,
-                "capabilities": DEFAULT_CAPABILITIES,
+                "capabilities": self.capabilities or DEFAULT_CAPABILITIES,
                 "properties": self.client_prop,
                 "presence": {
                     "activities": [],
@@ -1703,7 +1736,7 @@ class Gateway():
         }
         if self.token.startswith("Bot"):
             payload["d"].pop("capabilities")
-            payload["d"]["intents"] = DEFAULT_INTENTS
+            payload["d"]["intents"] = self.capabilities or DEFAULT_INTENTS
         self.send(payload)
 
 
@@ -1787,8 +1820,11 @@ class Gateway():
         return self.state
 
 
-    def update_presence(self, status, custom_status=None, custom_status_emoji=None, activities=None):
+    def update_presence(self, status, custom_status=None, custom_status_emoji=None, activities=None, afk=False):
         """Update client status. Statuses: 'online', 'idle', 'dnd', 'invisible', 'offline'"""
+        if self.legacy:
+            return   # spacebar_fix - gateway returns error if this event is sent
+
         all_activities = []
         if custom_status:
             all_activities.append({
@@ -1801,11 +1837,12 @@ class Gateway():
         if activities:
             for activity in activities:
                 all_activities.append(activity)
+
         payload = {
             "op": 3,
             "d": {
                 "status": status,
-                "afk": "false",
+                "afk": afk,
                 "since": 0,
                 "activities": all_activities,
             },
@@ -2045,7 +2082,6 @@ class Gateway():
         0 - all messages
         1 - only mentions
         2 - nothing
-        3 - category defaults
         """
         if self.guilds_changed:
             self.guilds_changed = False
@@ -2226,7 +2262,7 @@ class Gateway():
 
     def get_messages(self):
         """
-        Get message CREATE, EDIT, DELETE and ACK events for every guild and channel.
+        Get message CREATE, UPDATE, DELETE and ACK events for every guild and channel.
         Returns 1 by 1 event as an update for list of messages.
         """
         if len(self.messages_buffer) == 0:

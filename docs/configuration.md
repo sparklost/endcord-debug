@@ -10,8 +10,8 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Enable RPC server.
 - `game_detection = True`  
     Enable game detection service.
-- `downloads_path = None`  
-    Directory where to store downloaded files. Set to None to use 'Downloads' directory (cross platform).
+- `vim_mode = False`  
+    Enable vim-like mode.
 - `limit_chat_buffer = 100`  
     Number of messages kept in chat buffer. Initial buffer is 50 messages and is expanded in scroll direction. Limit: 50-1000. Larger value will cause longer chat updates.  
 - `limit_channel_cache = 5`  
@@ -34,22 +34,28 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Delay in seconds between each ack send. Minimum is 3s. The larger it is, the longer will `[New unreads]` stay in status line.
 - `member_list = True`  
     Whether to download member activities. Disable for lower CPU, RAM and network usage. If disabled, member list will be empty and there will be no presences in profile view screen.
-- `member_list_auto_open = True`  
-    Automatically opem member list on startup and on channel switch to different guild, if enough space.
+- `member_list_auto_open = False`  
+    Automatically opem member list on startup and on channel switch to different guild, if enough space. Will disable persisting member list state between sessions.  
 - `use_nick_when_avail = True`  
     Replace global_name with nick when it is available.
 - `remember_state = True`  
-    Remember last open channel on exit and reopen it on start.
+    Remember previous state across session. This include: last opened channel, tree layout, muted state, folder names, tabs, games blacklist.
+- `remember_tabs = True`  
+    Remember tabbed channels across sessions. Only if `remember_state` is True.
 - `reply_mention = True`  
     Ping someone by default when replying.
 - `cache_typed = True`  
     Save unsent message when switching channel, and load it when re-opening that channel.
+- `show_pending_messages = True`  
+    Show pending messages in chat with `color_chat_pending` until they are sent. Disable to save some CPU usage when sending messages.  
 - `assist = True`  
   Assist when typing @username, @role, #channel, :emoji:, ::sticker::
 - `cursor_on_time = 0.7`  
     Time in seconds the cursor stays ON. Set to None or 0 to disable cursor blinking.
 - `cursor_off_time = 0.5`  
     Time in seconds the cursor stays OFF. Set to None or 0 to disable cursor blinking.
+- `tab_spaces = 4`  
+    How many spaces are inserted when pressing tab button or loading tab character from external editor.
 - `blocked_mode = 1`  
     What to do with blocked/ignored messages:  
     0 - No blocking  
@@ -58,7 +64,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `hide_spam = True`  
     Whether to hide or show spam DM request channels in DM list.
 - `keep_deleted = False`  
-    Whether to keep deleted messages in chat, with different color, or remove them.
+    Whether to keep deleted messages in the chat, with different color, or remove them.
 - `limit_cache_deleted = 30`  
     Limit number of cached deleted messages per channel.
 - `tree_show_folders = True`  
@@ -90,7 +96,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     More info [here](http://aspell.net/man-html/Notes-on-the-Different-Suggestion-Modes.html#Notes-on-the-Different-Suggestion-Modes).  
 - `aspell_lang = "en_US"`  
     Language dictionary for aspell.  
-    To list all installed languages, run `aspell dump dicts`.
+    To list all installed languages, run `aspell dump dicts`.  
     Additional dictionaries can be installed with package manager or downloaded [here](https://ftp.gnu.org/gnu/aspell/dict/0index.html) (extract archive and run "configure" script).  
 - `media_mute = False`  
     Whether to mute video in media player or not. If true, will not initialize audio at all.
@@ -100,8 +106,13 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Whether to use external resources for Rich Presence (like custom pictures).
 - `emoji_as_text = False`  
     Will convert emoji characters to their names. Enable if emoji are not supported by terminal.
+- `message_spacing = True`  
+    Will add one line space between messages not belonging to same user.
 - `native_media_player = False`  
     Use system native media player instead in-terminal ASCII art.
+- `native_file_dialog = "Auto"`  
+    Use system native file dialog when uploading files.  
+    Available options: `True` - use system native file picker, `False` - use internal file picker, `"Auto"` - use yazi if available, fallback to system native.
 - `save_sumamries = True`  
     Whether to save summaries to disk. Disable to save RAM and reduce disk writes.
 - `default_stickers = True`  
@@ -117,8 +128,12 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Cutoff for assist match score. Lower value will result in more results.
 - `limit_command_history = 50`  
     Maximum number of commands stored in history. File is `command_history.json` in config dir.
+- `game_detection_download_delay = 7`  
+    How often detectable games list will be checked for updates. Value is in days. Set to 0 to check on each run.
 - `external_editor = None`  
     Command or path to executable for launching external editor. Set to `None` to use system default.
+- `calls = True`  
+    If disabled, wont be able to receive nor start calls and calls wont ring.
 - `linux_notification_sound = "message"`  
     Sound played when notification is displayed. Linux only. Set to None to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension.
 - `custom_notification_sound = None`  
@@ -131,6 +146,14 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Sound played when there is outgoing call. Linux only. Set to None to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension.
 - `custom_ringtone_outgoing = None`  
     Path to audio file played when there is outgoing call. Set to `None` to disable. The file will be played in loop.
+- `custom_media_player = None`  
+    Custom script, command, or path to executable that will be used to play media. File path will be passed as first argument. Do not use custom arguments, instead write bash wrapper script that will pass file to specific command. If paired with `custom_media_hint`, the script can be made to decide between multiple media player based on media type.
+- `custom_media_blacklist = None`  
+    List of media types to be ignored for custom media player and will be played in endcord builtin or with native media player. Available options: `"img"`, `"gif"`, `"video"`, `"audio"`, `"URL"`, `"YT"`. Example to allow only images and gifs: `["img", "gif"]`.
+- `custom_media_terminal = False`  
+    If custom media player is supposed to be opened in terminal, set this to `True`, so endcord drawing will be "paused" while media is playing.
+- `custom_media_hint = False`  
+    Whether to pass media type (same as in `custom_media_blacklist`) to the `custom_media_player` command as a second argument, after file path. This is useful for custom scripts.
 - `yt_dlp_path = "yt-dlp"`  
     Path to [yt-dlp](https://github.com/yt-dlp/yt-dlp) executable or command. Used for playing youtube videos.
 - `yt_dlp_format = 18`  
@@ -139,6 +162,15 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Path to [mpv](https://mpv.io/) executable or command. Used for playing youtube videos without ascii art.
 - `yt_in_mpv = False`  
     Whether to open youtube links in mpv or in browser.  
+- `check_for_updates = 1`  
+    Wether to check for endcord and all extensions updates.
+    0 - Do not check  
+    1 - Show popup if there are updates  
+    2 - Show popup and send desktop notification  
+    3 - Only check endcord, and don't send desktop notification
+    4 - Only check endcord, and send desktop notification
+- `check_update_interval = 1`  
+    How often to check for endcord and extensions updates, in days.
 -  `client_properties = "default"`  
     Client properties are used by discord in spam detection system. They contain various system information like operating system and browser user agent. There are 2 options available: `"default"` and `"anonymous"`.  
     - `"default"` - Approximately what official desktop client sends. Includes: OS version, architecture, Linux window manager, locale.  
@@ -146,7 +178,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `custom_user_agent = None`  
     Custom [user agent string](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/User-Agent) for `client_properties`.  
     Default user agent is Firefox for `"anonymous"` and discord desktop client for `default` client properties.  
-    User agent should not be changed unless the [default ones](https://github.com/sparklost/endcord/blob/main/endcord/app.py) are very outdated.  
+    User agent should not be changed unless the [default ones](https://github.com/sparklost/endcord/blob/main/endcord/client_properties.py) are very outdated.  
     Setting wrong user agent can make you more suspicious to discord spam filter! Make sure user agent string matches your OS.  
 - `send_x_super_properties = True`  
     Enable sending X-Super-Properties header containing system information. May reduce risk suspicion of client. Disabling this may solve message sending issues ("reurned error code 400" in log).  
@@ -157,7 +189,11 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Voice and video calls will only work with socks5 proxy and it must support UDP ASSOCIATE.  
 - `custom_host = None`  
     Custom host to connect to, like `old.server.spacebar.chat`. Set to None to use default host (`discord.com`)
-- `"easter_eggs = True`  
+- `capbilities = None`  
+    DO NOT CHANGE, unless you know what you're doing. This might cause some features to not work or client to get unstable.  
+    If bot token is used, then this will be used as `intents` parameter instead. See [discord bot documentation](https://discord.com/developers/docs/events/gateway#gateway-intents).  
+    Default capabilities: `30717`, default intents: `50364033`.  
+- `easter_eggs = True`  
     In case some easter egg is annoying.
 - `debug = False`  
     Enable debug mode.
@@ -185,9 +221,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Formatting for single reaction string. Reactions string is assembled by joining these strings with `reactions_separator` in between. See [format_one_reaction](#format_one_reaction) for more info.
 - `format_timestamp = "%H:%M"`  
     Format for timestamps in messages. Same as [datetime format codes](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes)
-- `format_status_line_l = " %global_name (%username) - %status  %unreads %action %typing"`  
+- `format_status_line_l = " %global_name (%username) - %status %afk %unreads %action %typing"`  
     Formatting for left side of status line. See [format_status](#format_status) for more info. Set to None to disable.
-- `format_status_line_r = "%slowmode"`  
+- `format_status_line_r = "%vim_mode %slowmode"`  
     Formatting for right side of status line. See [format_status](#format_status) for more info.
 - `format_title_line_l = " %server: %channel"`  
     Formatting for left side of title line. See [format_status](#format_status) for more info. Set to None to disable.
@@ -208,7 +244,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `format_search_message = "%channel: [%date] <%global_name> | %content"`  
     Formatting for message line in extra window when searching. See [format_search_message](#format_search_message) for more info.
 - `edited_string = "(edited)"`  
-    A string added to the end of the message when it is edited.
+    A string that replaces `%edited` in the message format when the message is edited.
+ - `app_string = "- (%app)"`  
+    A string that replaces `%app` in the message format when the message is sent from app or webhook.
 - `quote_character = "║"`  
     A character that is prepended to each line of single or multiline quote.
 - `reactions_separator = "; "`  
@@ -229,12 +267,12 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Limit to the thread name string length.
 - `limit_thread_name = 0`  
     Limit to `%username`, `%global_name`, `%server` and `%channel` length in `format_prompt`.
-- `limit_tabs_string = 40`  
+- `limit_tab_len = 10`  
+    Limit to individual tab length.
+- `limit_tabs_string = 60`  
     Limit to `%tabs` length in `format_status`.
-- `tree_vert_line = "│"`  
-    A single character used to draw vertical line separating channel tree and the chat.
 - `tree_drop_down_vline = "│"`  
-    A single character used to draw vertical line in tree drop down menus.
+    A single character used to draw vertical line in tree drop down menus. Also used to draw vertical line separating channel tree and the chat in compact mode.
 - `tree_drop_down_hline = "─"`  
     A single character used to draw horizontal line in tree drop down menus.
 - `tree_drop_down_intersect = "├"`  
@@ -255,11 +293,19 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Characters used to draw corners in bordered mode.
 - `username_role_colors = True`  
     Allow `%username` and `%global_name` to have color of primary role.
+- `dynamic_name_len = False`  
+    Use dynamic name length for usernames and global_names in `format_message` and `format_reply` only. Overrides `limit_username` option and name length is limited to `chat_width - 15`.  
+    If this is ON, `color_format_message` still works same as with dynamic_name_len OFF, and it will internally correct for dynamic name difference.  
+    Eg.: if color format has red character set to be at index 20, and `limit_username = 10`, `format_message = "abcd %username1234X67` but dynamic name is ON, then red character will always be 5 characters after `%username`. because `20 - length("abcd ") - 10 = 5`.
+- `media_use_blocks = False`  
+    Wether to use "block" characters (`▀`) for drawing media instead traditional characters from media_ascii_palette.  
+    This will result in clearer picture with pixel-like characters, vertical resolution will be doubled.  
+    media_ascii_palette and media_saturation have no effect when this is ON.  
 - `media_ascii_palette = "  ..',;:c*loexk#O0XNW"`  
     Characters used to draw in terminal. From darkest to brightest. Same character can be repeated. Number of characters is not fixed.
 - `media_saturation = 1.2`  
-    Saturation correction applied to image in order to make colors more visible. Adjust if changing `ascii_palette` or color_media_bg.
-- `media_font_scale = 2.25`  
+    Saturation correction applied to image in order to make colors more visible. Adjust if changing `ascii_palette` or media_color_bg.
+- `media_font_aspect_ratio = 2.25`  
     Font height/width ratio. Change only if picture dimensions ratio is wrong in terminal.
 
 ### Colors and attributes
@@ -274,16 +320,18 @@ First `[fg, bg, attr]` is base color for whole context. If `bg` is -1, `bg` from
 Every next list has additional `start` and `end`- indexes on a line where color is applied. If `bg` is -2, `bg` from base color is used. -1 is terminal default color. Same for `fg`.  
 - `color_default = [-1, -1]`  
     Base color formatting for text. No attribute.
-- `color_chat_mention = [209, 234]`  
+- `color_chat_mention = [223, 234]`  
     Color for highlighted messages containing mentions (reply with ping included) and mention roles.
 - `color_chat_blocked = [242, -1]`  
     Color for blocked messages if `block_mode = 1`.
 - `color_chat_deleted = [95, -1]`  
     Color for deleted messages when `keep_deleted = True`.
+- `color_chat_pending = [242, -1]`  
+    Color for pending messages in the chat.
 - `color_chat_selected = [233, 255]`  
-    Color for selected line in chat.
+    Color for selected line in the chat.
 - `color_chat_separator = [242, -1, "i"]`  
-    Color for date separator line in chat.
+    Color for date separator line in the chat.
 - `color_status_line = [233, 255]`  
     Color for status line.
 - `color_extra_line = [233, 245]`  
@@ -318,6 +366,8 @@ Every next list has additional `start` and `end`- indexes on a line where color 
     Color format for message reactions string. Corresponding to `format_reactions`.
 - `color_format_forum = [[-1, -1], [242, -2, 0, 0, 12], [25, -2, 0, 15, 20]]`  
     Color format for threads in forum. Corresponding to `format_forum`.
+- `color_chat_standout = [153, 234]`  
+    Color for chat elements that should standout, like `@mentons`, `#channels`, timestamps, custom emoji.
 - `color_chat_edited = [241, -1]`  
     Color for `edited_string`.
 - `color_chat_url = [153, -1, "u"]`  
@@ -331,13 +381,13 @@ Every next list has additional `start` and `end`- indexes on a line where color 
 - `media_bar_ch = "━"`  
     A single character used to draw progress bar in media player when playing video or audio.
 
-
 ### format_message
-- `%content` - message text
+- `%content` - message text; to make text appear on next line (`format_newline`), add `\n` just before `%content`, this will ensure `%edited` stays at the end of content
 - `%username` - of message author
 - `%global_name` - of message author
 - `%timestamp` - formatted with `format_timestamp`
-- `%edited` - replaced with `edited_string` assumed to be at the end of format_message line  
+- `%edited` - replaced with `edited_string`  
+- `%app` - replaced with `app_string` if this message is sent by app or webhook
 Note: everything after `%content` may be pushed to newline.
 
 ### format_newline
@@ -379,6 +429,8 @@ Note: everything after `%content` may be pushed to newline.
 - `%task` - currently running slow task (reconnecting, downloading chat...)
 - `%tabs` - all tabs formatted with `format_tabs` then joined with `tabs_separator`
 - `%slowmode` - `Slowmode: hh:mm:ss` if slowmode is enabled, otherwise its hidden
+- `%afk` - `[AFK]` while afk status is being sent from this client
+- `%vim_mode` - `[--INSERT--]` or `[--NORMAL--]` when `vim_mode` is ON
 
 ### format_rich
 - `%type` - type of rich presence: "Playing" or "Listening to"
@@ -398,6 +450,7 @@ Note: everything after `%content` may be pushed to newline.
 - `%username` - my username
 - `%server` - currently viewed server
 - `%channel` - currently viewed channel
+- `%vim_mode` - `INSERT` or `NORMAL` when `vim_mode` is ON
 
 ### format_forum
 - `%thread_name` - name of a thread
@@ -410,6 +463,9 @@ Note: everything after `%content` may be pushed to newline.
 - `%global_name` - of message author
 - `%date` - formatted same as `format_forum_timestamp`
 - `%channel` - to which channel in this server the message belongs, limited with `limit_channel_name`
+
+### app_string
+- `%app` - either `App` or `Webhook`
 
 
 ## pgcurses.json - config for experimental windowed mode
@@ -432,7 +488,7 @@ Note: everything after `%content` may be pushed to newline.
 - `enable_tray: true`  
     Enable tray icon. closing window will minimize to tray.
 - `tray_icon_normal: null`  
-    Path to tray icon file. Its supposed to be png with size og 32x32 or 64x64, but other formats and sizes should work too. Set to `null` to use default icons.
+    Path to tray icon file. Its supposed to be png with size of 32x32 or 64x64, but other formats and sizes should work too. Set to `null` to use default icons.
 - `tray_icon_unread: null`  
     Path to tray icon file shown when there are unread messages. Set to `null` to disable.
 - `tray_icon_unread: null`  

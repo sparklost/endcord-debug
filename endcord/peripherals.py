@@ -15,17 +15,16 @@ from ast import literal_eval
 from configparser import ConfigParser
 
 import filetype
-import pexpect
-import pexpect.popen_spawn
 
 from endcord import defaults
 
 logger = logging.getLogger(__name__)
-match_first_non_alfanumeric = re.compile(r"^[^\w_]*")
-match_split = re.compile(r"[^\w']")
+REPO_OWNER = "sparklost"
 APP_NAME = "endcord"
-ASPELL_TIMEOUT = 0.1   # aspell limit for looking-up one word
+VERSION = "1.3.0"
 NO_NOTIFY_SOUND_DE = ("kde", "plasma")   # linux desktops without notification sound
+
+match_youtube = re.compile(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}")
 
 
 # platform specific code
@@ -60,39 +59,40 @@ elif sys.platform == "linux":
 if sys.platform == "linux":
     path = os.environ.get("XDG_DATA_HOME", "")
     if path.strip():
-        config_path = os.path.join(path, f"{APP_NAME}/")
-        log_path = os.path.join(path, f"{APP_NAME}/")
+        config_path = os.path.join(path, f"{APP_NAME}")
+        log_path = os.path.join(path, f"{APP_NAME}")
     else:
-        config_path = f"~/.config/{APP_NAME}/"
-        log_path = f"~/.config/{APP_NAME}/"
+        config_path = f"~/.config/{APP_NAME}"
+        log_path = f"~/.config/{APP_NAME}"
     path = os.environ.get("XDG_RUNTIME_DIR", "")
     if path.strip():
-        temp_path = os.path.join(path, f"{APP_NAME}/")
+        temp_path = os.path.join(path, f"{APP_NAME}")
     else:
         # per-user temp dir
-        temp_path = f"/run/user/{os.getuid()}/{APP_NAME}/"
+        temp_path = f"/run/user/{os.getuid()}/{APP_NAME}"
         # fallback to .cache
         if not os.access(f"/run/user/{os.getuid()}", os.W_OK):
             temp_path = f"~/.cache/{APP_NAME}"
-    os.makedirs(temp_path, exist_ok=True)
+    os.makedirs(os.path.expanduser(temp_path), exist_ok=True)
 
     path = os.environ.get("XDG_DOWNLOAD_DIR", "")
     if path.strip():
-        downloads_path = os.path.join(path, f"{APP_NAME}/")
+        downloads_path = os.path.join(path, f"{APP_NAME}")
     else:
-        downloads_path = "~/Downloads/"
+        downloads_path = "~/Downloads"
 elif sys.platform == "win32":
-    config_path = os.path.join(os.path.normpath(f"{os.environ["USERPROFILE"]}/AppData/Local/{APP_NAME}/"), "")
-    log_path = os.path.join(os.path.normpath(f"{os.environ["USERPROFILE"]}/AppData/Local/{APP_NAME}/"), "")
-    temp_path = os.path.join(os.path.normpath(f"{os.environ["USERPROFILE"]}/AppData/Local/Temp/{APP_NAME}/"), "")
-    downloads_path = os.path.join(os.path.normpath(f"{os.environ["USERPROFILE"]}/Downloads/"), "")
+    config_path = os.path.join(os.environ["LOCALAPPDATA"], APP_NAME)
+    log_path = os.path.join(os.environ["LOCALAPPDATA"], APP_NAME)
+    temp_path = os.path.join(os.environ["LOCALAPPDATA"], "Temp", APP_NAME)
+    downloads_path = os.path.join(os.environ["USERPROFILE"], "Downloads")
 elif sys.platform == "darwin":
-    config_path = f"~/Library/Application Support/{APP_NAME}/"
-    log_path = f"~/Library/Application Support/{APP_NAME}/"
-    temp_path = f"~/Library/Caches/TemporaryItems{APP_NAME}/"
-    downloads_path = "~/Downloads/"
+    config_path = f"~/Library/Application Support/{APP_NAME}"
+    log_path = f"~/Library/Application Support/{APP_NAME}"
+    temp_path = f"~/Library/Caches/TemporaryItems{APP_NAME}"
+    downloads_path = "~/Downloads"
 else:
-    sys.exit(f"Unsupported platform: {sys.platform}")
+    print(f"Unsupported platform: {sys.platform}", file=sys.stderr)
+    sys.exit(1)
 
 
 # ensure paths exists
@@ -104,10 +104,20 @@ for app_path in (config_path, log_path, temp_path, downloads_path):
 # platform specific commands
 if sys.platform == "linux":
     runner = "xdg-open"
+    if shutil.which("zenity"):
+        filedialog = "zenity"
+    elif shutil.which("kdialog"):
+        filedialog = "kdialog"
+    else:
+        filedialog = None
 elif sys.platform == "win32":
     runner = "explorer"
+    import win32con
+    import win32gui
+    filedialog = "windows"
 elif sys.platform == "darwin":
     runner = "open"
+    filedialog = "mac"
 
 
 # check for audio systems
@@ -156,6 +166,7 @@ def ensure_terminal():
         "xfce4-terminal",
         "lxterminal",
         "alacritty",
+        "ghostty",
         "kitty",
         "urxvt",
         "x-terminal-emulator",
@@ -181,10 +192,27 @@ def ensure_terminal():
     sys.exit(0)
 
 
+def ensure_ssl_certificates():
+    """Ensure that there are ssl certificates available to http.client module"""
+    if not ("__compiled__" in globals() or getattr(sys, "frozen", False)):   # skip if running from source
+        return
+    if sys.platform == "linux":
+        cert_path = "/etc/ssl/certs/ca-certificates.crt"
+        if os.path.exists(cert_path):
+            os.environ["SSL_CERT_FILE"] = cert_path
+        elif importlib.util.find_spec("certifi") is not None:
+            import certifi
+            os.environ["SSL_CERT_FILE"] = certifi.where()
+    elif sys.platform == "darwin" and importlib.util.find_spec("certifi") is not None:
+        import certifi
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+
+
 def save_config(path, data, section):
     """Save config section"""
     path = os.path.expanduser(path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.dirname(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
     config = ConfigParser(interpolation=None)
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
@@ -200,13 +228,13 @@ def save_config(path, data, section):
         config.write(f)
 
 
-def load_config(path, default, section="main", gen_config=False):
+def load_config(path, default, section="main", gen_config=False, merge=False):
     """
     Load settings and theme from config
     If some value is missing, it is replaced with default value
     """
     if not path:
-        path = config_path + "config.ini"
+        path = os.path.join(config_path, "config.ini")
     path = os.path.expanduser(path)
 
     if not os.path.exists(path) or gen_config:
@@ -225,16 +253,16 @@ def load_config(path, default, section="main", gen_config=False):
         for key in default:
             if key in list(config[section].keys()):
                 try:
-                    eval_value = literal_eval(config_data_raw[key].replace("\\", "\\\\"))
+                    eval_value = literal_eval(config_data_raw[key])
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = config_data_raw[key]
             else:
                 config_data[key] = default[key]
         for key, value in config_data_raw.items():
-            if key.startswith("ext_"):
+            if key.startswith("ext_") or merge:
                 try:
-                    eval_value = literal_eval(value.replace("\\", "\\\\"))
+                    eval_value = literal_eval(value)
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = value
@@ -258,10 +286,11 @@ def merge_configs(custom_config_path, theme_path):
     gen_config = False
     error = None
     if not custom_config_path:
-        if not os.path.exists(os.path.expanduser(config_path) + "config.ini"):
+        default_config_path = os.path.expanduser(os.path.join(config_path, "config.ini"))
+        if not os.path.exists(default_config_path):
             logger.info("Using default config")
             gen_config = True
-        custom_config_path = config_path + "config.ini"
+        custom_config_path = default_config_path
     elif not os.path.exists(os.path.expanduser(custom_config_path)):
         gen_config = True
     config = load_config(custom_config_path, defaults.settings)
@@ -279,7 +308,7 @@ def merge_configs(custom_config_path, theme_path):
                     theme_path = saved_theme
                     break
             else:
-                error = f"Theme {theme_path} not found in themes directory."
+                error = f'Theme "{theme_path}" not found in themes directory.'
         if not error:
             theme_path = os.path.expanduser(theme_path)
             theme = load_config(theme_path, theme, section="theme")
@@ -288,23 +317,126 @@ def merge_configs(custom_config_path, theme_path):
     return config, gen_config, error
 
 
+def alt_shift(value, shift):
+    """Try to change "ALT+Key into integer key value"""
+    val = re.sub(r"ALT\+(\d+)", lambda m: str(int(m.group(1)) + shift), value)
+    try:
+        return int(val)
+    except ValueError:
+        return val
+
+
+
 def convert_keybindings(keybindings):
     """Convert keybinding codes to os-specific codes"""
     if sys.platform == "win32":   # windows has different codes for Alt+Key
-        for key, value in keybindings.items():
-            if isinstance(value, str):
-                keybindings[key] = re.sub(r"ALT\+(\d+)", lambda m: str(int(m.group(1)) + 320), value)
+        shift = 320
+        swap_backspace = True   # config - 8 (ctrl+backspace) with real - 263 (backspace)
     elif os.environ.get("TERM", "") == "xterm":   # xterm has different codes for Alt+Key
+        shift = 64
+        swap_backspace = True
         # for ALT+Key it actually sends 195 then Key+64
         # but this is simpler since key should already be uniquely shifted
+    else:
+        return keybindings
+
+    for key, value in keybindings.items():
+        if isinstance(value, str):
+            keybindings[key] = alt_shift(value, shift)
+        elif swap_backspace and value == 8:
+            keybindings[key] = 263
+
+    return keybindings
+
+
+def convert_keybindings_cmd(keybindings):
+    """Convert keybinding codes to os-specific codes, for command bindings"""
+    if sys.platform == "win32":
+        shift = 320
+    elif os.environ.get("TERM", "") == "xterm":
+        shift = 64
+    else:
+        shift = 0
+
+    new_keybindings = {}
+    for key, value in keybindings.items():
+        new_key = key.replace('"', "")
+        if isinstance(new_key, str) and "alt" in new_key:
+            new_key = new_key.replace("alt", "ALT")
+        if isinstance(new_key, str) and shift:
+            new_key = alt_shift(new_key, shift)
+        else:
+            try:
+                new_key = int(new_key)
+            except ValueError:
+                pass
+        new_keybindings[new_key] = value
+
+    return new_keybindings
+
+
+def normalize_keybindings(keybindings):
+    """Ensure all keybindings are tuples"""
+    for key in keybindings:
+        if not isinstance(keybindings[key], tuple):
+            keybindings[key] = (keybindings[key], )
+    return keybindings
+
+
+def deduplicate_keybindings(keybindings_a, keybindings_b, command=False):
+    """Deduplicate 2 keubinding dicts that can have strings and tuples of strings as values, keeping keybindings_b"""
+    def deduplicate_value(dedupe_value, keybindings):
+        for key, values in keybindings.items():
+            if isinstance(values, tuple):
+                for num, value in enumerate(values):
+                    if value == dedupe_value:
+                        fresh_values = keybindings[key]
+                        keybindings[key] = fresh_values[:num] + (None,) + fresh_values[num + 1:]
+            elif values == dedupe_value:
+                keybindings[key] = None
+
+    def dedupe_value_command(dedupe_value, keybindings):
         for key, value in keybindings.items():
-            if isinstance(value, str):
-                val = re.sub(r"ALT\+(\d+)", lambda m: str(int(m.group(1)) + 64), value)
-                try:
-                    val = int(val)
-                except ValueError:
-                    pass
-                keybindings[key] = val
+            if key == str(dedupe_value):
+                del keybindings[key]
+
+    if command:
+        deduplicate_value = dedupe_value_command
+
+    for key, values in keybindings_b.items():
+        if isinstance(values, tuple):
+            for value in values:
+                deduplicate_value(value, keybindings_a)
+        else:
+            deduplicate_value(values, keybindings_a)
+
+
+def merge_keybindings(keybindings, vim_keybindings, command_bindings):
+    """Merge standard and vim mode keybindings and remove keybinding collisions favoring vim keybindings"""
+    deduplicate_keybindings(keybindings, vim_keybindings)
+    deduplicate_keybindings(command_bindings, vim_keybindings, command=True)
+
+    for key, value_2_old in vim_keybindings.items():
+        if isinstance(value_2_old, str) and len(value_2_old) == 1:
+            try:
+                value_2 = ord(value_2_old)
+            except TypeError:
+                value_2 = value_2_old
+        else:
+            value_2 = value_2_old
+
+        if key not in keybindings:
+            keybindings[key] = value_2
+        else:
+            value_1 = keybindings[key]
+            if not isinstance(value_1, tuple):
+                value_1 = (value_1, )
+            if not isinstance(value_2, tuple):
+                value_2 = (value_2, )
+            if value_1[0] is None:
+                value_1 = ()
+            keybindings[key] = value_1 + value_2
+
     return keybindings
 
 
@@ -321,7 +453,7 @@ def update_config(config, key, value):
     config_path = config["config_path"]
     saved_config = ConfigParser(interpolation=None)
     if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(os.path.expanduser(config_path), "r", encoding="utf-8") as f:
             saved_config.read_file(f)
     new_config = {}
     new_theme = {}
@@ -401,19 +533,6 @@ def get_extensions(path):
     return extensions, invalid
 
 
-def install_extension(url):
-    """Install extension from specified git repo url"""
-    if shutil.which("git"):
-        ext_path = os.path.expanduser(os.path.join(config_path + "Extensions"))
-        if not os.path.exists(ext_path):
-            os.makedirs(os.path.expanduser(path), exist_ok=True)
-        print("Installing extension to: {ext_path}")
-        result = subprocess.run(["git", "clone", url], cwd=ext_path, capture_output=True, text=True, check=False)
-        print(result.stdout + result.stderr)
-    else:
-        print("git is needed to install extension")
-
-
 def find_linux_sound(name):
     """Return path of sound file from its name, if it exists"""
     if sys.platform == "linux":
@@ -448,7 +567,10 @@ def notify_send(title, message, sound="message", custom_sound=None):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
-            return int(proc.communicate()[0].decode().strip("\n"))   # return notification id
+            try:
+                return int(proc.communicate()[0].decode().strip("\n"))   # return notification id
+            except ValueError:
+                return None
         return None
     if sys.platform == "win32":
         if custom_sound:
@@ -479,10 +601,12 @@ def notify_remove(notification_id):
         )
 
 
-def load_json(file, default=None, dir_path=config_path):
+def load_json(file, default=None, dir_path=config_path, create=False):
     """Load saved json from same location where default config is saved"""
     path = os.path.expanduser(os.path.join(dir_path, file))
     if not os.path.exists(path):
+        if create:
+            save_json(default, file, dir_path=dir_path)
         return default
     try:
         with open(path, "r") as f:
@@ -517,18 +641,18 @@ def copy_to_clipboard(text):
                     ["wl-copy"],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.DEVNULL,
                 )
                 proc.communicate(input=text.encode("utf-8"))
             except FileNotFoundError:
-                logger.warning("Cant copy: wl-copy not found on system")
+                logger.warning("Cant copy: wl-clipboard not found on system")
         else:
             try:
                 proc = subprocess.Popen(
-                    ["xclip"],
+                    ["xclip", "-selection", "clipboard"],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.DEVNULL,
                 )
                 proc.communicate(input=text.encode("utf-8"))
             except FileNotFoundError:
@@ -543,9 +667,160 @@ def copy_to_clipboard(text):
             ["pbcopy", "w"],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.DEVNULL,
         )
         proc.communicate(input=text.encode("utf-8"))
+
+
+def paste_clipboard_files(save_path=None):
+    """Get files paths from clipboard, linux only, needs xclip or wl-clipboard"""
+    save_path = os.path.expanduser(save_path)
+    if sys.platform == "linux":
+
+        if os.getenv("WAYLAND_DISPLAY"):
+            list_command = ["wl-paste", "-l"]
+            query_command = ["wl-paste", "-t"]
+            list_types = ""
+            suffix = ""
+        else:
+            list_command = ["xclip", "-selection", "clipboard", "-t"]
+            query_command = list_command
+            list_types = "TARGETS"
+            suffix = "-o"
+
+        try:
+            # get types
+            proc = subprocess.Popen(
+                list_command[:] + ([list_types, suffix] if suffix else []),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            types_list = proc.communicate()[0].decode().split("\n")
+
+            # binary image
+            for num, data_type in enumerate(types_list):
+                if data_type.startswith("image/"):
+                    if not save_path:
+                        return []
+                    file_path = os.path.join(save_path, f"clipboard_image_{int(time.time())}." + types_list[num].split("/")[1])
+                    with open(file_path, "wb") as f:
+                        proc = subprocess.run(
+                            query_command[:] + [types_list[num]] + ([suffix] if suffix else []),
+                            stdout=f,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    return [file_path]
+
+            # file path
+            if "text/uri-list" in types_list:
+                proc = subprocess.Popen(
+                    query_command[:] + ["text/uri-list"] + ([suffix] if suffix else []),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                data = proc.communicate()[0].decode().strip("\n")
+                return [line[7:] for line in data.splitlines() if line.startswith("file://")]
+
+            # plain text or nothing
+            if "text/plain" in types_list:
+                proc = subprocess.Popen(
+                    query_command[:] + ["text/plain"] + ([suffix] if suffix else []),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                return proc.communicate()[0].decode().strip("\n")
+
+        except FileNotFoundError:
+            logger.warning("Cant paste: wl-clipboard or xclip not found on system")
+    return []
+
+
+def native_select_files(file_filter=None, multiple=True, auto=False):
+    """Get one or more file paths with native dialog"""
+    if filedialog == "windows":
+        init_dir = os.path.join(os.environ["USERPROFILE"], "Desktop")
+    else:
+        init_dir = os.path.expanduser("~") + "/"
+
+    if sys.platform == "linux" and auto:
+        cmd = ["yazi", "--chooser-file=/dev/stdout", "~"]
+        data = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        paths = []
+        if data.returncode == 0 and data.stdout.strip():
+            paths = [line.strip() for line in data.stdout.strip().split("\n") if line.strip()]
+        return paths
+
+    if filedialog == "zenity":
+        command = [
+            "zenity", "--file-selection",
+            "--title", "Import File",
+            "--filename", init_dir,
+        ]
+        if multiple:
+            command.append("--multiple")
+        if file_filter:
+            for one_filter in file_filter:
+                command.append("--file-filter")
+                command.append(one_filter)
+        data = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = data.stdout.strip()
+        if not result:
+            return []
+        if multiple:
+            return result.split("|")
+        return [result]
+
+    if filedialog == "kdialog":
+        command = [
+            "kdialog", "--getopenfilename",
+            init_dir,
+            "--title", "Import File",
+        ]
+        if multiple:
+            command.append("--multiple")
+            command.append("--separate-output")
+        if file_filter:
+            command.append('"' + "|".join(file_filter) + '"')
+        data = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = data.stdout.strip()
+        if not result:
+            return []
+        if multiple:
+            return result.splitlines()
+        return [result]
+
+    if filedialog == "windows":
+        flags = win32con.OFN_FILEMUSTEXIST | win32con.OFN_EXPLORER
+        if multiple:
+            flags |= win32con.OFN_ALLOWMULTISELECT
+        try:
+            foreground = win32gui.GetForegroundWindow()
+            result = win32gui.GetOpenFileNameW(
+                hwndOwner=foreground,
+                InitialDir=init_dir,
+                Title="Upload Files",
+                Flags=flags,
+            )[0].split("\x00")
+            if not result:
+                return []
+            if len(result) == 1:
+                return result
+            dir_path, *files = result   # first is directory rest are file names
+            return [f"{dir_path}\\{f}" for f in files]
+        except Exception:
+            return []
+
+    elif filedialog == "mac":
+        command += f'choose file default location "{init_dir}"  with prompt "Import File"'
+        data = subprocess.run(["osascript", "-"], input=command, text=True, capture_output=True, check=False)
+        data = data.stdout.strip().split(",")
+        return data[data.find(":"):].replace(":", "/")
+
+    else:
+        return "ERROR"
+
+    return []
 
 
 def get_file_size(path):
@@ -567,6 +842,34 @@ def get_can_play(path):
         return kind.mime.split("/")[0] in ("image", "video", "audio")
 
 
+def get_mime(path):
+    """Try to get mime type of the file"""
+    kind = filetype.guess(path)
+    if kind:
+        return kind.mime
+    return "unknown/unknown"
+
+
+def get_media_type(path, hint=None):
+    """Try to get media type"""
+    if re.search(match_youtube, path):
+        return "YT"
+    if "https://" in path:
+        return "URL"
+    mime = get_mime(path).split("/")
+    if hint:
+        mime = [hint, None]
+    if mime[0] == "image":
+        if mime[1] == "gif":
+            return "gif"
+        return "img"
+    if mime[0] == "video":
+        return "video"
+    if mime[0] == "audio":
+        return "audio"
+    logger.warning(f"Unsupported media format: {mime}")
+
+
 def complete_path(path, separator=True):
     """Get possible completions for path"""
     if not path:
@@ -584,6 +887,10 @@ def complete_path(path, separator=True):
 def play_audio(path):
     """Play audio file with simpleaudio or with pw-cat on pipewire"""
     path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        logger.warn(f"Audio file not found at path: {path}")
+        return
+
     if sys.platform == "linux":
         if have_pipewire:
             try:
@@ -620,6 +927,8 @@ def play_audio(path):
         data, samplerate = soundfile.read(path, dtype="float32")
     except Exception as e:
         logger.error(f"Error loading sound file: {e}")
+    if not data:
+        return
     soundcard = import_soundcard()
     if soundcard:
         speaker = soundcard.default_speaker()
@@ -687,10 +996,12 @@ class SpellCheck():
     """Sentence and word spellchecker"""
 
     def __init__(self, aspell_mode, aspell_language):
+        self.aspell = None
         self.aspell_mode = aspell_mode
         self.aspell_language = aspell_language
         self.enable = False
-        self.command = ["aspell", "-a", f"--sug-mode={aspell_mode}", f"--lang={aspell_language}"]
+        self.first_run = True
+        self.lock = threading.Lock()
         if aspell_mode:
             aspell_path = find_aspell()
             if aspell_path:
@@ -705,69 +1016,71 @@ class SpellCheck():
 
     def start_aspell(self):
         """Start aspell with selected mode and language"""
-        # cross-platform replacement for pexpect.spawn() because aspell works with it
-        self.proc = pexpect.popen_spawn.PopenSpawn(f"{self.aspell_path} -a --sug-mode={self.aspell_mode} --lang={self.aspell_language}", encoding="utf-8")
-        self.proc.delaybeforesend = None
+        if self.aspell:
+            return
         try:
-            self.proc.expect("Ispell", timeout=0.5)
-            logger.info("Aspell initialized")
-        except pexpect.exceptions.EOF:
-            logger.info("Aspell initialization error")
+            start = time.time()
+            self.aspell = subprocess.Popen(
+                [self.aspell_path, "-a", "--sug-mode", self.aspell_mode, "--lang", self.aspell_language],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            self.aspell.stdout.readline()
+            logger.info(f"Aspell initialized in {round((time.time() - start)*1000, 3)} ms")
+        except Exception as e:
+            if self.aspell.poll() is not None:
+                aspell_error = self.aspell.stderr.read()
+            else:
+                aspell_error = ""
+            logger.error(f"Aspell initialization error: {e}\n  {aspell_error}")
             self.enable = False
 
 
-    def check_word_pexpect(self, word):
-        """Spellcheck single word with aspell"""
+    def check_word(self, word):
+        """Spellcheck single word using aspell"""
+        if not self.aspell:
+            return False
+        if word.isdigit():
+            return False   # dont spellcheck numbers
         try:
-            if word.isdigit():
-                return False   # dont spellcheck numbers
-            self.proc.sendline(word)
-            self.proc.expect(r"\*|\&|\#", timeout=ASPELL_TIMEOUT)
-            after = self.proc.after
-            if after in ("&", "#"):
+            with self.lock:
+                self.aspell.stdin.write(word + "\n")
+                self.aspell.stdin.flush()
+                result = self.aspell.stdout.readline().strip()
+                next_line = result
+                while next_line != "\n":   # read until it prints empty line
+                    next_line = self.aspell.stdout.readline()
+                if result.startswith("*"):
+                    return False
                 return True
-            return False
-        except pexpect.exceptions.TIMEOUT:
-            return False   # if timed-out return it as correct
-        except pexpect.exceptions.EOF as e:
-            logger.info(e)
+        except Exception as e:
+            if self.aspell.poll() is not None:
+                aspell_error = self.aspell.stderr.read()
+            else:
+                aspell_error = ""
+            logger.error(f"Spellchecker error: {e}\n  {aspell_error}")
+            if self.first_run:   # a fuse if it fails on first word
+                self.enable = False
             if self.enable:
+                self.stop_aspell()
                 self.start_aspell()
-                return False
-
-
-    def check_word_subprocess(self, word):
-        """Spellcheck single word with aspell"""
-        try:
-            proc = subprocess.Popen(
-                self.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            output, error = proc.communicate(word.encode())
-            check = output.decode().split("\n")[1]
-            if check == "*":
-                return False
-            return True
-        except FileNotFoundError:   # aspell not installed
             return False
+        self.first_run = False
 
 
-    def check_sentence(self, sentence):
-        """
-        Spellcheck a sentence with aspell.
-        Excluding last word if there is no space after it.
-        Return list of bools representing whether each word is misspelled or not.
-        """
-        misspelled = []
-        if self.enable:
-            for word in re.split(match_split, sentence):
-                if word == "":
-                    misspelled.append(False)
-                else:
-                    misspelled.append(self.check_word_pexpect(word))
-        return misspelled
+    def stop_aspell(self):
+        """Nicely stop aspell process"""
+        if not self.aspell:
+            return
+        self.aspell.stdin.close()
+        self.aspell.terminate()
+        self.aspell.wait()
+        self.aspell = None
 
 
     def check_list(self, words):
@@ -781,8 +1094,7 @@ class SpellCheck():
                 if word == "":
                     misspelled.append(False)
                 else:
-                    # regex here might cause troubles with non-latin characters
-                    misspelled.append(self.check_word_pexpect(re.sub(match_first_non_alfanumeric, "", word)))
+                    misspelled.append(self.check_word(word))
         else:
             return [False] * len(words)
         return misspelled
@@ -840,7 +1152,7 @@ class Recorder():
             self.record_thread.join()
             self.record_thread = None
             self.audio_data = np.concatenate(self.audio_data, axis=0)
-            save_path = os.path.join(temp_path, "rec-audio-message.ogg")
+            save_path = os.path.join(os.path.expanduser(temp_path), "rec-audio-message.ogg")
             soundfile.write(save_path, self.audio_data, 48000, format="OGG", subtype="OPUS")
             del self.audio_data
             return save_path
