@@ -40,6 +40,14 @@ def get_version_number():
     sys.exit(1)
 
 
+def is_gil_enabled():
+    """Safely check if GIL is enabled"""
+    try:
+        return sys._is_gil_enabled()
+    except AttributeError:
+        return True
+
+
 def get_python_version():
     """Get python major and minor versions"""
     if shutil.which("uv"):
@@ -47,13 +55,13 @@ def get_python_version():
             version_result = subprocess.run(["uv", "run", "--no-sync", "python", "-VV"], capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as e:
             print(f"uv error: {e}", file=sys.stderr)
-            return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
+            return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
         all_parts = version_result.stdout.strip().split(" ")
         version_parts = all_parts[1].split(".")
         if len(version_parts) < 2:
-            return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
+            return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
         return int(version_parts[0]), int(version_parts[1]), "free-threading" in all_parts[2]
-    return sys.version_info.major, sys.version_info.minor, sys._is_gil_enabled()
+    return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
 
 
 def supports_color():
@@ -98,7 +106,7 @@ def check_python():
             except Exception:
                 pass
             fprint(f"Using Python {sys.version}")
-        if not sys._is_gil_enabled():
+        if not is_gil_enabled():
             if sys.version_info.minor == PYTHON_FREETHREADED:
                 fprint("WARNING: While endcord works with freethreaded python, final binary is much larger. Nutka doesnt yet support freethreaded python, so build is likely to fail.", color_code="\033[1;31m")
             else:
