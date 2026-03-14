@@ -10,20 +10,20 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest] # os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
+        os: [windows-latest] # os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
         include:
-          - os: ubuntu-latest
-            platform: linux
+          # - os: ubuntu-latest
+          #   platform: linux
+          #   python-version: 3.14
+          #   nuitka: true
+          #   clang: true
+          #   clang-version: 21.1.8
+          - os: windows-latest
+            platform: windows
             python-version: 3.14
             nuitka: true
-            clang: true
+            clang: false
             clang-version: 21.1.8
-          # - os: windows-latest
-          #   platform: windows
-          #   python-version: 3.13   # https://github.com/Nuitka/Nuitka/issues/3234
-          #   nuitka: true
-          #   clang: false   # https://github.com/Nuitka/Nuitka/issues/3370
-          #   clang-version: 21.1.8
           # - os: macos-15
           #   platform: macos
           #   python-version: 3.13
@@ -59,7 +59,7 @@ jobs:
 
       ## uncomment to enable caching with artifacts
       # - name: Download ccache artifact from previous run
-      #   uses: dawidd6/action-download-artifact@v9
+      #   uses: dawidd6/action-download-artifact@v18
       #   if: ${{ matrix.clang }}
       #   with:
       #     github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -71,12 +71,12 @@ jobs:
       #   continue-on-error: true
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: false
 
@@ -146,7 +146,7 @@ jobs:
           cd ..
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.os }}
           path: |
@@ -156,7 +156,7 @@ jobs:
 
       ## uncomment to enable caching with artifacts
       # - name: Upload ccache artifact
-      #   uses: actions/upload-artifact@v4
+      #   uses: actions/upload-artifact@v7
       #   if: ${{ matrix.clang }}
       #   with:
       #     name: ccache-${{ matrix.os }}
@@ -182,10 +182,10 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: ./dist
           merge-multiple: true
@@ -195,7 +195,7 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Generate release attestation
-        uses: actions/attest-build-provenance@v3.0.0
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
 
