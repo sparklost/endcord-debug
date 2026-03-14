@@ -17,25 +17,25 @@ jobs:
             python-version: 3.14
             nuitka: true
             clang: true
-            clang-version: 20.1.4
+            clang-version: 21.1.8
           # - os: windows-latest
           #   platform: windows
-          #   python-version: 3.12   # https://github.com/Nuitka/Nuitka/issues/3234
+          #   python-version: 3.13   # https://github.com/Nuitka/Nuitka/issues/3234
           #   nuitka: true
           #   clang: false   # https://github.com/Nuitka/Nuitka/issues/3370
-          #   clang-version: 20.1.4
+          #   clang-version: 21.1.8
           # - os: macos-15
           #   platform: macos
           #   python-version: 3.13
           #   nuitka: false
           #   clang: true
-          #   clang-version: 20.1.4
+          #   clang-version: 21.1.7
           # - os: macos-15-intel
           #   platform: macos
           #   python-version: 3.13
           #   nuitka: false
           #   clang: true
-          #   clang-version: 20.1.3
+          #   clang-version: 21.1.7
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -101,16 +101,13 @@ jobs:
           brew install ccache
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
-      - name: Install dependencies with uv
-        run: uv sync --all-groups
-
       - name: Run build script
         shell: bash
         run: |
             args=()
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
-            uv run build.py "${args[@]}"
+            python build.py "${args[@]}"
 
       - name: Run build lite script
         shell: bash
@@ -118,7 +115,7 @@ jobs:
             args=()
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" == "true" ]] && args+=("--clang")
-            uv run build.py --lite "${args[@]}"
+            python build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
