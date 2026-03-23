@@ -10,6 +10,7 @@ import urllib
 import urllib.parse
 
 import av
+import davey
 import nacl.bindings
 import socks
 import websocket
@@ -84,6 +85,15 @@ class Gateway():
         self.call_buffer = []
         self.mute = mute
         self.media_session_id = None
+
+        self.dave_session = davey.DaveSession(
+            protocol_version=davey.DAVE_PROTOCOL_VERSION,
+            user_id=int(self.my_id),
+            channel_id=int(self.channel_id),
+        )
+        self.dave_protocol_version = 0   # no dave yet
+        self.pending_transition_id = None
+
         self.connect()
 
 
@@ -185,7 +195,7 @@ class Gateway():
 
     def receiver(self):
         """Receive and handle all traffic from gateway, should be run in a thread"""
-        logger.info("Receiver started")
+        logger.debug("Receiver started")
         while self.run:
             try:
                 ws_opcode, data = self.ws.recv_data()
@@ -255,6 +265,7 @@ class Gateway():
                 self.media_session_id = data["media_session_id"]
                 self.selected_mode = data["mode"]
                 self.secret_key = data["secret_key"]
+                self.dave_protocol_version = data.get("dave_protocol_version", 0)
                 self.state = 2
                 logger.debug("Received: SESSION DESCRIPTION event, voice gateway is ready")
                 self.send_speaking(0)
@@ -290,14 +301,81 @@ class Gateway():
                     "user_id": data["user_id"],
                     "speaking": bool(data["user_id"]),
                 })
+                ssrc = data.get("ssrc")
+                if ssrc and self.voice_handler:
+                    self.voice_handler.ssrc_to_userid[ssrc] = int(user_id)
 
-        logger.info("Receiver stopped")
+            # DAVE OPCODES
+            elif opcode == 21:  # DAVE_PROTOCOL_PREPARE_TRANSITION
+                data = response["d"]
+                transition_id = data["transition_id"]
+                self.pending_transition_id = transition_id
+                if data.get("dave_protocol_version", 0) == 0:
+                    # enable passthrough
+                    if self.voice_handler:
+                        self.voice_handler.set_passthrough(True)
+                self.send_dave_ready_for_transition(transition_id)
+
+            elif opcode == 22:  # DAVE_PROTOCOL_EXECUTE_TRANSITION
+                # switch to new epoch key ratchet
+                if self.voice_handler:
+                    self.voice_handler.execute_transition(self.dave_session)
+
+            elif opcode == 24:  # DAVE_PROTOCOL_PREPARE_EPOCH
+                data = response["d"]
+                if data["epoch"] == 1:
+                    # re-init session for new group creation
+                    self.dave_session.reinit(
+                        protocol_version=data.get("dave_protocol_version", 1),
+                        user_id=int(self.my_id),
+                        channel_id=int(self.channel_id),
+                    )
+                    self.send_dave_mls_key_package()
+
+            elif opcode == 25:  # DAVE_MLS_EXTERNAL_SENDER_PACKAGE
+                self.dave_session.set_external_sender(bytes(response["d"]["package"]))
+                self.send_dave_mls_key_package()
+
+            elif opcode == 27:  # DAVE_MLS_PROPOSAL
+                data = response["d"]
+                op_type = davey.ProposalsOperationType(data["proposal_type"])
+                proposals_bytes = bytes(data["proposals"])
+                expected_ids = [int(uid) for uid in data.get("expected_user_ids", [])]
+                result = self.dave_session.process_proposals(
+                    op_type,
+                    proposals_bytes,
+                    expected_ids if expected_ids else None,
+                )
+                if result is not None:   # if this is committing member, send commit
+                    self.send_dave_mls_commit_welcome(result.commit, result.welcome)
+
+            elif opcode == 29:  # DAVE_MLS_ANNOUNCE_COMMIT_TRANSITION
+                data = response["d"]
+                try:
+                    self.dave_session.process_commit(bytes(data["commit"]))
+                    self.send_dave_ready_for_transition(data["transition_id"])
+                except Exception as e:
+                    logger.debug(f"Invalid welcome: {e}")
+                    self.send_invalid_commit_welcome(transition_id)
+                    self.send_key_package()
+
+            elif opcode == 30:  # DAVE_MLS_WELCOME
+                data = response["d"]
+                try:
+                    self.dave_session.process_welcome(bytes(data["welcome"]))
+                    self.send_dave_ready_for_transition(data["transition_id"])
+                except Exception as e:
+                    logger.debug(f"Invalid welcome: {e}")
+                    self.send_invalid_commit_welcome(transition_id)
+                    self.send_key_package()
+
+        logger.debug("Receiver stopped")
         self.disconnect()
 
 
     def send_heartbeat(self):
         """Send heartbeat to voice gateway, will stop if response is not received, should be run in a thread"""
-        logger.info(f"Heartbeater started, interval={self.heartbeat_interval/1000} s")
+        logger.debug(f"Heartbeater started, interval={self.heartbeat_interval/1000} s")
         self.heartbeat_received = True
         # wait for ready event for some time
         sleep_time = 0
@@ -329,7 +407,7 @@ class Gateway():
             # in this time heartbeat ack should be received from discord
             time.sleep(0.5)
 
-        logger.info("Heartbeater stopped")
+        logger.debug("Heartbeater stopped")
         self.disconnect()
 
 
@@ -344,6 +422,7 @@ class Gateway():
                 "session_id": self.voice_gateway_data["session_id"],
                 "token": self.voice_gateway_data["token"],
                 "video": True,
+                "max_dave_protocol_version": davey.DAVE_PROTOCOL_VERSION,
                 "streams": [{
                     "type": "video",
                     "rid": "100",
@@ -376,6 +455,46 @@ class Gateway():
         }
         self.send(payload)
         logger.debug("Sent SELECT PROTOCOL event")
+
+
+    def send_dave_ready_for_transition(self, transition_id):
+        """Send DAVE_READY_FOR_TRANSITION event"""
+        self.send({
+            "op": 23,
+            "d": {"transition_id": transition_id},
+        })
+        logger.debug(f"Sent ready for transition (op 23), transition_id={transition_id}")
+
+
+    def send_dave_mls_key_package(self):
+        """Send DAVE_MLS_KEY_PACKAGE event"""
+        key_package = self.dave_session.get_serialized_key_package()
+        self.send({
+            "op": 26,
+            "d": {"key_package": list(key_package)},
+        })
+        logger.debug("Sent MLS key package (op 26)")
+
+
+    def send_dave_mls_commit_welcome(self, commit, welcome):
+        """Send DAVE_MLS_COMMIT_WELCOME"""
+        payload = {"commit": list(commit)}
+        if welcome is not None:
+            payload["welcome"] = list(welcome)
+        self.send({
+            "op": 28,
+            "d": payload,
+        })
+        logger.debug("Sent MLS commit/welcome (op 28)")
+
+
+    def send_dave_mls_invalid_commit_welcome(self, transition_id):
+        """Send DAVE_MLS_INVALID_COMMIT_WELCOME"""
+        self.send({
+            "op": 31,
+            "d": {"transition_id": transition_id},
+        })
+        logger.warning(f"Sent invalid commit/welcome (op 31), transition_id={transition_id}")
 
 
     def send_speaking(self, speaking_packet_delay):
@@ -415,7 +534,7 @@ class Gateway():
                 self.voice_handler.stop()
             self.ws.close(timeout=0)   # this will stop receiver
             time.sleep(0.6)   # time for heartbeater to stop
-            logger.info("Gateway disconnected")
+            logger.debug("Gateway disconnected")
 
 
     def get_call_events(self):
@@ -447,6 +566,8 @@ class VoiceHandler:
         self.udp = udp
         self.secret_key = bytes(secret_key)
         self.mode = encryption_mode
+        self.dave_session = gateway.dave_session
+        self.ssrc_to_userid = {}
         self.audio_queue = queue.Queue(maxsize=10)
         self.opus_decoder = av.codec.CodecContext.create("opus", "r")
 
@@ -481,6 +602,20 @@ class VoiceHandler:
             pass
 
 
+    def set_passthrough(self, enabled):
+        """Set passthrugh for DAVE protocol"""
+        self.passthrough = enabled
+        if self.dave_session:
+            self.dave_session.set_passthrough_mode(enabled)
+
+
+    def execute_transition(self, dave_session):
+        """After execute_transition, stop passthrough on send side"""
+        self.passthrough = False
+        # keep accepting packets from old epoch for up to 10 seconds
+        dave_session.set_passthrough_mode(False, transition_expiry=10)
+
+
     def receiver_loop(self):
         """Receive, unpack, decrypt, decode received data, and put it to queue"""
         logger.debug("Voice receiver started")
@@ -489,7 +624,7 @@ class VoiceHandler:
             try:
                 data = self.udp.recv(4096)
             except OSError as e:
-                logger.info(f"UDP socket closed or error: {e}")
+                logger.error(f"UDP socket closed or error: {e}")
                 break
             except Exception as e:
                 logger.error(f"UDP receive error: {e}")
@@ -527,6 +662,26 @@ class VoiceHandler:
                         logger.error(f"Unknown mode: {self.mode}")
                         continue
                     payload = strip_rtp_extension(payload)
+
+                    # DAVE
+                    if self.dave_session.ready:
+                        user_id = self.ssrc_to_userid.get(ssrc)
+                        if user_id is not None:
+                            try:
+                                payload = self.dave_session.decrypt(
+                                    user_id,
+                                    davey.MediaType.audio,
+                                    payload,
+                                )
+                            except Exception as e:
+                                logger.error(f"DAVE decryption failed: {e}")
+                                continue
+                        else:
+                            logger.debug(f"Unknown ssrc {ssrc}")
+                            continue
+                    elif not self.passthrough:   # session not ready and not in passthrough
+                        continue
+
                 except Exception as e:
                     logger.error(f"Decryption failed for mode: {self.mode}. Error: {e}")
                     continue
