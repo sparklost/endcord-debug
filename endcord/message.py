@@ -255,6 +255,7 @@ def prepare_message(message):
         "embeds": embeds,
         "stickers": message.get("sticker_items", []),   # {name, id, format_type}
         "interaction": interaction,
+        "avatar": message["author"]["avatar"],   # removed just before message is added to the chat
     }
     if poll:
         message_dict["poll"] = poll
@@ -267,11 +268,14 @@ def prepare_message(message):
     return message_dict
 
 
-def prepare_messages(data, have_channel_id=False):
+def prepare_messages(data, have_channel_id=False, clean=True):
     """Prepare list of messages"""
     messages = []
     for message in data:
-        messages.append(prepare_message(message))
+        ready_message = prepare_message(message)
+        if clean:
+            del ready_message["avatar"]
+        messages.append(ready_message)
         if have_channel_id:
             messages[-1]["channel_id"] = message["channel_id"]
     return messages
@@ -656,3 +660,62 @@ def prepare_poll(poll):
         "options": options,
         "expires": expires,
     }
+
+
+def is_relevant_message(op, message, current_channel_id, channel_cache, guilds, my_id, my_all_roles):
+    """
+    Check of message is relevant and should be further processed.
+    - Message is in current or cached channel
+    - Message should ping
+    """
+    channel_id = message["channel_id"]
+
+    # check if message is in current channel
+    if channel_id == current_channel_id:
+        return True
+
+    # check if its cached
+    for channel in channel_cache:
+        if channel[0] == channel_id:
+            return True
+
+    # next part only for message_create
+    if op != "MESSAGE_CREATE":
+        return False
+
+    # skip muted and check message_notifications for this channel
+    guild_id = message.get("guild_id")
+    message_notifications = 2   # 0 - all messages, 1 - only mentions, 2 - nothing
+    for guild in guilds:
+        if guild["guild_id"] == guild_id:
+            if  guild.get("muted"):
+                return False
+            for channel in guild["channels"]:
+                if channel_id == channel["id"]:
+                    if channel.get("muted") or channel.get("hidden"):
+                        return False
+                    message_notifications = channel.get("message_notifications", 2)
+                    if message_notifications >= 10:
+                        message_notifications -= 10
+                    if message_notifications == 0:
+                        return True
+                    if message_notifications == 2:
+                        return False
+                    break
+            break
+
+    # if should ping
+    mentions = []
+    if message["mentions"]:
+        for mention in message["mentions"]:
+            mentions.append(mention["id"])
+    # select my roles from same guild as message
+    my_roles = []
+    for guild in my_all_roles:
+        if guild["guild_id"] == guild_id:
+            my_roles = guild["roles"]
+    # simplified logic to reduce cpu cost
+    if message["mention_everyone"] or bool([i for i in my_roles if i in message["mention_roles"]]) or my_id in mentions or not guild_id:
+        return True
+
+    return False

@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from endcord import acs, peripherals
+from endcord import acs, peripherals, utils
 
 logger = logging.getLogger(__name__)
 uses_pgcurses = hasattr(curses, "PGCURSES")
@@ -203,7 +203,8 @@ class TUI():
         curses.curs_set(0)   # using custom cursor
         curses.mousemask(curses.ALL_MOUSE_EVENTS)
         curses.mouseinterval(0)
-        print("\x1b[?2004h")   # enable bracketed paste mode
+        sys.stdout.write("\033[?2004h")   # enable bracketed paste mode
+        sys.stdout.flush()
         screen.clear()
         self.last_free_id = 1   # last free color pair id
         self.color_pairs = {}
@@ -247,7 +248,7 @@ class TUI():
         vline = config["tree_drop_down_vline"][0]
         self.vline = acs_map.get(vline, vline)
         self.tree_width = config["tree_width"]
-        self.extra_window_h = config["extra_window_height"]
+        self.extra_window_h = config["extra_window_height"]   # load initial value
         self.blink_cursor_on = config["cursor_on_time"]
         self.blink_cursor_off = config["cursor_off_time"]
         self.enable_blink_cursor = bool(self.blink_cursor_on) and bool(self.blink_cursor_off)
@@ -849,6 +850,21 @@ class TUI():
         """
         if uses_pgcurses:
             curses.set_tray_icon(icon)
+
+
+    def set_extra_height(self, value):
+        """Set extra window height to number or +1/-1"""
+        h, _ = self.screen_hw
+        if value == 1:
+            self.extra_window_h += 1
+        elif value == -1:
+            self.extra_window_h -= 1
+        else:
+            self.extra_window_h = value
+        self.extra_window_h = max(min(self.extra_window_h, int(2*h/3)), 3)
+        del self.win_extra_window
+        self.win_extra_window = None
+        self.draw_extra_window(self.extra_window_title, self.extra_window_body, select=self.extra_select, reset_scroll=False)
 
 
     def set_fun(self, fun_lvl):
@@ -2401,15 +2417,15 @@ class TUI():
                 if not self.bracket_paste:
                     self.spellcheck()
 
-            elif not self.insert_mode:   # normal mode in vimmode
-                 if not self.switch_tab_modifier and isinstance(key, int) and 49 <= key <= 57:
-                     self.pressed_num_key = key - 48
-                     return self.return_input_code(42)
+            elif not self.insert_mode and not self.switch_tab_modifier and isinstance(key, int) and 49 <= key <= 57:
+                # switch tab key in normal mode in vim mode
+                 self.pressed_num_key = key - 48
+                 return self.return_input_code(42)
 
             elif (code := self.common_keybindings(key, command=command, forum=forum)):
                 return self.return_input_code(code)
 
-            elif key == BACKSPACE:
+            elif key == BACKSPACE or key == 127:
                 if self.input_select_start is not None:
                     self.delete_selection()
                     self.input_select_start = None
@@ -2652,7 +2668,7 @@ class TUI():
             elif key == 9:   # TAB - same as CTRL+I
                 if self.enable_autocomplete:
                     if self.input_buffer and self.input_index == len(self.input_buffer):
-                        completions = peripherals.complete_path(self.input_buffer, separator=False)
+                        completions = utils.complete_path(self.input_buffer, separator=False)
                         if completions:
                             path = completions[selected_completion]
                             self.input_buffer = path
@@ -2875,6 +2891,9 @@ class TUI():
 
         elif self.win_extra_window and self.mouse_in_window(x, y, self.win_extra_window):
             x, y = self.mouse_rel_pos(x, y, self.win_extra_window)
+            if y == 0:
+                self.drag_extra_window()
+                return None
             self.extra_selected = self.extra_index + y - 1
             self.draw_extra_window(self.extra_window_title, self.extra_window_body, select=self.extra_select, reset_scroll=False)
 
@@ -2980,3 +2999,33 @@ class TUI():
             elif self.mlist_index + self.win_member_list.getmaxyx()[0] - 1 < len(self.member_list):
                 self.mlist_index += self.mouse_scroll_sensitivity
                 self.draw_member_list(self.member_list, self.member_list_format)
+
+
+    def drag_extra_window(self):
+        """Handle extra window resizing with mouse dragging until mouse is released"""
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+        sys.stdout.write("\033[?1003h")   # enable mouse movement reporting
+        sys.stdout.flush()
+        prev_y = None
+        first = True
+        try:
+            while self.run:
+                key = self.screen.getch()
+                if key != curses.KEY_MOUSE:
+                    continue
+                _, _, y, _, bstate = curses.getmouse()
+                if y != prev_y:
+                    if prev_y:
+                        h = self.screen_hw[0] - 2 - 2*self.bordered - y
+                        if h >= 3:
+                            self.set_extra_height(h)
+                    prev_y = y
+                if bstate & curses.BUTTON1_RELEASED or (bstate & curses.BUTTON1_PRESSED and not first):
+                    break
+                first = True
+        except curses.error:
+            return
+        finally:   # restore old state
+            sys.stdout.write("\033[?1003l")
+            sys.stdout.flush()
+            curses.mousemask(curses.ALL_MOUSE_EVENTS)

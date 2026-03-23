@@ -86,8 +86,6 @@
     Pin selected message to current channel.
 - `push_button [num/name]`  
     Push button on interactive app message. Specify either button number or button name (case-insensitive).
-- `dump_chat`  
-    Dump current chat to unique json, saved in Debug folder found inside config location.
 - `string_select [string]` / `string_select [num] [string]`  
     Select a string on interactive app message. Strings are provided in assist window. Specify `[num]` if there are multiple string selects.
 - `set_notifications ...` / `set_notifications <#[channel_id]> ...`  
@@ -127,6 +125,8 @@
     `duration` can be: `4w3d5h30m10s` where `w`is weeks, `d` is days..., can be used partially and mixed: `5h1w`. Default is 7 days and infinite uses.
 - `rename_folder [name]`  
     Locally rename currently selected folder in tree. Custom names are kept in state_profile_name.json in config dir.
+- `resize_extra_window [num/-1/+1]`  
+    Resize extra window to specified number or incrementally by +/- 1. Use `extra_window_height` theme setting to persist it.
 - `collapse_all_except *[option]`  
     Collapse all servers in tree except specific `[option]`: `current` (default), `selected`, `above`, `bellow`.  
 - `tree_select *[server/channel], *next/prev`  
@@ -151,6 +151,10 @@
     Open config directory with system file manager.
 - `show_log`  
     Show live log.
+- `dump_chat`  
+    Dump current chat to unique json, saved in `Debug` directory inside config location.
+- `dump_roles`  
+    Dump current server roles to unique json, saved in `Debug` directory inside config location.
 - `game_detection_blacklist [game_name]`  
     Toggle blacklisted state for games detected in past 7 days, with assist.
 - `set [key] = [value]` / `set [key]=[value]`  

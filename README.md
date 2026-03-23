@@ -81,6 +81,7 @@ It is built with Python (this [doesnt mean its slow](#note-on-python-performance
 - Experimental windowed mode with tray icon
 - Works in termux, with android notifications
 - Auto endcord and extensions check for updates
+- Run bots, with interactions
 - Lots of easter eggs
 
 
@@ -306,7 +307,7 @@ Wether endcord will work or crash depends on hosts api implementation, the more 
 
 ### Termux
 Endcord does work under termux, but some keybindings don't (`Ctrl/Alt+Space`). It is recommended to rebind them in endcord config or use endcord in desktop environment (like `openbox`) in a terminal emulator with xterm256-colors (like `alacritty`) and with Termux:X11 app.  
-Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson`.
+Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pynacl pycryptodome psutil`.
 To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
 Notifications will work as ling as endcord is running, so it might be necessary for termux to "Acquire wakelock".  
 
@@ -319,12 +320,19 @@ To prevent extension injection (malware can modify endcord config and inject ext
 ### Linux
 - Pre-built binaries (built with nuitka using clang) are available in releases  
     Binaries are built on Ubuntu-like distro. **Locally built binaries can be smaller, thus starts faster**.
-- From AUR:
+- Arch Linux (AUR):
     - `yay -S endcord` - full version with media support, larger executable
     - `yay -S endcord-lite` - lite version without voice calls and media support
     - `-git` versions will build from source, with latest changes
+- Gentoo Linux (GURU):
+    - `emerge --ask net-im/endcord` - full version installed from source (not built)
+    - `emerge --ask net-im/endcord-bin` - prebuilt full binary
 - [Build](#building) endcord, then copy built executable to system:  
     `sudo cp dist/endcord /usr/local/bin/`
+- Install script (installs binary from latest release or updates existing):
+    - `bash -c "$(curl -fsSL https://raw.githubusercontent.com/sparklost/endcord/main/tools/install.sh)"`
+    - Append ` -- --lite` to install lite instead
+    - Append ` -- --uninstall` to uninstall
 
 Optional dependencies:
 - `xclip` - Clipboard support on X11
@@ -336,20 +344,26 @@ Optional dependencies:
 - `mpv` - Play youtube videos in native player (non-ascii)
 - `libsecret` - Store token in system keyring (`gnome-keyring` is also required, with `dbus` as dependency)
 - `libappindicator-gtk3` - Tray support under wayland, for [experimental windowed mode](#experimental-windowed-mode) only.
+- `imagemagick` - To make notification images round; only needed for endcord-lite.
 
 ### Windows
 - Pre-built binaries (built with nuitka using clang) are available in releases
-- [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`
+- [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`  
+
 Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with experimental windowed mode, terminal is not required to use endcord.  
 WezTerm proved to introduce the least drawing issues.  
 Cmder settings: "Mouse" > check "Send mouse events to console" and "Mark/Copy" > uncheck "Intelligent mode", and set "Main console font" and "Alternative font" to same monospace font.  
-Emoji are known to work only with  WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
+Emoji are known to work only with WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
 Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.  
 
 ### macOS
 - Pre-built binaries (built with nuitka using clang) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/`.  
-Optional dependency, for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). Can be installed with: `brew aspell`.  
+- Install script (installs binary from latest release or updates existing):
+    - `bash -c "$(curl -fsSL https://raw.githubusercontent.com/sparklost/endcord/main/tools/install.sh)"`
+    - Append ` -- --lite` to install lite instead
+    - Append ` -- --uninstall` to uninstall
+Optional dependency for spellchecking: `aspell`. Can be installed with: `brew aspell`.  
 
 
 ## Disclaimer

@@ -1,3 +1,4 @@
+import os
 import shutil
 
 from Cython.Build import cythonize
@@ -16,8 +17,7 @@ extra_link_args = [
     "-s",
 ]
 
-if shutil.which("lld"):
-    extra_compile_args.append("-fuse-ld=lld")
+if shutil.which("lld") and os.environ.get("CC") == "clang":
     extra_link_args.append("-fuse-ld=lld")
 
 extensions = [

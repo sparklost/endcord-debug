@@ -56,6 +56,7 @@ settings = {
     "limit_command_history": 50,
     "game_detection_download_delay": 7,
     "downloads_path": None,
+    "notifications_pfp": True,
     "linux_notification_sound": "message",
     "custom_notification_sound": None,
     "linux_ringtone_incoming": "phone-incoming-call",
@@ -165,6 +166,7 @@ theme = {
     "color_chat_spoiler": [245, -1],
     "color_chat_code": [250, 233],
     "media_use_blocks": True,
+    "media_truecolor": True,
     "media_ascii_palette": "  ..',;:c*loexk#O0XNW",
     "media_saturation": 1.2,
     "media_font_aspect_ratio": 2.25,
@@ -252,6 +254,8 @@ command_bindings = {
     "11": "command_palette; type 'goto '",
     "336": "tree_select server; collapse_all_except selected",
     "337": "tree_select server prev; collapse_all_except selected",
+    "25-259": "resize_extra_window +1",
+    "25-258": "resize_extra_window -1",
 }
 
 

@@ -1,7 +1,7 @@
 ## Installing extensions
 Extensions can be installed in `Extensions` directory located in endcord config directory.  
 Installation can be done by simply git cloning extension repo into the extensions directory or by running `endcord -i [url]`.  
-There is also client command available: `install_extension [url]`. Running it without url will update all installed extensions.    
+There is also client command available: `install_extension [url]`. Running it without url will update all installed extensions.  
 Instead `url` can also be used `repo_owner/repo_name` which assumes github.  
 Extension loading can be toggled in config and is ON by default.  
 During loading process some extensions may fail to load or are invalid, check log for more info.  
@@ -79,7 +79,7 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
 - `__init__` - on end of app class init
 - `on_main_start` - just before main loop starts
 - `on_main_loop` - first in main loop
-- `on_message_event` - in main loop, when message event is received, before event is processed, has event at input and output
+- `on_message_event` - in main loop, when message event is received, before event is processed; has event at input and output; only "relevant" messages are passed here
 - `on_switch_channel_start` - near start of switch_channel, after self.active_channel is updated
 - `on_switch_channel_end` - near end of switch_channel, before UI is updated
 - `on_reconnect` - near end of reconnect, before UI is updated
@@ -93,18 +93,18 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
 - `init_bindings` - in load_extensions in tui.py, executed right after initializing all extensions in app.py
 - `on_binding` - at the end of common_keybindings in tui.py, executed only if there are no default bindings matched
 - `on_wait_input` - at the end of wait_input in app.py, executed only if there are no default action codes matched
-- `gateway_event` - at the end of loop in receiver in gateway.py, event data is passed as argument, ready event is skipped (will pass `None`)
-
+- `on_gateway_event` - at the start of loop in receiver in gateway.py, event data is passed as argument
+- `on_message_event_is_irrelevant` - in gateway.py near `elif optext == "MESSAGE_CREATE"` decides if these events are relevant and should be further processed. Has **raw** message event and event optext at input and is expected to return `True` if message is relevant (doesn't override already relevant messages).
 
 ## Adding a command
 1. Add method named `on_execute_command` to extension class, it takes 3 arguments: `command_text` (str), `chat_sel` (int) - line selected in the chat, `tree_sel` (int) -  line selected in the channel tree.
-    - Match keyword usually with `cmd_text.startswith("some_text")`, and if needed, use regex to match arguments like channel id, numbers etc.
+    - Match keyword usually with `command_text.startswith("some_text")`, and if needed, use regex to match arguments like channel id, numbers etc.
     - If nothing is matched, return `False`.
-    - If command is matched, execute your code, then return True.
+    - If command is matched, execute your code, then return `True`.
     - Some commands shouldn't be executed when viewing forum, to check if forum is opened use `if self.app.forum:`
     - To get message/forum thread object use: `self.messages[self.lines_to_msg(chat_sel)]`
     - To get metadata for selected object in tree use: `self.tree_metadata[tree_sel]`
-2. Optionally add global constant `EXT_COMMAND_ASSIST` with format: `(("command - descriotion", "command"), (...)...)`. It will be appended to builtin commands.
+2. Optionally add global constant `EXT_COMMAND_ASSIST` with format: `(("command - description", "command"), (...)...)`. It will be appended to builtin commands.
 
 
 ## Adding a binding
@@ -155,10 +155,42 @@ Look for `__init__` in `app` class in `./endcord/app.py` to see what is ran befo
 
 
 ## Available libraries
-If endcord is built into binary, only libraries included by endcord can be used by extension.  
-This list can be quite long, so check py files for used libraries (entire stdlib should be included by build tool).  
-Run `uv tree` to see only libraries included in endcord-lite builds, and `uv tree --group media` to see libraries included in full endcord build.  
+Run `uv tree` to see only libraries included in endcord-lite builds, and `uv tree --group media` to see libraries included in full endcord build (this list doesnt show stdlib libraries, but they should all be available).  
 It is possible to add entire library to extension directory, which can be imported by extension, but this may be unstable cross-platform.  
+
+
+## Creating bots
+1. First of all, bot has to have `Bot ` prepended to its token.  
+2. It is recommended to set bot intents value in the config `capabilities` option. Default is `50364033` which allows basic chat features.  
+Refer to [this](https://docs.discord.com/developers/events/gateway#gateway-intents) for more info on intents.  
+4. Next step is to register application commands.  
+To register a command, use `app.discord.bot_register_command(command_obj, guild_id=None, is_json=False)` in the extension.  
+If `guild_id` is ommited then this will be global command.  
+`command_obj` is python object, but json string can be passed too, just set `is_json=True`.  
+`command_obj` is send as-is without any checks, refer to [this](https://docs.discord.com/developers/interactions/application-commands#application-command-object) for more info on how to write commands.  
+Command is registered only once, registering command with same name will overwrite old one.  
+To update command use `app.discord.bot_update_command(command_obj, command_id, guild_id=None)`.  
+To delete command use `app.discord.bot_delete_command(command_id, guild_id=None)`.  
+To obtain role ids for specific guild (needed for creating command permissions), run `dump_roles` endcord command while inside desired guild. Json file will be saved in "Debug" directory in endcord config location.  
+5. Handle received interactions  
+Interactions are received by gateway, and buffered. To get one by one interaction from the buffer run: `app.gateway.bot_get_interactions()`.  
+Interaction object structure can be found [here](https://docs.discord.com/developers/interactions/receiving-and-responding#interaction-object).  
+It will return either raw interaction object or `None` when buffer is empty.  
+It is recommended to poll `bot_get_interactions`.  
+If interaction will take a long time to complete (eg. doing some CPU-heavy task) then offload it to a thread, so polling loop kepps running with low latency.
+Store `id` and `token` values somewhere, because they are needed to send the response (`interaction_id` and `interaction_token` args).  
+Note that bot must respond within 3 seconds.  
+6. Respond to interaction  
+To respond, simply call `app.discord.bot_respond_interaction(response_type, response_obj, interaction_id, interaction_token)`
+Responding to interactions is documented in detail [here](https://docs.discord.food/interactions/receiving-and-responding#responding-to-an-interaction). Response object structure can be found [here](https://docs.discord.food/interactions/receiving-and-responding#interaction-callback-message-data-structure).  
+Be sure to always handle `PING` interaction.  
+7. Long response
+If the response is going to take a while, then first send deferred response (`response_type=5`).  
+And then when final response is ready, edit the original interaction with `app.discord.bot_edit_interaction(response_obj, interaction_token)`.  
+Note that `interaction_token` will expire in 15 minutes.  
+Or delete it with `app.discord.bot_delete_interaction(interaction_token)`.  
+
+Minimal bot implementation is available [here](https://github.com/sparklost/endcord-bot-base) and can be used as a template.  
 
 
 ## Checking extensions
