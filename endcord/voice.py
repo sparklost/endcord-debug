@@ -551,4 +551,3 @@ class VoiceHandler:
                 if frame is None:
                     break
                 stream.play(frame.to_ndarray().astype("float32").T)
-
