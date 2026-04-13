@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 SEARCH_HELP_TEXT = """from:user_id
 mentions:user_id
 has:link/embed/file/video/image/sound/sticker
@@ -33,7 +38,8 @@ COMMAND_ASSISTS = (
     ("goto_mention *[num] - go to channel/message mention in selected message", "goto_mention"),
     ("cancel *[download/1/upload/2/attachment/3] - cancel all downloads and/or uploads", "cancel"),
     ("external_edit - open external editor to type message in it", "external_edit"),
-    ("member_list - toggle member list", "member_list"),
+    ("toggle_member_list - toggle member list", "toggle_member_list"),
+    ("toggle_tree - toggle channel tree", "toggle_tree"),
     ("toggle_thread - join/leave currently open thread", "toggle_thread"),
     ("toggle_thread_tree - join/leave selected thread in tree", "toggle_thread_tree"),
     ("bottom - go to chat bottom", "bottom"),
@@ -64,7 +70,8 @@ COMMAND_ASSISTS = (
     ("voice_leave_call - leave current voice call", "voice_leave_call"),
     ("voice_reject_call - silence incoming call or cancel outgoing call", "voice_reject_call"),
     ("voice_list_call - show all call participants and their states in an updated list", "voice_list_call"),
-    ("voice_toggle_mute - toggle mute state before joining a call", "voice_toggle_mute"),
+    ("voice_set_volume_input [0-100] - change volume for input devices in voice call", "voice_set_volume_input"),
+    ("voice_set_volume_output [0-100] - change volume for output devices in voice call", "voice_set_volume_output"),
     ("generate_invite *[duration] *[limit] - generate invite to current server, default is 7 days", "generate_invite"),
     ("rename_folder [name] - locally rename currently selected folder in tree", "rename_folder"),
     ("resize_extra_window [num/-1/+1] - resize extra window", "resize_extra_window"),
@@ -77,6 +84,7 @@ COMMAND_ASSISTS = (
     ("install_extension *[url] - install extension from specified git url or update all", "install_extension"),
     ("open_config_dir - open config directory with system file manager", "open_config_dir"),
     ("show_log - show live log", "show_log"),
+    ("show_stats - show current client stats", "show_stats"),
     ("dump_chat - dump current chat to unique json file", "dump_chat"),
     ("dump_roles - dump current server roles to unique json file", "dump_roles"),
     ("game_detection_blacklist [game] - toggle blacklist for games detected in past 7 days", "game_detection_blacklist"),

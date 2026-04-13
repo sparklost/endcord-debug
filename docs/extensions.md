@@ -157,6 +157,8 @@ Look for `__init__` in `app` class in `./endcord/app.py` to see what is ran befo
 ## Available libraries
 Run `uv tree` to see only libraries included in endcord-lite builds, and `uv tree --group media` to see libraries included in full endcord build (this list doesnt show stdlib libraries, but they should all be available).  
 It is possible to add entire library to extension directory, which can be imported by extension, but this may be unstable cross-platform.  
+More stable way of adding a library is by using `setup.py` script that will install specific libraries. This script is run when extension is installed.  
+See [Example dependency installer](#example-dependency-installer), it is enough to only change `LIBRARIES` tuple.  
 
 
 ## Creating bots
@@ -164,7 +166,7 @@ It is possible to add entire library to extension directory, which can be import
 2. It is recommended to set bot intents value in the config `capabilities` option. Default is `50364033` which allows basic chat features.  
 Refer to [this](https://docs.discord.com/developers/events/gateway#gateway-intents) for more info on intents.  
 4. Next step is to register application commands.  
-To register a command, use `app.discord.bot_register_command(command_obj, guild_id=None, is_json=False)` in the extension.  
+To register a command, use `app.discord.bot_register_command(command_obj, guild_id=None, is_json=False)` in the extension. It returns `command_id` for the registered/updated command.  
 If `guild_id` is ommited then this will be global command.  
 `command_obj` is python object, but json string can be passed too, just set `is_json=True`.  
 `command_obj` is send as-is without any checks, refer to [this](https://docs.discord.com/developers/interactions/application-commands#application-command-object) for more info on how to write commands.  
@@ -213,7 +215,7 @@ from endcord import peripherals
 EXT_NAME = "Notify Test"
 EXT_VERSION = "0.1.0"
 EXT_ENDCORD_VERSION = "0.9.0"
-EXT_DESCRIPTION = "An extension that sends desktop notification every time user sends a message containing word 'test'"
+EXT_DESCRIPTION = "An extension that sends desktop notification every time someone sends a message containing word 'test'"
 EXT_SOURCE = "https://github.com/sparklost/endcord"
 logger = logging.getLogger(__name__)
 
@@ -227,7 +229,7 @@ class Extension:
     def on_message_event(self, new_message):
         """Ran when message event is received"""
         data = new_message["d"]
-        if new_message["op"] == "MESSAGE_CREATE" and data["user_id"] == self.app.my_id:
+        if new_message["op"] == "MESSAGE_CREATE":
             peripherals.notify_send(
                 "Extension Test",
                 "You sent a Test",
@@ -235,4 +237,39 @@ class Extension:
                 custom_sound=self.app.notification_path,
             )
             logger.info("You sent a Test")
+```
+
+
+## Example dependency installer
+```py
+import os
+import shutil
+import subprocess
+
+LIBRARIES = (
+    "apsw",
+    "psycopg",
+)
+
+def main():
+    """Setup environment"""
+    subprocess.run(["virtualenv", "env"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for lib in LIBRARIES:
+        subprocess.run(
+            ["./env/bin/python", "-m", "pip", "install", "--target=temp", lib],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    current_dir = os.getcwd()
+    temp_dir = os.path.join(current_dir, "temp")
+    if not os.path.exists(temp_dir):
+        return
+    for lib in LIBRARIES:
+         shutil.move(os.path.join(temp_dir, lib), os.path.join(current_dir, lib))
+    shutil.rmtree(temp_dir)
+    shutil.rmtree(os.path.join(current_dir, "env"))
+
+if __name__ == "__main__":
+    main()
 ```

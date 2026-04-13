@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import json
 import logging
 import queue
@@ -10,10 +15,13 @@ import urllib
 import urllib.parse
 
 import av
-import davey
+import dave
 import nacl.bindings
 import socks
 import websocket
+
+# import davey   # using dave.py until this gets fixed: https://github.com/Snazzah/davey/issues/15
+
 
 # safely import soundcard, in case there is no sound system
 try:
@@ -23,8 +31,8 @@ except (AssertionError, RuntimeError):
     have_soundcard = False
 
 DISCORD_HOST = "discord.com"
-LOCAL_MEMBER_COUNT = 50   # members per guild, CPU-RAM intensive
-VOICE_FLAGS = 3   # CLIPS_ENABLED and ALLOW_VOICE_RECORDING
+BASE_SOUND_GAIN = 2.0
+VOICE_FLAGS = 2   # ALLOW_VOICE_RECORDING
 UDP_TIMEOUT = 10
 logger = logging.getLogger(__name__)
 CODECS = [
@@ -39,18 +47,6 @@ CODECS = [
 ]
 rtp_unpacker = struct.Struct(">xxHII")
 
-
-def strip_rtp_extension(payload):
-    """Remove rtp extension from opus payload"""
-    if len(payload) < 4:
-        return payload
-    profile = int.from_bytes(payload[0:2], "big")
-    if profile == 0xBEDE:
-        length = int.from_bytes(payload[2:4], "big") * 4
-        return payload[4 + length:]
-    return payload
-
-
 # get speaker
 if have_soundcard:
     try:
@@ -61,10 +57,24 @@ if have_soundcard:
 else:
     have_sound = False
 
+
+def volume_to_gain(volume):
+    """Convert volume value 0-200 to gain, above 100 is boost up to x5"""
+    volume = max(min(volume, 200), 0)
+    if volume == 0:
+        return 0.0
+    volume = volume / 100
+    if volume <= 1.0:
+        db = -30.0 + 30.0 * volume
+    else:
+        db = 14 * (volume - 1.0) ** 1.5
+    return BASE_SOUND_GAIN * (10 ** (db / 20.0))
+
+
 class Gateway():
     """Methods for fetching and sending data to Discord voice gateway through websocket"""
 
-    def __init__(self, voice_gateway_data, my_id, mute, user_agent, proxy=None):
+    def __init__(self, voice_gateway_data, my_id, volume_input, volume_output, user_agent, proxy=None):
         self.voice_gateway_data = voice_gateway_data
         self.guild_id = voice_gateway_data["guild_id"]
         self.channel_id = voice_gateway_data["channel_id"]
@@ -83,16 +93,26 @@ class Gateway():
         self.voice_handler = None
         self.voice_handler_thread = None
         self.call_buffer = []
-        self.mute = mute
         self.media_session_id = None
 
-        self.dave_session = davey.DaveSession(
-            protocol_version=davey.DAVE_PROTOCOL_VERSION,
-            user_id=int(self.my_id),
-            channel_id=int(self.channel_id),
+        self.dave_session = dave.Session()
+        self.dave_session.init(
+            version=dave.get_max_supported_protocol_version(),
+            group_id=int(self.channel_id),
+            self_user_id=str(self.my_id),
         )
+        # self.dave_session = davey.DaveSession(   # fix_davey
+        #     protocol_version=davey.DAVE_PROTOCOL_VERSION,
+        #     user_id=int(self.my_id),
+        #     channel_id=int(self.channel_id),
+        # )
         self.dave_protocol_version = 0   # no dave yet
         self.pending_transition_id = None
+        self.known_user_ids = set()
+        self.known_user_ids.add(str(my_id))   # fix_davey - uses int ids everywhere
+        self.ssrc_cache = set()
+        self.volume_input = volume_input
+        self.volume_output = volume_output
 
         self.connect()
 
@@ -100,12 +120,16 @@ class Gateway():
     def create_udp_socket(self):
         """Create udp soocket to the server"""
         if self.proxy.scheme:
-            self.udp = socks.socksocket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.udp.set_proxy(
-                proxy_type=socks.SOCKS5 if "socks" in self.proxy.scheme.lower() else socks.HTTP,
-                addr=self.proxy.hostname,
-                port=self.proxy.port,
-            )
+            if "socks" in self.proxy.scheme.lower():
+                self.udp = socks.socksocket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.udp.set_proxy(
+                    proxy_type=socks.SOCKS5,
+                    addr=self.proxy.hostname,
+                    port=self.proxy.port,
+                )
+            else:
+                self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                logger.warning("Only SOCKS5 proxy can be used for voice calls. This call will be made without proxy!")
         else:
             self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp.connect((self.server_ip, self.server_port))
@@ -148,8 +172,19 @@ class Gateway():
     def start_voice_handler(self):
         """Initialize and start voice handler"""
         if not self.voice_handler:
-            self.voice_handler = VoiceHandler(self, self.udp, self.secret_key, self.selected_mode)
+            self.voice_handler = VoiceHandler(
+                self,
+                self.udp,
+                self.secret_key,
+                self.selected_mode,
+                self.volume_input,
+                self.volume_output,
+            )
             self.voice_handler.start()
+
+        while self.ssrc_cache:   # load cached ssrc-id pairs received before voice handler was initialised
+            ssrc, user_id = self.ssrc_cache.pop()
+            self.voice_handler.add_ssrc_mapping(ssrc, user_id)
 
 
     def stop_voice_handler(self):
@@ -185,8 +220,20 @@ class Gateway():
         self.identify()
 
 
+    def send_binary(self, opcode, payload):
+        """Send a binary websocket message to the gateway"""
+        logger.debug(f"BINARY SEND: op: {opcode}, data: {payload}")
+        # logger.info(("BINARY SEND", opcode, payload))
+        try:
+            self.ws.send_binary(struct.pack(">B", opcode) + payload)
+        except websocket._exceptions.WebSocketException:
+            self.disconnect()
+
+
     def send(self, request):
         """Send data to gateway"""
+        logger.debug(f"SEND: op: {request["op"]}, data: {request}")
+        # logger.info(("SEND", request))
         try:
             self.ws.send(json.dumps(request))
         except websocket._exceptions.WebSocketException:
@@ -205,7 +252,7 @@ class Gateway():
                 OSError,
             ):
                 break
-            if ws_opcode == 8 and len(data) >= 2:
+            if ws_opcode == 8 and len(data) >= 2:   # error
                 if not data:
                     break
                 code = struct.unpack("!H", data[0:2])[0]
@@ -214,21 +261,26 @@ class Gateway():
                     break
                 logger.warning(f"Gateway error code: {code}, reason: {reason}")
                 break
-            try:
+            elif ws_opcode == 2:   # binary data
+                sequence, opcode = struct.unpack(">HB", data[:3])
+                response = data[3:]
+                self.sequence = max(sequence, self.sequence)
+            elif ws_opcode == 1:
                 try:
-                    response = json.loads(data)
-                    opcode = response["op"]
-                except ValueError:
-                    response = None
-                    opcode = None
-            except Exception as e:
-                logger.warning(f"Receiver error: {e}")
-                break
-            # debug_events
-            # from endcord import debug
-            # debug.save_json(response, f"event_{opcode}.json", False)
+                    try:
+                        response = json.loads(data)
+                        opcode = response["op"]
+                    except ValueError:
+                        response = None
+                        opcode = None
+                        continue
+                except Exception as e:
+                    logger.warning(f"Receiver error: {e}")
+                    break
+                self.sequence = max(response.get("seq", 0), self.sequence)
 
-            self.sequence = max(response.get("seq", 0), self.sequence)
+            logger.debug(f"RECEIVE: op: {opcode}, data: {response}")
+            # logger.info(("RECEIVE", opcode, response))
 
             if opcode == 6:
                 self.heartbeat_received = True
@@ -252,7 +304,6 @@ class Gateway():
                 self.server_port = int(data["port"])
                 self.enc_modes = data["modes"]
                 self.streams = data["streams"]
-                logger.debug("Received: READY event")
                 self.create_udp_socket()
                 self.send_ip_discovery()
                 self.receive_ip_discovery()
@@ -267,7 +318,6 @@ class Gateway():
                 self.secret_key = data["secret_key"]
                 self.dave_protocol_version = data.get("dave_protocol_version", 0)
                 self.state = 2
-                logger.debug("Received: SESSION DESCRIPTION event, voice gateway is ready")
                 self.send_speaking(0)
                 self.start_voice_handler()
 
@@ -277,7 +327,6 @@ class Gateway():
                 self.video_codec = data["video_codec"]
                 self.media_session_id = data["media_session_id"]
                 self.update = True
-                logger.debug("Received: SESSION UPDATE event")
 
             elif opcode == 11:   # CLIENT CONNECT
                 data = response["d"]
@@ -286,6 +335,7 @@ class Gateway():
                         "op": "USER_JOIN",
                         "user_id": user_id,
                     })
+                    self.known_user_ids.add(str(user_id))
 
             elif opcode == 13:   # CLIENT DISCONNECT
                 data = response["d"]
@@ -293,6 +343,7 @@ class Gateway():
                     "op": "USER_LEAVE",
                     "user_id": data["user_id"],
                 })
+                self.known_user_ids.discard(str(data["user_id"]))
 
             elif opcode == 5:   # SPEAKING
                 data = response["d"]
@@ -301,73 +352,93 @@ class Gateway():
                     "user_id": data["user_id"],
                     "speaking": bool(data["user_id"]),
                 })
-                ssrc = data.get("ssrc")
-                if ssrc and self.voice_handler:
-                    self.voice_handler.ssrc_to_userid[ssrc] = int(user_id)
+                if "ssrc" in data:
+                    if self.voice_handler:
+                        self.voice_handler.add_ssrc_mapping(int(data["ssrc"]), int(data["user_id"]))
+                        # self.voice_handler.ssrc_to_userid[ssrc] = int(data["user_id"])   # fix_davey
+                    else:   # add to cache until voice_handler object is created
+                        self.ssrc_cache.add((int(data["ssrc"]), int(data["user_id"])))
 
             # DAVE OPCODES
             elif opcode == 21:  # DAVE_PROTOCOL_PREPARE_TRANSITION
                 data = response["d"]
                 transition_id = data["transition_id"]
                 self.pending_transition_id = transition_id
-                if data.get("dave_protocol_version", 0) == 0:
-                    # enable passthrough
-                    if self.voice_handler:
-                        self.voice_handler.set_passthrough(True)
                 self.send_dave_ready_for_transition(transition_id)
 
             elif opcode == 22:  # DAVE_PROTOCOL_EXECUTE_TRANSITION
-                # switch to new epoch key ratchet
                 if self.voice_handler:
-                    self.voice_handler.execute_transition(self.dave_session)
+                    self.voice_handler.update_ratchets(self.dave_session)
 
-            elif opcode == 24:  # DAVE_PROTOCOL_PREPARE_EPOCH
+            elif opcode == 24:   # DAVE_PROTOCOL_PREPARE_EPOCH
                 data = response["d"]
                 if data["epoch"] == 1:
                     # re-init session for new group creation
-                    self.dave_session.reinit(
-                        protocol_version=data.get("dave_protocol_version", 1),
-                        user_id=int(self.my_id),
-                        channel_id=int(self.channel_id),
+                    self.dave_session.reset()
+                    self.dave_session.init(
+                        version=data.get("dave_protocol_version", 1),
+                        group_id=int(self.channel_id),
+                        self_user_id=str(self.my_id),
                     )
+                    # self.dave_session.reinit(   # fix_davey
+                    #     protocol_version=data.get("dave_protocol_version", 1),
+                    #     user_id=int(self.my_id),
+                    #     channel_id=int(self.channel_id),
+                    # )
                     self.send_dave_mls_key_package()
 
             elif opcode == 25:  # DAVE_MLS_EXTERNAL_SENDER_PACKAGE
-                self.dave_session.set_external_sender(bytes(response["d"]["package"]))
+                self.dave_session.set_external_sender(response)
                 self.send_dave_mls_key_package()
 
-            elif opcode == 27:  # DAVE_MLS_PROPOSAL
-                data = response["d"]
-                op_type = davey.ProposalsOperationType(data["proposal_type"])
-                proposals_bytes = bytes(data["proposals"])
-                expected_ids = [int(uid) for uid in data.get("expected_user_ids", [])]
-                result = self.dave_session.process_proposals(
-                    op_type,
-                    proposals_bytes,
-                    expected_ids if expected_ids else None,
-                )
-                if result is not None:   # if this is committing member, send commit
-                    self.send_dave_mls_commit_welcome(result.commit, result.welcome)
+            elif opcode == 27:  # DAVE_MLS_PROPOSALS
+                result = self.dave_session.process_proposals(response, self.known_user_ids)
+                if result is not None:
+                    self.send_dave_mls_commit_welcome(result)
+                # op_type_int = struct.unpack_from(">B", response, 0)[0]   # fix_davey
+                # op_type = davey.ProposalsOperationType.append if op_type_int == 0 else davey.ProposalsOperationType.revoke
+                # result = self.dave_session.process_proposals(op_type, response[1:])
+                # if result is not None:
+                #     self.send_dave_mls_commit_welcome(result.commit, result.welcome)
 
             elif opcode == 29:  # DAVE_MLS_ANNOUNCE_COMMIT_TRANSITION
-                data = response["d"]
-                try:
-                    self.dave_session.process_commit(bytes(data["commit"]))
-                    self.send_dave_ready_for_transition(data["transition_id"])
-                except Exception as e:
-                    logger.debug(f"Invalid welcome: {e}")
-                    self.send_invalid_commit_welcome(transition_id)
-                    self.send_key_package()
+                transition_id = struct.unpack_from(">H", response, 0)[0]
+                commit = response[2:]
+                result = self.dave_session.process_commit(commit)
+                if isinstance(result, dave.RejectType):
+                    logger.warning(f"Invalid commit: {result}")
+                    self.send_dave_mls_invalid_commit_welcome(transition_id)
+                    self.send_dave_mls_key_package()
+                else:
+                    if self.voice_handler:
+                        self.voice_handler.update_ratchets(self.dave_session)
+                    if transition_id != 0:
+                        self.send_dave_ready_for_transition(transition_id)
+                # try:   # fix_davey
+                #     self.dave_session.process_commit(commit)
+                #     self.send_dave_ready_for_transition(transition_id)
+                # except Exception as e:
+                #     logger.warning(f"Invalid commit: {e}")
+                #     self.send_dave_mls_invalid_commit_welcome(transition_id)
+                #     self.send_key_package()
 
             elif opcode == 30:  # DAVE_MLS_WELCOME
-                data = response["d"]
-                try:
-                    self.dave_session.process_welcome(bytes(data["welcome"]))
-                    self.send_dave_ready_for_transition(data["transition_id"])
-                except Exception as e:
-                    logger.debug(f"Invalid welcome: {e}")
-                    self.send_invalid_commit_welcome(transition_id)
-                    self.send_key_package()
+                transition_id = struct.unpack_from(">H", response, 0)[0]
+                result = self.dave_session.process_welcome(response[2:], self.known_user_ids)
+                if result is None:
+                    logger.warning("Invalid welcome")
+                    self.send_dave_mls_invalid_commit_welcome(transition_id)
+                    self.send_dave_mls_key_package()
+                else:
+                    if self.voice_handler:
+                        self.voice_handler.update_ratchets(self.dave_session)
+                    self.send_dave_ready_for_transition(transition_id)
+                # try:   # fix_davey
+                #     self.dave_session.process_welcome(response[2:])
+                # except Exception as e:
+                #     logger.warning(f"Invalid welcome: {e}")
+                #     self.send_dave_mls_invalid_commit_welcome(transition_id)
+                #     self.send_key_package()
 
         logger.debug("Receiver stopped")
         self.disconnect()
@@ -422,7 +493,8 @@ class Gateway():
                 "session_id": self.voice_gateway_data["session_id"],
                 "token": self.voice_gateway_data["token"],
                 "video": True,
-                "max_dave_protocol_version": davey.DAVE_PROTOCOL_VERSION,
+                "max_dave_protocol_version": dave.get_max_supported_protocol_version(),
+                # "max_dave_protocol_version": davey.DAVE_PROTOCOL_VERSION,   # fix_davey
                 "streams": [{
                     "type": "video",
                     "rid": "100",
@@ -435,7 +507,6 @@ class Gateway():
             },
         }
         self.send(payload)
-        logger.debug("Identifying with voice gateway")
 
 
     def select_protocol(self):
@@ -454,7 +525,6 @@ class Gateway():
             },
         }
         self.send(payload)
-        logger.debug("Sent SELECT PROTOCOL event")
 
 
     def send_dave_ready_for_transition(self, transition_id):
@@ -463,29 +533,21 @@ class Gateway():
             "op": 23,
             "d": {"transition_id": transition_id},
         })
-        logger.debug(f"Sent ready for transition (op 23), transition_id={transition_id}")
 
 
     def send_dave_mls_key_package(self):
         """Send DAVE_MLS_KEY_PACKAGE event"""
-        key_package = self.dave_session.get_serialized_key_package()
-        self.send({
-            "op": 26,
-            "d": {"key_package": list(key_package)},
-        })
-        logger.debug("Sent MLS key package (op 26)")
+        key_package = self.dave_session.get_marshalled_key_package()
+        # key_package = self.dave_session.get_serialized_key_package()   # fix_davey
+        self.send_binary(26, key_package)
 
 
-    def send_dave_mls_commit_welcome(self, commit, welcome):
+    def send_dave_mls_commit_welcome(self, commit, welcome=None):
         """Send DAVE_MLS_COMMIT_WELCOME"""
-        payload = {"commit": list(commit)}
+        payload = commit
         if welcome is not None:
-            payload["welcome"] = list(welcome)
-        self.send({
-            "op": 28,
-            "d": payload,
-        })
-        logger.debug("Sent MLS commit/welcome (op 28)")
+            payload += welcome
+        self.send_binary(28, payload)
 
 
     def send_dave_mls_invalid_commit_welcome(self, transition_id):
@@ -494,7 +556,6 @@ class Gateway():
             "op": 31,
             "d": {"transition_id": transition_id},
         })
-        logger.warning(f"Sent invalid commit/welcome (op 31), transition_id={transition_id}")
 
 
     def send_speaking(self, speaking_packet_delay):
@@ -508,7 +569,6 @@ class Gateway():
             },
         }
         self.send(payload)
-        logger.debug("Sent SPEAKING event")
 
 
     def get_state(self):
@@ -552,24 +612,29 @@ class Gateway():
         return self.media_session_id
 
 
-    def set_mute(self, state):
+    def set_volumes(self, volume_input, volume_output):
         """Set muted state, will stop recording and sending sound"""
-        self.mute = state
-
+        self.volume_input = volume_input
+        self.volume_output = volume_output
+        if self.voice_handler:
+            self.voice_handler.set_volumes(volume_input, volume_output)
 
 
 class VoiceHandler:
     """Voice call sound receiver and transmitter, player and recorder"""
 
-    def __init__(self, gateway, udp, secret_key, encryption_mode):
+    def __init__(self, gateway, udp, secret_key, encryption_mode, volume_input, volume_output):
         self.gateway = gateway
         self.udp = udp
         self.secret_key = bytes(secret_key)
         self.mode = encryption_mode
         self.dave_session = gateway.dave_session
+        self.ssrc_to_decryptor = {}
         self.ssrc_to_userid = {}
         self.audio_queue = queue.Queue(maxsize=10)
         self.opus_decoder = av.codec.CodecContext.create("opus", "r")
+        self.gain_input = volume_to_gain(volume_input)
+        self.gain_output = volume_to_gain(volume_output)
 
 
     def start(self):
@@ -602,18 +667,30 @@ class VoiceHandler:
             pass
 
 
-    def set_passthrough(self, enabled):
-        """Set passthrugh for DAVE protocol"""
-        self.passthrough = enabled
-        if self.dave_session:
-            self.dave_session.set_passthrough_mode(enabled)
+    def set_volumes(self, volume_input, volume_output):
+        """Set muted state, will stop recording and sending sound"""
+        self.gain_input = volume_to_gain(volume_input)
+        self.gain_output = volume_to_gain(volume_output)
 
 
-    def execute_transition(self, dave_session):
-        """After execute_transition, stop passthrough on send side"""
-        self.passthrough = False
-        # keep accepting packets from old epoch for up to 10 seconds
-        dave_session.set_passthrough_mode(False, transition_expiry=10)
+    def update_ratchets(self, session):
+        """Update DAVE ratchets"""
+        for ssrc, user_id in self.ssrc_to_userid.items():
+            ratchet = session.get_key_ratchet(str(user_id))
+            if ratchet is not None:
+                if ssrc not in self.ssrc_to_decryptor:
+                    self.ssrc_to_decryptor[ssrc] = dave.Decryptor()
+                self.ssrc_to_decryptor[ssrc].transition_to_key_ratchet(ratchet, transition_expiry=10.0)
+
+
+    def add_ssrc_mapping(self, ssrc, user_id):
+        """Add user to ssrc map and transition ratchet"""
+        self.ssrc_to_userid[ssrc] = user_id
+        ratchet = self.gateway.dave_session.get_key_ratchet(str(user_id))
+        if ratchet is not None:
+            if ssrc not in self.ssrc_to_decryptor:
+                self.ssrc_to_decryptor[ssrc] = dave.Decryptor()
+            self.ssrc_to_decryptor[ssrc].transition_to_key_ratchet(ratchet, transition_expiry=10.0)
 
 
     def receiver_loop(self):
@@ -632,68 +709,77 @@ class VoiceHandler:
             if not data:
                 continue
 
-            # unpack for different rtpsizes
+            # RTP
+            if (data[0] >> 6) != 2:   # rtp version
+                continue
             data = bytearray(data)
             sequence, timestamp, ssrc = rtp_unpacker.unpack_from(data[:12])
-
             cutoff = 12 + (data[0] & 0b00001111) * 4
-            if data[0] & 0b00010000:
+            has_extension = data[0] & 0b00010000
+            if has_extension:
                 cutoff += 4
-
             header = data[:cutoff]
             counter = data[-4:]
             ciphertext = data[cutoff:-4]
+            if data[1] & 0x7F != 0x78:   # must be opus payload
+                continue
 
-            if 200 <= data[1] <= 204:   # RTCP
-                pass
-
-            else:   # RTP
-                # decrypt
-                try:
-                    if self.mode == "aead_aes256_gcm_rtpsize":
-                        nonce = bytearray(12)
-                        nonce[:4] = counter
-                        payload = nacl.bindings.crypto_aead_aes256gcm_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
-                    elif self.mode == "aead_xchacha20_poly1305_rtpsize":
-                        nonce = bytearray(24)
-                        nonce[:4] = counter
-                        payload = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
-                    else:
-                        logger.error(f"Unknown mode: {self.mode}")
-                        continue
-                    payload = strip_rtp_extension(payload)
-
-                    # DAVE
-                    if self.dave_session.ready:
-                        user_id = self.ssrc_to_userid.get(ssrc)
-                        if user_id is not None:
-                            try:
-                                payload = self.dave_session.decrypt(
-                                    user_id,
-                                    davey.MediaType.audio,
-                                    payload,
-                                )
-                            except Exception as e:
-                                logger.error(f"DAVE decryption failed: {e}")
-                                continue
-                        else:
-                            logger.debug(f"Unknown ssrc {ssrc}")
-                            continue
-                    elif not self.passthrough:   # session not ready and not in passthrough
-                        continue
-
-                except Exception as e:
-                    logger.error(f"Decryption failed for mode: {self.mode}. Error: {e}")
+            # transport
+            try:
+                if self.mode == "aead_aes256_gcm_rtpsize":
+                    nonce = bytearray(12)
+                    nonce[:4] = counter
+                    payload = nacl.bindings.crypto_aead_aes256gcm_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
+                elif self.mode == "aead_xchacha20_poly1305_rtpsize":
+                    nonce = bytearray(24)
+                    nonce[:4] = counter
+                    payload = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(bytes(ciphertext), bytes(header), bytes(nonce), self.secret_key)
+                else:
+                    logger.error(f"Unknown mode: {self.mode}")
                     continue
+            except Exception as e:
+                logger.error(f"Decryption failed; mode: {self.mode}; error: {e}")
+                continue
 
-                # decode opus and add to audio queue
-                try:
-                    av_packet = av.packet.Packet(payload)
-                    frames = self.opus_decoder.decode(av_packet)
-                    for frame in frames:
-                        self.audio_queue.put(frame)
-                except Exception as e:
-                    logger.error(f"PyAV opus decoding failed. Error: {e}")
+            # strip RTP extension body
+            if has_extension:
+                ext_body_len = int.from_bytes(data[cutoff - 2:cutoff], "big") * 4
+                payload = payload[ext_body_len:]
+
+            # DAVE
+            if self.gateway.dave_protocol_version > 0:
+                if not self.gateway.dave_session.has_established_group():
+                    continue
+                decryptor = self.ssrc_to_decryptor.get(ssrc)
+                if decryptor is None:
+                    logger.debug(f"Unknown ssrc {ssrc}")
+                    continue
+                result = decryptor.decrypt(dave.MediaType.audio, bytes(payload))
+                if result is None:
+                    continue
+                payload = result
+
+            # is_dave_encrypted = len(payload) >= 2 and payload[-2] == 0xFA and payload[-1] == 0xFA   # fix_davey
+            # if self.gateway.dave_protocol_version > 0 and self.dave_session.ready and is_dave_encrypted:
+            #     user_id = self.ssrc_to_userid.get(ssrc)
+            #     if user_id is not None:
+            #         try:
+            #             payload = self.dave_session.decrypt(user_id, davey.MediaType.audio, payload)
+            #         except Exception as e:
+            #             logger.error(f"DAVE decryption failed: {e}")
+            #             continue
+            #     else:
+            #         logger.debug(f"Unknown ssrc {ssrc}")
+            #         continue
+
+            # opus
+            try:
+                av_packet = av.packet.Packet(payload)
+                frames = self.opus_decoder.decode(av_packet)
+                for frame in frames:
+                    self.audio_queue.put(frame)
+            except Exception as e:
+                logger.error(f"PyAV opus decoding failed. Error: {e}")
 
         self.gateway.disconnect()
 
@@ -705,4 +791,6 @@ class VoiceHandler:
                 frame = self.audio_queue.get()
                 if frame is None:
                     break
-                stream.play(frame.to_ndarray().astype("float32").T)
+                audio = frame.to_ndarray().astype("float32").T
+                audio *= self.gain_output
+                stream.play(audio)

@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import curses
 import importlib.util
 import sys
@@ -119,15 +124,16 @@ def extract_colors(config):
 def extract_colors_formatted(config):
     """Extract complex formatted colors from config"""
     return (   # DO NOT CHANGE ORDER
-        check_color_formatted(config["color_format_message"]),
-        check_color_formatted(config["color_format_newline"]),
-        check_color_formatted(config["color_format_reply"]),
-        check_color_formatted(config["color_format_reactions"]),
+        check_color_formatted(config["color_format_message"]),   # 0 9
+        check_color_formatted(config["color_format_newline"]),   # 1 10
+        check_color_formatted(config["color_format_reply"]),   # 2 11
+        check_color_formatted(config["color_format_reactions"]),   # 3 12
+        check_color_formatted(config["color_format_interaction"]),   # 4 13
         # not complex but is here so it can be initialized for alt bg color
-        [check_color(config["color_chat_edited"])],
-        [check_color(config["color_chat_url"])],
-        [check_color(config["color_chat_spoiler"])],
-        check_color_formatted(config["color_format_forum"]),
+        [check_color(config["color_chat_edited"])],   # 5 14
+        [check_color(config["color_chat_url"])],   # 6 15
+        [check_color(config["color_chat_spoiler"])],   # 7 16
+        check_color_formatted(config["color_format_forum"]),   # 8 17
     )
 
 

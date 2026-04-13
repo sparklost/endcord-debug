@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import base64
 import gc
 import http.client
@@ -102,6 +107,7 @@ class Gateway():
         self.wait = False
         self.state = 0
         self.heartbeat_received = True
+        self.heartbeat_sent_time = 0
         self.sequence = None
         self.resume_gateway_url = ""
         self.session_id = ""
@@ -138,9 +144,16 @@ class Gateway():
         self.querying_members = False
         self.member_query_results = []
         self.resumable = False
+        self.consecutive_errors = 0
+        self.gateway_events_per_h = 0
+        self.gateway_msg_per_h = 0
+        self.last_gateway_events_per_h = 0
+        self.last_gateway_msg_per_h = 0
+        self.gateway_ping_time = 0
         if self.bot:
             self.interactions_buffer = []
         threading.Thread(target=self.thread_guard, daemon=True, args=()).start()
+        threading.Thread(target=self.stats_rotaor, daemon=True, args=()).start()
 
 
     def clear_ready_vars(self):
@@ -237,6 +250,19 @@ class Gateway():
             time.sleep(0.5)
 
 
+    def stats_rotaor(self):
+        """Rotate stats every 1h"""
+        last_rotation = int(time.time())
+        while self.run:
+            if int(time.time()) > last_rotation + 3600:
+                last_rotation = int(time.time())
+                self.last_gateway_events_per_h = self.gateway_events_per_h
+                self.last_gateway_msg_per_h = self.gateway_msg_per_h
+                self.gateway_events_per_h = 0
+                self.gateway_msg_per_h = 0
+            time.sleep(30)
+
+
     def connect_ws(self, resume=False):
         """Connect to websocket"""
         if resume and self.resume_gateway_url:
@@ -296,7 +322,7 @@ class Gateway():
         try:
             # subscribe works differently in v10
             connection.request("GET", "/api/v9/gateway")
-        except (socket.gaierror, TimeoutError):
+        except (socket.gaierror, TimeoutError, ConnectionResetError):
             connection.close()
             logger.warning("No internet connection. Exiting...")
             sys.exit("No internet connection. Exiting...")
@@ -328,6 +354,8 @@ class Gateway():
         """
         try:
             function(*args)
+        except SystemExit as e:
+            self.error = str(e)
         except BaseException as e:
             self.error = "".join(traceback.format_exception(e))
 
@@ -393,9 +421,8 @@ class Gateway():
                                         break
 
 
-    def process_one_channel_overrides(self, channel_overrides, guild_num, guild_message_notifications):
+    def process_one_guild_channel_overrides(self, channel_overrides, guild_num, guild_message_notifications):
         """Process channel_overrides for one guild"""
-
         # first pass to get values and process message_notifications for categories
         for channel in channel_overrides:
             for channel_num, channel_g in enumerate(self.guilds[guild_num]["channels"]):
@@ -403,7 +430,7 @@ class Gateway():
                     break
             else:
                 continue
-            if channel_g["type"] in (0, 2, 4, 5, 15):
+            if channel_g["type"] in (0, 2, 4, 5, 15, 16):
                 flags = int(channel.get("flags", 0))
                 hidden = not perms.decode_flag(flags, 12)   # manually hidden
             else:
@@ -448,7 +475,7 @@ class Gateway():
 
         # channels
         for channel in guild["channels"]:
-            if channel["type"] in (0, 2, 4, 5, 15) and not self.bot:
+            if channel["type"] in (0, 2, 4, 5, 15, 16) and not self.bot:
                 hidden = True   # hidden by default
             else:
                 hidden = False
@@ -706,6 +733,11 @@ class Gateway():
                 reason = data[2:].decode("utf-8", "replace")
                 if status not in (1000, 1001):
                     logger.warning(f"Gateway status code: {status}, reason: {reason}")
+                    if self.consecutive_errors >= 2:
+                        self.disconnect_ws()
+                        logger.error(f"Failed to connect to gateway, error: {status} - {reason}")
+                        sys.exit(f"Failed to connect to gateway, error: {status} - {reason}")
+                    self.consecutive_errors += 1
                 self.resumable = status in (4000, 4009)
                 break
             try:
@@ -725,6 +757,7 @@ class Gateway():
                 logger.warning(f"Receiver error: {e}")
                 self.resumable = True
                 break
+            self.gateway_events_per_h += 1
             logger.debug(f"Received: opcode={opcode}, optext={response["t"] if (response and "t" in response and response["t"] and "LIST" not in response["t"]) else 'None'}")
             # debug_events
             # if response.get("t"):
@@ -743,6 +776,7 @@ class Gateway():
 
                 if optext == "READY":
                     ready_time_start = time.time()
+                    self.consecutive_errors = 0
                     self.resume_gateway_url = data["resume_gateway_url"]
                     self.session_id = data["session_id"]
                     self.clear_ready_vars()
@@ -752,6 +786,8 @@ class Gateway():
                     self.set_my_user_data(data["user"])
                     self.my_id = data["user"]["id"]
                     self.premium = data["user"].get("premium_type")   # 0 - none, 1 - classic, 2 - full, 3 - basic
+                    if self.premium is None:
+                        self.premium = 0
                     if data.get("auth_token"):
                         self.token_update = data["auth_token"]
                     # guilds and channels
@@ -764,7 +800,7 @@ class Gateway():
                         if not guild.get("unavailable"):
                             # build list of last messages from each channel
                             for channel in guild["channels"]:
-                                if channel["type"] != 15:   # skip forums
+                                if channel["type"] not in (15, 16):   # skip forums
                                     last_messages.append({
                                         "message_id": channel.get("last_message_id", 0),   # really last message id
                                         "channel_id": channel["id"],
@@ -834,7 +870,7 @@ class Gateway():
                             # opt_in_channels means: show all guild channels - when guild is joined
                             opt_in_channels = not perms.decode_flag(guild_flags, 14) or perms.decode_flag(guild_flags, 13)
                             self.guilds[guild_num]["opt_in_channels"] = opt_in_channels
-                            self.process_one_channel_overrides(guild["channel_overrides"], guild_num, guild["message_notifications"])
+                            self.process_one_guild_channel_overrides(guild["channel_overrides"], guild_num, guild["message_notifications"])
                         else:
                             for dm in guild["channel_overrides"]:
                                 for dm_num, dm_g in enumerate(self.dms):
@@ -957,6 +993,7 @@ class Gateway():
                     gc.collect()
 
                 elif optext == "MESSAGE_CREATE" and "content" in response["d"]:
+                    self.gateway_msg_per_h += 1
                     message = response["d"]
                     # saving roles to cache
                     if message["channel_id"] in self.subscribed_channels and "member" in message and "roles" in message["member"]:
@@ -970,8 +1007,9 @@ class Gateway():
                     if not is_relevant_message(optext, message, self.active_channel, self.channel_cache, self.guilds, self.my_id, self.my_roles) and not self.execute_extensions_method_first("on_message_event_is_irrelevant", message, optext, cache=True):
                         self.messages_buffer.append({
                             "op": "MESSAGE_CREATE_QUICK",
-                            "d": (message["content"], message["id"], message["guild_id"], message["channel_id"]),   # just to set channel as unread in tree
+                            "d": (message["content"], message["id"], message["channel_id"]),   # just to set channel as unread in tree
                         })
+                        continue
                     message_done = prepare_message(message)
                     message_done.update({
                         "channel_id": message["channel_id"],
@@ -1109,7 +1147,9 @@ class Gateway():
                         for member in data["members"]:
                             name = member.get("nick")
                             if not name:
-                                name = member["user"].get("global_name", member["user"]["username"])   # spacebar_fix - get
+                                name = member["user"].get("global_name")
+                            if not name:
+                                name = member["user"].get("username")
                             self.member_query_results.append({
                                 "id": member["user"]["id"],
                                 "username": member["user"]["username"],
@@ -1180,61 +1220,64 @@ class Gateway():
                         elif memlist["op"] == "DELETE":
                             try:
                                 del self.activities[guild_index][1][list_id][1][memlist["index"]]
-                            except (IndexError, NameError):
+                            except (IndexError, NameError,KeyError):
                                 pass
                         elif memlist["op"] in ("UPDATE", "INSERT"):
-                            custom_status = None
-                            if list_id not in self.activities[guild_index][1]:
-                                self.activities[guild_index][1][list_id] = [0, []]   # [last_index, members]
-                            if "group" in memlist["item"]:
-                                # group can only be inserted
-                                self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": memlist["item"]["group"]["id"]})
-                                if len(self.activities[guild_index][1][list_id][1]) > 100:
-                                    self.activities[guild_index][1][list_id][1].pop(-1)
-                                self.activities_changed.append(guild_id)
+                            try:
+                                custom_status = None
+                                if list_id not in self.activities[guild_index][1]:
+                                    self.activities[guild_index][1][list_id] = [0, []]   # [last_index, members]
+                                if "group" in memlist["item"]:
+                                    # group can only be inserted
+                                    self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": memlist["item"]["group"]["id"]})
+                                    if len(self.activities[guild_index][1][list_id][1]) > 100:
+                                        self.activities[guild_index][1][list_id][1].pop(-1)
+                                    self.activities_changed.append(guild_id)
+                                    self.activities[guild_index][1][list_id][0] = int(memlist["index"])
+                                    continue
+                                member_data = memlist["item"]["member"]
+                                activities = []
+                                for activity in member_data["presence"]["activities"]:
+                                    if activity["type"] == 4:
+                                        custom_status = activity.get("state", "")
+                                    elif activity["type"] in (0, 2):
+                                        assets = activity.get("assets", {})
+                                        activities.append({
+                                            "type": activity["type"],
+                                            "name": activity["name"],
+                                            "state": activity.get("state"),
+                                            "details": activity.get("details"),
+                                            "small_text": assets.get("small_text"),
+                                            "large_text": assets.get("large_text"),
+                                        })
+                                member_id = member_data["user"]["id"]
+                                ready_data = {
+                                    "id": member_id,
+                                    "username": member_data["user"]["username"],
+                                    "global_name": member_data["user"].get("global_name"),   # spacebar_fix - get
+                                    "nick": member_data["nick"],
+                                    "roles": member_data["roles"],
+                                    "status": member_data["presence"]["status"],
+                                    # "custom_status": custom_status,
+                                    # "activities": activities,
+                                }
+                                if memlist["op"] == "UPDATE":
+                                    try:
+                                        if self.activities[guild_index][1][list_id][1][memlist["index"]].get("id") == member_id:
+                                            self.activities[guild_index][1][list_id][1][memlist["index"]].update(ready_data)
+                                        else:   # failsafe
+                                            for num, member in enumerate(self.activities[guild_index][1][list_id][1]):
+                                                if member.get("id") == member_id:
+                                                    self.activities[guild_index][1][list_id][1][num].update(ready_data)
+                                    except IndexError:
+                                        pass
+                                else:   # INSERT
+                                    self.activities[guild_index][1][list_id][1].insert(memlist["index"], ready_data)
+                                    if len(self.activities[guild_index][1][list_id][1]) > 100:   # lets have some limits
+                                        self.activities[guild_index][1][list_id][1].pop(-1)
                                 self.activities[guild_index][1][list_id][0] = int(memlist["index"])
-                                continue
-                            member_data = memlist["item"]["member"]
-                            activities = []
-                            for activity in member_data["presence"]["activities"]:
-                                if activity["type"] == 4:
-                                    custom_status = activity.get("state", "")
-                                elif activity["type"] in (0, 2):
-                                    assets = activity.get("assets", {})
-                                    activities.append({
-                                        "type": activity["type"],
-                                        "name": activity["name"],
-                                        "state": activity.get("state"),
-                                        "details": activity.get("details"),
-                                        "small_text": assets.get("small_text"),
-                                        "large_text": assets.get("large_text"),
-                                    })
-                            member_id = member_data["user"]["id"]
-                            ready_data = {
-                                "id": member_id,
-                                "username": member_data["user"]["username"],
-                                "global_name": member_data["user"].get("global_name"),   # spacebar_fix - get
-                                "nick": member_data["nick"],
-                                "roles": member_data["roles"],
-                                "status": member_data["presence"]["status"],
-                                # "custom_status": custom_status,
-                                # "activities": activities,
-                            }
-                            if memlist["op"] == "UPDATE":
-                                try:
-                                    if self.activities[guild_index][1][list_id][1][memlist["index"]].get("id") == member_id:
-                                        self.activities[guild_index][1][list_id][1][memlist["index"]].update(ready_data)
-                                    else:   # failsafe
-                                        for num, member in enumerate(self.activities[guild_index][1][list_id][1]):
-                                            if member.get("id") == member_id:
-                                                self.activities[guild_index][1][list_id][1][num].update(ready_data)
-                                except IndexError:
-                                    pass
-                            else:   # INSERT
-                                self.activities[guild_index][1][list_id][1].insert(memlist["index"], ready_data)
-                                if len(self.activities[guild_index][1][list_id][1]) > 100:   # lets have some limits
-                                    self.activities[guild_index][1][list_id][1].pop(-1)
-                            self.activities[guild_index][1][list_id][0] = int(memlist["index"])
+                            except (IndexError, KeyError):
+                                pass
                         self.activities_changed.append(guild_id)
 
                 elif optext == "PRESENCE_UPDATE":
@@ -1386,7 +1429,7 @@ class Gateway():
                         })
                         # reset all to defaults
                         for channel_num, channel in enumerate(self.guilds[guild_num]["channels"]):
-                            if channel["type"] in (0, 2, 4, 5, 15):
+                            if channel["type"] in (0, 2, 4, 5, 15, 16):
                                 flags = int(channel.get("flags", 0))
                                 hidden = not perms.decode_flag(flags, 12)   # manually hidden
                             else:
@@ -1394,7 +1437,7 @@ class Gateway():
                             self.guilds[guild_num]["channels"][channel_num]["hidden"] = hidden
                             self.guilds[guild_num]["channels"][channel_num]["muted"] = False
                             self.guilds[guild_num]["channels"][channel_num]["message_notifications"] = 3
-                        self.process_one_channel_overrides(data["channel_overrides"], guild_num, data["message_notifications"])
+                        self.process_one_guild_channel_overrides(data["channel_overrides"], guild_num, data["message_notifications"])
                         self.process_hidden_channels()
                     else:   # dm
                         for dm_g in self.dms:
@@ -1701,6 +1744,7 @@ class Gateway():
 
             elif opcode == 11:
                 self.heartbeat_received = True
+                self.gateway_ping_time = round(time.time() - self.heartbeat_sent_time, 3)
 
         self.state = 0
         logger.debug("Receiver stopped")
@@ -1722,7 +1766,7 @@ class Gateway():
             time.sleep(0.5)
             sleep_time += 5
         heartbeat_interval_rand = int(self.heartbeat_interval * (0.8 - 0.6 * random.random()) / 1000)
-        heartbeat_sent_time = int(time.time())
+        self.heartbeat_sent_time = int(time.time())
         time_spent_event_time = int(time.time()) - 1990   # send it 10s after start, then every 30min
         while self.run and not self.wait and self.heartbeat_running:
             send_time_spent_event = not self.legacy and int(time.time()) - time_spent_event_time >= 1800
@@ -1737,7 +1781,7 @@ class Gateway():
                 })
                 logger.debug("Sent Time Spent event")
                 time_spent_event_time = int(time.time())
-            if time.time() - heartbeat_sent_time >= heartbeat_interval_rand or send_time_spent_event:
+            if time.time() - self.heartbeat_sent_time >= heartbeat_interval_rand or send_time_spent_event:
                 if QOS_HEARTBEAT and not self.legacy:
                     self.send({
                         "op": 1,
@@ -1748,7 +1792,7 @@ class Gateway():
                     })
                 else:
                     self.send({"op": 1, "d": self.sequence})
-                heartbeat_sent_time = int(time.time())
+                self.heartbeat_sent_time = int(time.time())
                 logger.debug("Sent heartbeat")
                 if not self.heartbeat_received:
                     logger.warning("Heartbeat reply not received")
@@ -1841,7 +1885,7 @@ class Gateway():
                 self.heartbeat_thread.start()
             self.state = 1
             logger.info("Connection established")
-        except websocket._exceptions.WebSocketAddressException:
+        except (websocket._exceptions.WebSocketAddressException, socket.gaierror, TimeoutError, ConnectionResetError):
             if not self.wait:   # if not running from wait_oline
                 logger.warning("No internet connection")
                 self.ws.close()
@@ -1993,12 +2037,12 @@ class Gateway():
                 break
 
 
-    def request_members(self, guild_id, members, query=None, limit=None, nonce=None):
+    def request_members(self, guild_id, members, query=None, limit=None, nonce=None, force_query=False):
         """
         Request update chunk for specified members in this guild.
         GUILD_MEMBERS_CHUNK event will be received after this.
         """
-        if query:
+        if query or force_query:
             self.querying_members = True
         if members or query:
             payload = {
@@ -2131,6 +2175,7 @@ class Gateway():
         5 - announcements
         11/12 - thread
         15 - forum (contains only threads)
+        16 - imageborad
         message_notifications:
         0 - all messages
         1 - only mentions
@@ -2296,6 +2341,19 @@ class Gateway():
             self.guild_roles_changed = None
             return cache
         return None
+
+
+    def get_stats(self):
+        """Get gateway stats"""
+        members_count = 0
+        for guild in self.member_roles:
+            members_count += len(guild["members"])
+        return (
+            self.last_gateway_events_per_h or self.gateway_events_per_h,
+            self.last_gateway_msg_per_h or self.gateway_msg_per_h,
+            self.gateway_ping_time,
+            len(self.messages_buffer), members_count,
+        )
 
 
     # all following "get_*" work like this:

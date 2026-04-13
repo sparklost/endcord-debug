@@ -37,8 +37,10 @@
     Cancel all downloads and/or uploads. Can use `cancel 1` or `cancel download`... Use just `cancel` to cancel both downloads and uploads.
 - `external_edit`  
     Open external editor to type message in it.
-- `member_list`  
+- `toggle_member_list`  
     Toggle member list.
+- `toggle_tree`  
+    Toggle channel tree.
 - `toggle_thread`  
     Join/leave currently open thread.
 - `toggle_thread_tree`  
@@ -118,8 +120,12 @@
     Silence incoming call or cancel outgoing call.
 - `voice_list_call`  
     Show all call participants and their states in an updated list. Must be in the call to use this.
-- `voice_toggle_mute`  
-    Toggle mute state before joining a call. Persisted across sessions.
+- `voice_set_volume_input`  
+    Change volume for input devices in voice call. Set to 0 to mute. Value can be `0-200%`, above 100 is boost. Persisted across sessions.  
+    `+` and `-` can be prepended to value so it will increment it - useful for binding this command to a key.  
+- `voice_set_volume_output`  
+    Change volume for output devices in voice call. Set to 0 to mute. Value can be `0-200%` above 100 is boost. Persisted accross sessions.  
+    `+` and `-` can be prepended to value so it will increment it - useful for binding this command to a key.  
 - `generate_invite *[duration] *[limit]`  
     Generate invite to current server with custom expiration `duration` and uses `limit`. Set to 0 for infinite. Invite URL will be copied to clipboard.
     `duration` can be: `4w3d5h30m10s` where `w`is weeks, `d` is days..., can be used partially and mixed: `5h1w`. Default is 7 days and infinite uses.
@@ -151,6 +157,8 @@
     Open config directory with system file manager.
 - `show_log`  
     Show live log.
+- `show_stats`  
+    Show current client stats.
 - `dump_chat`  
     Dump current chat to unique json, saved in `Debug` directory inside config location.
 - `dump_roles`  

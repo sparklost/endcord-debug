@@ -37,7 +37,7 @@
 - `Ctrl+O` * - Open selected link in browser
 - `Ctrl+L` - Copy selected message to clipboard
 - `Ctrl+V` * - View selected attachment (image, gif, video, audio) in media player
-- `Alt+T` - Reveal one spoiler in selected messages
+- `Alt+S` - Reveal one spoiler in selected messages
 - `Ctrl+F` - Search messages in current server
 - `Alt+F` - Search gifs
 - `Alt+P` - View user profile (selected message)
@@ -75,6 +75,7 @@
 - `escape` - quit
 - `Space` - pause
 - `Left/Right` - seek
+- `Up/Down` - volume
 - `Z` - replay
 
 ### OS specific keybindings
@@ -110,11 +111,13 @@ Some keybindings are used by terminals or OS itself, so they are by default rebo
 
 ### Other
 - Scroll up/down in all windows
-- Single click to select in all windows, in tree also: un/collapse
-- Single click on tab string to switch tabs (only if exactly `format_title_line_r = "%tabs"` in config)
-- Click on extra window title and drag it to resize it.
+- Click to select in all windows, in tree also: un/collapse
+- Click on tab string to switch tabs (only if exactly `format_title_line_r = "%tabs"` in config)
+- Click on extra window title and drag it to resize it
+- Click on tree border to toggle minimized tree state
+- Click on buttons in call UI, click on input/output volume values to toggle mute each
 
-On Windows, double click isn't working, instead use triple click.
+On Windows, double click isn't working, use triple click instead.
 
 
 ## Configuring keybindings

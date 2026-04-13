@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import logging
 import re
 import time
@@ -520,8 +525,8 @@ def command_string(text):
         text += " "
         cmd_args = {"cancel": text.split(" ")[1].lower() == "cancel"}
 
-    # 22 - MEMBER_LIST
-    elif text_lower.startswith("member_list"):
+    # 22 - TOGGLE_MEMBER_LIST
+    elif text_lower.startswith("toggle_member_list"):
         cmd_type = 22
 
     # 23 - REACT
@@ -748,35 +753,41 @@ def command_string(text):
     elif text_lower.startswith("voice_reject_call"):
         cmd_type = 51
 
-    # 52 - VOICE_TOGGLE_MUTE
-    elif text_lower.startswith("voice_toggle_mute"):
+    # 52 - VOICE_SET_VOLUME_INPUT
+    elif text_lower.startswith("voice_set_volume_input"):
         cmd_type = 52
+        try:
+            num_piece = text.split(" ")[1]
+            num = abs(int(num_piece))
+            increment = 0
+            if "+" in num_piece:
+                increment = 1
+            if "-" in num_piece:
+                increment = -1
+            cmd_args = {"value": num, "increment": increment}
+        except (IndexError, ValueError):
+            cmd_type = 0
+            cmd_args = {"value": 1}
 
-    # 53 - VOICE_LIST_CALL
-    elif text_lower.startswith("voice_list_call"):
+    # 53 - VOICE_SET_VOLUME_OUTPUT
+    elif text_lower.startswith("voice_set_volume_output"):
         cmd_type = 53
+        try:
+            num_piece = text.split(" ")[1]
+            num = abs(int(num_piece))
+            increment = 0
+            if "+" in num_piece:
+                increment = 1
+            if "-" in num_piece:
+                increment = -1
+            cmd_args = {"value": num, "increment": increment}
+        except (IndexError, ValueError):
+            cmd_type = 0
+            cmd_args = {"value": 1}
 
-    # 54 - GENERATE_INVITE
-    elif text_lower.startswith("generate_invite"):
+    # 54 - VOICE_LIST_CALL
+    elif text_lower.startswith("voice_list_call"):
         cmd_type = 54
-        max_age = 604800
-        max_uses = 0
-        text_split = text_lower.split(" ")
-        text_split = list(filter(None, text_split))
-        if len(text_split) >= 2:
-            new_max_age = time_string_seconds(text_split[1])
-            if new_max_age is not None:
-                max_age = new_max_age
-        if len(text_split) >= 3:
-            try:
-                max_uses = int(text_split[2])
-            except ValueError:
-                pass
-
-        cmd_args = {
-            "max_age": max_age,
-            "max_uses": max_uses,
-        }
 
     # 55 - SHOW_LOG
     elif text_lower.startswith("show_log"):
@@ -948,5 +959,35 @@ def command_string(text):
     # 75 - DUMP_ROLES
     elif text_lower.startswith("dump_roles"):
         cmd_type = 75
+
+    # 76 - SHOW_STATS
+    elif text_lower.startswith("show_stats"):
+        cmd_type = 76
+
+    # 77 - TOGGLE_TREE
+    elif text_lower.startswith("toggle_tree"):
+        cmd_type = 77
+
+    # 78 - GENERATE_INVITE
+    elif text_lower.startswith("generate_invite"):
+        cmd_type = 78
+        max_age = 604800
+        max_uses = 0
+        text_split = text_lower.split(" ")
+        text_split = list(filter(None, text_split))
+        if len(text_split) >= 2:
+            new_max_age = time_string_seconds(text_split[1])
+            if new_max_age is not None:
+                max_age = new_max_age
+        if len(text_split) >= 3:
+            try:
+                max_uses = int(text_split[2])
+            except ValueError:
+                pass
+
+        cmd_args = {
+            "max_age": max_age,
+            "max_uses": max_uses,
+        }
 
     return cmd_type, cmd_args

@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 settings = {
     "theme": None,
     "extensions": True,
@@ -100,7 +105,7 @@ theme = {
     "format_status_line_r": "%vim_mode %slowmode",
     "format_title_line_l": " %server: %channel",
     "format_title_line_r": "%tabs",
-    "format_title_tree": " endcord  %task",
+    "format_title_tree": " %app_name  %task",
     "format_rich": "%type %name - %state - %details",
     "format_tabs": "%num - %name",
     "format_prompt": "[%channel] > ",
@@ -159,6 +164,7 @@ theme = {
     "color_format_newline": None,
     "color_format_reply": [[245, -1], [67, -2, 0, 0, 7], [25, -2, 0, 8, 9], [25, -2, 0, 19, 20], [-1, -2, 0, 21, 27]],
     "color_format_reactions": [[245, -1], [131, -2, 0, 0, 7], [-1, -2, 0, 23, 27]],
+    "color_format_interaction": [[245, -1], [67, -2, 0, 0, 7], [-1, -2, 0, 21, 27]],
     "color_format_forum": [[-1, -1], [242, -2, 0, 0, 12], [25, -2, 0, 15, 20]],
     "color_chat_standout": [153, 234],
     "color_chat_edited": [241, -1],
@@ -215,7 +221,7 @@ keybindings = {
     "browser": 15,   # Ctrl+O
     "copy_msg": 12,   # Ctrl+L
     "view_media": 22,   # Ctrl+V
-    "spoil": "ALT+116",   # Alt+T
+    "spoil": "ALT+115",   # Alt+S
     "search": 6,   # Ctrl+F
     "search_gif": "ALT+102",   # Alt+F
     "profile_info": "ALT+112",   # Alt+P
@@ -236,11 +242,15 @@ keybindings = {
     "media_replay": 122,   # Z
     "media_seek_forward": 261,   # Right
     "media_seek_backward": 260,   # Left
+    "media_volume_up": 259,   # Up
+    "media_volume_down": 258,   # Down
+
     # other
     "command_palette": 31,   # Ctrl+/
     "cancel": 24,   # Ctrl+X
     "cycle_status": "ALT+100",   # Alt+D
     "toggle_member_list": "ALT+109",   # Alt+M
+    "toggle_tree": "ALT+116",   # Alt+T
     "toggle_tab": 20,   # Ctrl+T
     "switch_tab_modifier": "ALT+NUM",   # Alt+Num
     "open_external_editor": "ALT+101",   # Alt+E
@@ -322,7 +332,8 @@ vim_mode_bindings = {
     "cancel": "x",
     "cycle_status": "s",
     "toggle_member_list": "m",
-    "toggle_tab": "t",
+    "toggle_tree": "t",
+    "toggle_tab": "T",
     "switch_tab_modifier": "NUM",
     "open_external_editor": "E",
     "quit": "Q",

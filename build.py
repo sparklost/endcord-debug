@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import argparse
 import glob
 import importlib.metadata
@@ -14,6 +19,11 @@ PYTHON_MAX_MINOR = 14
 PYTHON_FREETHREADED = 14
 PYTHON_LAST_SAFE = 13
 
+if sys.platform.startswith("android"):
+    sys.platform = "linux"
+if "bsd" in sys.platform:
+    sys.platform = "linux"
+
 def get_app_name():
     """Get app name from pyproject.toml"""
     if os.path.exists("pyproject.toml"):
@@ -23,6 +33,20 @@ def get_app_name():
             return str(data["project"]["name"])
         print("App name not specified in pyproject.toml", file=sys.stderr)
         sys.exit(1)
+    print("pyproject.toml file not found", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_media_packages():
+    """Get media packages from pyproject.toml"""
+    if os.path.exists("pyproject.toml"):
+        with open("pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+        dependencies = data["dependency-groups"]["media"]
+        names = []
+        for dependency in dependencies:
+            names.append(re.split(r"[<>=!~]", dependency)[0].strip())
+        return names
     print("pyproject.toml file not found", file=sys.stderr)
     sys.exit(1)
 
@@ -169,7 +193,7 @@ def remove_media():
     """Remove media support"""
     if check_media_support():
         fprint("Removing media support dependencies")
-        subprocess.run(["uv", "pip", "uninstall", "pillow", "av", "pynacl"], check=True)
+        subprocess.run(["uv", "pip", "uninstall"] + get_media_packages(), check=True)
 
 
 def check_dev():

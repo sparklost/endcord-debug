@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import base64
 import json
 import os
@@ -16,6 +21,11 @@ WINDOWS_UA_STRING = "Windows NT %VER; Win64; x64"
 MACOS_UA_STRING = "Machintos; Intel Mac OS X %VER"
 WINDOWS_VER = 10.0
 MACOS_VER = 15.3
+
+if sys.platform.startswith("android"):
+    sys.platform = "linux"
+if "bsd" in sys.platform:
+    sys.platform = "linux"
 
 if sys.platform == "linux":
     operating_system = "Linux"

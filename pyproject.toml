@@ -1,6 +1,6 @@
 [project]
 name = "endcord"
-version = "1.4.1"
+version = "1.4.2"
 description = "Feature rich Discord TUI client."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,8 +8,8 @@ dependencies = [
     "certifi>=2026.2.25; sys_platform == 'darwin'",
     "emoji>=2.15.0",
     "filetype>=1.2.0",
-    "numpy>=2.4.3",
-    "orjson>=3.11.7",
+    "numpy>=2.4.4",
+    "orjson>=3.11.8",
     "protobuf>=7.34.1",
     "psutil>=7.2.1; sys_platform != 'linux'",
     "pycryptodome>=3.23.0",
@@ -30,13 +30,13 @@ dependencies = [
 [dependency-groups]
 build = [
     "cython>=3.2.4",
-    "nuitka[onefile]>=4.0.6",
+    "nuitka[onefile]>=4.0.8",
     "pyinstaller>=6.19.0",
     "setuptools>=82.0.0",
 ]
 media = [
     "av>=17.0.0",
-    "davey>=0.1.4",
-    "pillow>=12.1.1",
+    "dave-py>=0.1.2",
+    "pillow>=12.2.0",
     "pynacl>=1.6.2",
 ]

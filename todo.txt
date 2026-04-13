@@ -1,21 +1,21 @@
-Implement DAVE
-Fix opus decoding and playing audio
+Try to reduce ram usage by pyav
 
 Voice calls
-    start recorder thread, record, encode, encrypt, pack, send, stop when leave call, leave call on error
+    start recorder thread, set volume, record and add to queue encode
+    dave encrypt, transport encrypt, pack, send
+    stop when leave call
+    leave call on error
     pause recorder when muted
-    send and receive RTCP?
-    send speaking event?
+    send and receive RTCP and show connection quality
+    send speaking event
 
 Voice channels
     add voice channels to tree
     show voice channel activity
     join call from tree
     join call with goto
+    handle calls in dm groups
     handle multiple speaking at the same time
-
-Add toggle tree binding and command
-Add scrollbar to chat
 
 after fixing https://github.com/python/cpython/issues/119138
     Add colors for status sign in selected and active dm in tree
@@ -25,9 +25,17 @@ after fixing https://github.com/python/cpython/issues/119138
     Add bg color for mentions and channels in chat
     Add status dot color to active and muted line in tree
 
+Add colors in assist window
+Add scrollbar to chat
+Add ability to switch profile without closing
 Rewrite experimental mode in not-pygame
 Fix issues with wide characters in input line
 Add option to select individual message
 Fix per-channel member list
 Video calls
 Localization
+
+
+Exntensions:
+endcord-termux-rich
+endcord-undelete

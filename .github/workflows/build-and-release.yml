@@ -42,7 +42,7 @@ jobs:
       actions: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       ## uncomment to enable caching with artifacts
       # - name: Set CCACHE_DIR environment variable
@@ -161,16 +161,6 @@ jobs:
       #   with:
       #     name: ccache-${{ matrix.os }}
       #     path: ${{ env.CCACHE_DIR }}
-
-      - name: Delete previous workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 1
-          delete_workflow_pattern: build-and-release
-
 
   draft-release:
     name: Draft GitHub Release

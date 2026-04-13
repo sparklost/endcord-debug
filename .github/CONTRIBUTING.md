@@ -47,10 +47,11 @@ ruff check --fix endcord/user_settings_pb2.py
 ## Useful debugging things
 
 ### Debug points in the code
-- `debug_events` - save all received events from gateway
-- `debug_guilds_tree` - print all tree data in jsons
-- `255_curses_bug` - this part of the code should be changed after [ncurses bug](https://github.com/python/cpython/issues/119138) is fixed. If there is no note, just remove the code
+- `debug_events` - save all received events from gateway.
+- `debug_guilds_tree` - print all tree data in jsons.
+- `255_curses_bug` - this part of the code should be changed after [ncurses bug](https://github.com/python/cpython/issues/119138) is fixed. If there is no note, just remove the code.
 - `fix_member_list_selection` - properly select member list when figured out how to use `id` in `GUILD_MEMBER_LIST_UPDATE`.
+- `fix_davey` - commented pieces of code in voice.py that use davey instead dave.py, should be re-visited after [this bug](https://github.com/Snazzah/davey/issues/15) gets fixed.
 
 ### Network tab filter
 Filter for network tab in dev tools:  

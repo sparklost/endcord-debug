@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import base64
 import http.client
 import logging
@@ -30,7 +35,7 @@ DISCORD_CDN_HOST = "cdn.discordapp.com"
 DYN_DISCORD_CDN_HOST = "media.discordapp.net"
 DISCORD_EPOCH = 1420070400
 MAX_CONNECTION_POOL = 10
-MAX_CONNECTION_AGE = 55 * 60  # discord closes keepalive connection after 60 min
+MAX_CONNECTION_AGE = 55 * 30  # discord closes keepalive connection after ?? min
 SEARCH_PARAMS = ("content", "channel_id", "author_id", "mentions", "has", "max_id", "min_id", "pinned", "offset")
 SEARCH_HAS_OPTS = ("link", "embed", "poll", "file", "video", "image", "sound", "sticker", "forward")
 PING_OPTIONS = ["all", "mentions", "nothing", "default"]   # must be list
@@ -148,6 +153,7 @@ class Discord():
         self.connection_time = 0
         self.connection_pool = []
         self.connection_pool_lock = threading.Lock()
+        self.total_requests = 0
 
         self.my_id = self.get_my_id(exit_on_error=True)
         self.activity_token = None
@@ -212,6 +218,7 @@ class Discord():
 
     def request(self, method, path, body=None, headers=None, timeout=5, exit_on_error=False):
         """Perform discord api request; try to use existing keepalive connection, or create new one; handle threading by using connection pool; and recreate connections if server timeout them after 55 minutes"""
+        self.total_requests += 1
         entry = None
         connection = None
         now = int(time.time())
@@ -222,7 +229,7 @@ class Discord():
                 if not e[1]:
                     entry = e
                     connection = e[0]
-                    # discord closes keepalive connection after 60 min
+                    # discord closes keepalive connection after ?? min
                     if now - e[2] > MAX_CONNECTION_AGE or connection.sock is None:
                         try:
                             connection.close()
@@ -1656,14 +1663,15 @@ class Discord():
         if status == 200:
             data = json.loads(data)
             return bool(data["ringable"])
+        log_api_error(data, status, "check_ring")
         return False
 
 
     def send_ring(self, channel_id, recipients):
         """Ring private channel recipients if there is an active call"""
-        if not self.check_ring(channel_id):
-            logger.warning("Cant ring a call in this private channel recipients")
-            return
+        # if not self.check_ring(channel_id):   # keeps giving error code 50109
+        #     logger.warning("Cant ring a call in this private channel recipients")
+        #     return
 
         message_data = json.dumps({
             "recipients": recipients,
@@ -1930,6 +1938,14 @@ class Discord():
         return None, etag
 
 
+    def get_stats(self):
+        """Get API stats"""
+        ping_time = time.time()
+        self.get_my_id()
+        ping_time = round(time.time() - ping_time, 3)
+        return self.total_requests, ping_time
+
+
     # BOT STUFF
     def bot_register_command(self, command, guild_id=None, is_json=False):
         """
@@ -1949,19 +1965,23 @@ class Discord():
         data, status = self.request("POST", url, message_data, self.header)
         if not status:
             return None
+        if status == 200:
+            return json.loads(data).get("id", True)
         if status == 201:
             return True
         log_api_error(data, status, "bot_command")
         return False
 
 
-    def bot_update_command(self, command, command_id, guild_id=None):
+    def bot_update_command(self, command, command_id, guild_id=None, resource=None):
         """Update command for this bot. This endpoint works ONLY FOR BOTS."""
         message_data = json.dumps(command)
         if guild_id:
             url = f"/api/v9/applications/{self.my_id}/guilds/{guild_id}/commands/{command_id}"
         else:
             url = f"/api/v9/applications/{self.my_id}/commands/{command_id}"
+        if resource:
+            url += "/" + resource
         data, status = self.request("PATCH", url, message_data, self.header)
         if not status:
             return None
@@ -2005,7 +2025,7 @@ class Discord():
 
     def bot_edit_interaction(self, interaction, interaction_token):
         """Edit already sent interaction"""
-        url = f"/webhooks/{self.my_id}/{interaction_token}/messages/@original"
+        url = f"/api/v9/webhooks/{self.my_id}/{interaction_token}/messages/@original"
         message_data = json.dumps(interaction)
         data, status = self.request("PATCH", url, message_data, self.header)
         if not status:
@@ -2019,7 +2039,7 @@ class Discord():
     def bot_delete_interaction(self, interaction_token):
         """Delete already sent interaction"""
         message_data = None
-        url = f"/webhooks/{self.my_id}/{interaction_token}/messages/@original"
+        url = f"/api/v9/webhooks/{self.my_id}/{interaction_token}/messages/@original"
         data, status = self.request("DELETE", url, message_data, self.header)
         if not status:
             return None

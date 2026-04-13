@@ -18,7 +18,7 @@ It is built with Python (this [doesnt mean its slow](#note-on-python-performance
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
 
 ## Features
-- Extremely low CPU and RAM usage (values greatly depend on number of servers and channels)
+- Extremely low CPU and RAM usage (see [RAM usage](#ram-usage))
 - Voice calls (WIP)
 - Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
@@ -28,22 +28,20 @@ It is built with Python (this [doesnt mean its slow](#note-on-python-performance
 - View images, gifs, videos, audio, stickers and YouTube with ASCII art or in external app
 - Download/upload attachments
 - Select message and: reply, edit, delete, go to replied, react, vote in a poll...
-- Member list
+- Member list (toggleable)
 - Search messages
 - Client commands with history, custom commands can be bound to key
 - App commands and some interactions
 - View user profile
-- Channel tree
-    - Correct channel order
+- Channel tree (toggleable)
     - Don't show hidden channels
     - Show muted channels as gray
     - Show unread channels as bold
     - Show channels with mention as red with number of mentions
     - Collapse categories and servers
     - DMs in separate drop-down, show DM status
-    - Forums, channel threads
+    - Forums, imageborads and channel threads
     - Folders with custom naming
-    - View channel or server info
 - Show reactions, replied message, forwarded message
 - Show embeds, attachment types and links, code blocks
 - Spellchecking
@@ -354,7 +352,7 @@ Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https:
 WezTerm proved to introduce the least drawing issues.  
 Cmder settings: "Mouse" > check "Send mouse events to console" and "Mark/Copy" > uncheck "Intelligent mode", and set "Main console font" and "Alternative font" to same monospace font.  
 Emoji are known to work only with WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
-Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.  
+Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.   
 
 ### macOS
 - Pre-built binaries (built with nuitka using clang) are available in releases
@@ -365,6 +363,8 @@ Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell
     - Append ` -- --uninstall` to uninstall
 Optional dependency for spellchecking: `aspell`. Can be installed with: `brew aspell`.  
 
+### BSD
+- [Build](#building) endcord, standalone executable can be found in `./dist/endcord`
 
 ## Disclaimer
 > [!WARNING]
@@ -402,12 +402,20 @@ To toggle [experimental windowed mode](#experimental-windowed-mode) run: `python
 3. Open terminal, cd to unzipped folder
 4. run build script: `python build.py`
 
+### BSD
+1. Install [Python](https://www.python.org/) 3.12 or later
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+3. Clone this repository, unzip it
+4. Open terminal, cd to unzipped folder
+5. Either install rust (needed to build some libraries) or run `uv remove orjson`. Rust is also needed for endcord full
+6. Run `uv run build.py` (NOT `python main.py`!)
+
 ### Nuitka
 To enable building with Nuitka, add `--nuitka` flag (takes a long time).  
 Nuitka built binaries are much more optimized and can play videos at higher framerate.  
 Optionally, add `--clang` flag to tell nuitka to compile using llvm, which might run even faster.  
 Nuitka requirements:
-- on Linux: GCC or clang and `patchelf` package
+- on Linux and BSD: GCC or clang and `patchelf` package
 - on Windows: [Visual Studio 2022](https://www.visualstudio.com/en-us/downloads/download-visual-studio-vs.aspx) or mingw (will be downloaded by nuitka)
 - on macOS install XCode via Apple Store
 
@@ -453,7 +461,7 @@ Less important steps is to decrease REST API calls, which might have little to n
 - Disable `send_typing` in config - it calls REST API every 7s when typing, but it shouldn't be critical.
 
 ### What if you get banned?
-You can write to Discord TNS team: https://dis.gd/request.  
+You can write to Discord Support team: https://dis.gd/request.  
 If you did something particular with endcord that caused the ban, open an issue describing what that is. Maybe that can be prevented or other users can be warned.  
 
 ### Debug files
@@ -462,6 +470,9 @@ All channel and server names, topics, descriptions are replaced. All channel and
 
 ### Note on Python performance misconceptions
 Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka). And all CPU-critical components are implemented in Cython. Python was chosen because it enables rapid development.
+
+### Running multiple endcord instances
+To run multiple endcord instances at the same time, while keeping them completely separated, run endcord with `ENDCORD_APP_NAME` environment variable set to something else. This will change "endcord" everywhere: in config and cache paths, notifications, keyring...
 
 ### Some role colors are wrong
 This is an [issue](https://github.com/python/cpython/issues/119138) with cpython ncurses API. It is ignoring color pairs with ID larger than 255. This means only 255 color pairs can actually be used. Only role colors can reach this limit, because they are initialized last.
@@ -504,8 +515,15 @@ Follow [fbterm setup instructions](https://wiki.archlinux.org/title/Fbterm#Insta
 Some characters may fail to render so set `emoji_as_text = True` in config and `compact = True` in theme. Some theme characters should also be tweaked.  
 Note: keybinding `Ctrl+Up/Down/Left/Right` does not work in tty, either rebind them or add custom keymap, or in `/etc/vconsole.conf`.  
 
+### RAM usage
+RAM usage greatly depends on multiple factors:
+- Full binary version uses few MB more than lite.
+- Number of servers and channels: each avg server is ~1MB.
+- If using terminal media player it will permanently increase RAM usage by ~20MB on firs media play.
+- Voice calls will also permanently increase RAM usage by ~5MB on first connected/initialized call (+ ~20MB for media if not already).
+
 ### Adding desktop launcher on Linux
-Simply make launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.
+Simply make the launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.
 
 ### Legacy theme
 Endcord default theme uses non-standard characters to display som TUI elements, and these characters may not work on some terminals, or look weird wih some fonts.  

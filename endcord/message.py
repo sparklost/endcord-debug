@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import re
 from datetime import datetime
 
@@ -14,7 +19,6 @@ def get_newlined_value(embed, name):
     if value:
         return value + "\n"
     return ""
-
 
 def generate_timestamp(timestamp, timestamp_format, unix=False):
     """Convert timestamp string to discord timestamp notation"""
@@ -57,11 +61,11 @@ def prepare_embeds(embeds, message_content):
                 for match in re.finditer(match_url, field["name"] + "\n" + field["value"]):
                     media.append(False)
         if "image" in embed and "url" in embed["image"]:
-            content += embed["image"]["url"] + "\n"
+            content = embed["image"]["url"]
             main_url = embed["image"]["url"]
             media.append(True)
         if "video" in embed and "url" in embed["video"]:
-            content += embed["video"]["url"] + "\n"
+            content = embed["video"]["url"]
             if not skip_main_url:
                 main_url = embed["video"]["url"]
             media.append(True)
@@ -222,6 +226,8 @@ def prepare_message(message):
             "nick": None,
             "command": message["interaction"].get("name", "Unknown command"),
         }
+        if not message["content"] and message["flags"] & 128:   # flag 7
+            message["content"] = "Thinking..."
     else:
         interaction = None
 

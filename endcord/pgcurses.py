@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import importlib.util
 import json
 import logging
@@ -10,6 +15,11 @@ os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import pygame
 import pygame.freetype
 from pygame._sdl2 import Window as pg_Window
+
+if sys.platform.startswith("android"):
+    sys.platform = "linux"
+if "bsd" in sys.platform:
+    sys.platform = "linux"
 
 have_tray = False
 tray_error = None
@@ -41,7 +51,11 @@ WINDOW_SIZE = (900, 600)
 MAXIMIZED = False
 FONT_SIZE = 12
 FONT_NAME = None
-APP_NAME = "Endcord"
+try:
+    import __main__
+    APP_NAME = __main__.APP_NAME   # set in main.py
+except (AttributeError, NameError):
+    APP_NAME = "endcord"
 REPEAT_DELAY = 400
 REPEAT_INTERVAL = 25
 CTRL_V_PASTE = False   # use Ctrl+V instead Ctrl+Shift+V to paste

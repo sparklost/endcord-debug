@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import curses
 import json
 import logging
@@ -16,8 +21,17 @@ if sys.platform == "win32":
     BACKSPACE = 8
 else:
     BACKSPACE = curses.KEY_BACKSPACE
+if sys.platform.startswith("android"):
+    sys.platform = "linux"
+if "bsd" in sys.platform:
+    sys.platform = "linux"
 
-APP_NAME = "endcord"
+try:
+    import __main__
+    APP_NAME = __main__.APP_NAME   # set in main.py
+except (AttributeError, NameError):
+    APP_NAME = "endcord"
+
 PART_HINT = "Enter to confirm, Esc to go back."
 FULL_HINT = PART_HINT[:-1] + ", Up/Down to select."
 CHECK_LOG = " Check log for more info."
@@ -809,6 +823,7 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
 
     _, w = screen.getmaxyx()
     base_y = get_prompt_y(w, description_text, prompt_idx_back)
+    input_index = len(texts[selected])
 
     def draw():
         for i, prompt in enumerate(prompts):
@@ -822,10 +837,10 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
                 line = prompt + text[:w - prompt_len]
             line += " " * (w - len(line) - 1)
             if i == selected:
-                attr = curses.color_pair(1) | curses.A_STANDOUT
+                screen.addstr(y, 1, line, curses.color_pair(1) | curses.A_STANDOUT)
+                screen.addch(y, input_index + prompt_len - 1, line[input_index + prompt_len - 2], curses.color_pair(2))
             else:
-                attr = curses.color_pair(2)   # gray
-            screen.addstr(y, 1, line, attr)
+                screen.addstr(y, 1, line, curses.color_pair(2))    # gray
         screen.refresh()
 
     draw()
@@ -861,20 +876,31 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
                 proceed = True
                 break
 
-        elif key == BACKSPACE:
-            texts[selected] = texts[selected][:-1]
+        elif key == BACKSPACE or key == 127:
+            texts[selected] = texts[selected][:input_index-1] + texts[selected][input_index:]
+            input_index -= 1
 
         if key == curses.KEY_UP:
             selected = max(0, selected - 1)
+            input_index = len(texts[selected])
 
         elif key == curses.KEY_DOWN:
             selected = min(len(prompts) - 1, selected + 1)
+            input_index = len(texts[selected])
+
+        elif key == curses.KEY_LEFT and input_index > 0:
+            input_index -= 1
+
+        elif key == curses.KEY_RIGHT and input_index < len(texts[selected]):
+            input_index += 1
 
         elif isinstance(key, int) and 32 <= key <= 126:
-            texts[selected] += chr(key)
+            texts[selected] = texts[selected][:input_index] + chr(key) + texts[selected][input_index:]
+            input_index += 1
 
         elif key == 9:  # TAB
             selected = (selected + 1) % len(prompts)
+            input_index = len(texts[selected])
 
         draw()
 

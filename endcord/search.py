@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import heapq
 import importlib.util
 import re
@@ -81,14 +86,15 @@ def search_channels_guild(channels, query, limit=50, score_cutoff=15):
     for channel in channels:
         # skip categories (type 4)
         if channel["permitted"] and channel["type"] != 4:
+            formatted = channel["name"]
             if channel["type"] == 2:
-                formatted = f"{channel["name"]} - voice"
+                formatted += " - voice"
             elif channel["type"] in (11, 12):
-                formatted = f"{channel["name"]} - thread"
+                formatted += " - thread"
             elif channel["type"] == 15:
-                formatted = f"{channel["name"]} - forum"
-            else:
-                formatted = channel["name"]
+                formatted += " - forum"
+            elif channel["type"] == 16:
+                formatted += " - imageboard"
 
             score = fuzzy_match_score(query, formatted)
             if score < worst_score:
@@ -101,10 +107,14 @@ def search_channels_guild(channels, query, limit=50, score_cutoff=15):
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_channels_all(guilds, dms, query, full_input, recent=None, limit=50, score_cutoff=15):
+def search_channels_all(guilds, dms, query, full_input, recent=None, read_state=None, limit=50, score_cutoff=15):
     """Search for guilds/categories/channels/DMs"""
     results = []
     worst_score = score_cutoff
+    if read_state:
+        mentions = {ch_id for ch_id, channel in read_state.items() if channel.get("mentions")}
+    else:
+        mentions = set()
 
     for dm in dms:
         bonus_score = 0
@@ -113,6 +123,11 @@ def search_channels_all(guilds, dms, query, full_input, recent=None, limit=50, s
                 bonus_score = score_cutoff
             elif not query:
                 continue
+        if mentions and dm["id"] in mentions:
+            if bonus_score:
+                bonus_score += 1
+            else:
+                bonus_score = score_cutoff
         formatted = f"{dm["name"]} (DM)"
         score = fuzzy_match_score(query, formatted) * 4 + bonus_score   # dms get more score so they are on top
         if score < worst_score * 4:
@@ -147,17 +162,24 @@ def search_channels_all(guilds, dms, query, full_input, recent=None, limit=50, s
                     bonus_score = score_cutoff
                 elif not query:
                     continue
-            if channel["permitted"]:
-                if channel["type"] == 2:
-                    formatted = f"{channel["name"]} - voice ({guild["name"]})"
-                elif full and channel["type"] == 4:
-                    formatted = f"{channel["name"]} - category ({guild["name"]})"
-                elif channel["type"] in (11, 12):
-                    formatted = f"{channel["name"]} - thread ({guild["name"]})"
-                elif channel["type"] == 15:
-                    formatted = f"{channel["name"]} - forum ({guild["name"]})"
+            if mentions and dm["id"] in mentions:
+                if bonus_score:
+                    bonus_score += 1
                 else:
-                    formatted = f"{channel["name"]} ({guild["name"]})"
+                    bonus_score = score_cutoff
+            if channel["permitted"]:
+                formatted = channel["name"]
+                if channel["type"] == 2:
+                    formatted += " - voice"
+                elif full and channel["type"] == 4:
+                    formatted += " - category"
+                elif channel["type"] in (11, 12):
+                    formatted += " - thread"
+                elif channel["type"] == 15:
+                    formatted += " - forum"
+                elif channel["type"] == 16:
+                    formatted += " - imageboard"
+                formatted += f" ({guild["name"]})"
                 score = fuzzy_match_score(query, formatted) + bonus_score
                 if score < worst_score:
                     continue

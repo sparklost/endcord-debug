@@ -1,3 +1,8 @@
+# Copyright (C) 2025-2026 SparkLost
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+
 import importlib.util
 import logging
 import os
@@ -8,10 +13,20 @@ import threading
 import time
 import webbrowser
 
+if sys.platform.startswith("android"):
+    sys.platform = "linux"
+if "bsd" in sys.platform:
+    sys.platform = "linux"
+
 logger = logging.getLogger(__name__)
 REPO_OWNER = "sparklost"
-APP_NAME = "endcord"
-VERSION = "1.4.1"
+try:
+    import __main__
+    APP_NAME = __main__.APP_NAME   # set in main.py
+    logger.info(APP_NAME)
+except (AttributeError, NameError):
+    APP_NAME = "endcord"
+VERSION = "1.4.2"
 NO_NOTIFY_SOUND_DE = ("kde", "plasma")   # linux desktops without notification sound
 
 # platform specific code
@@ -405,7 +420,7 @@ def native_select_files(file_filter=None, multiple=True, auto=False):
             return []
 
     elif filedialog == "mac":
-        command += f'choose file default location "{init_dir}"  with prompt "Import File"'
+        command = f'choose file default location "{init_dir}"  with prompt "Import File"'
         data = subprocess.run(["osascript", "-"], input=command, text=True, capture_output=True, check=False)
         data = data.stdout.strip().split(",")
         return data[data.find(":"):].replace(":", "/")
