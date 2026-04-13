@@ -10,7 +10,7 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest, macos-15, macos-15-intel]  # windows-latest
         include:
           - os: ubuntu-latest
             platform: linux
@@ -18,12 +18,12 @@ jobs:
             nuitka: true
             clang: true
             clang-version: 21.1.8
-          - os: windows-latest
-            platform: windows
-            python-version: 3.13   # https://github.com/zephyrproject-rtos/windows-curses/issues/76
-            nuitka: true
-            clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
-            clang-version: 21.1.8
+          # - os: windows-latest
+          #   platform: windows
+          #   python-version: 3.13   # https://github.com/zephyrproject-rtos/windows-curses/issues/76
+          #   nuitka: true
+          #   clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+          #   clang-version: 21.1.8
           - os: macos-15
             platform: macos
             python-version: 3.14
