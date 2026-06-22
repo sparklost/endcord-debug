@@ -5,6 +5,9 @@ on:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 jobs:
   build:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
@@ -16,7 +19,7 @@ jobs:
             platform: linux
             python-version: 3.14.6
             nuitka: true
-            clang: true
+            clang: false
             clang-version: 21.1.8
           # - os: windows-latest
           #   platform: windows

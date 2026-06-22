@@ -138,9 +138,9 @@ USE_COLOR = supports_color()
 def fprint(text, color_code="\033[1;35m", prepend=f"[{PKGNAME.capitalize()} Build Script]: "):
     """Print colored text prepended with text, default is light purple"""
     if USE_COLOR:
-        print(f"{color_code}{prepend}{text}\033[0m")
+        print(f"{color_code}{prepend}{text}\033[0m", flush=True)
     else:
-        print(f"{prepend}{text}")
+        print(f"{prepend}{text}", flush=True)
 
 
 def check_python():
@@ -297,7 +297,7 @@ def find_file_in_venv(lib_name, file_name, silent=False, recurse=False, startswi
                 if (startswith and f.startswith(file_name)) or f == file_name:
                     return os.path.join(root, f)
     if not silent:
-        print(f"{lib_name}/{file_name} not found")
+        print(f"{lib_name}/{file_name} not found", flush=True)
     return None
 
 
@@ -318,7 +318,7 @@ def patch_soundcard():
     """
     fprint("Patching soundcard")
     if not os.path.exists(".venv"):
-        print(".venv dir not found")
+        print(".venv dir not found", flush=True)
         return
 
     # patch mediafoundation.py
@@ -341,9 +341,9 @@ def patch_soundcard():
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-        print(f"Patched file: {path}")
+        print(f"Patched file: {path}", flush=True)
     else:
-        print(f"Nothing to patch in file {path}")
+        print(f"Nothing to patch in file {path}", flush=True)
 
     # patch pulseaudio.py
     path = find_file_in_venv("soundcard", "pulseaudio.py")
@@ -366,9 +366,9 @@ def patch_soundcard():
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-        print(f"Patched file: {path}")
+        print(f"Patched file: {path}", flush=True)
     else:
-        print(f"Nothing to patch in file {path}")
+        print(f"Nothing to patch in file {path}", flush=True)
 
 
 def compress_emoji():
@@ -377,7 +377,7 @@ def compress_emoji():
     json_path_in = os.path.join("endcord", "emoji.json")
     json_path_out = os.path.join("build", "emoji.json")
     if not os.path.exists(json_path_in):
-        print("emoji.json not found")
+        print("emoji.json not found", flush=True)
         return None
     if not os.path.exists("build"):
         os.mkdir("build")
@@ -546,25 +546,25 @@ def build_custom_python(version, clang):
     line = None
     first = True
     for line in process.stdout:
-        # print(line.strip())
+        # print(line.strip(), flush=True)
         if len(line) > 100:
             continue
         if "Resolving www.python.org" in line:
-            print("Downloading Python source")
+            print("Downloading Python source", flush=True)
         elif "checking build system type" in line:
-            print("Configuring build system")
+            print("Configuring build system", flush=True)
         elif "Building with support for profile generation" in line:
-            print("Compiling instrumented binaries")
+            print("Compiling instrumented binaries", flush=True)
         elif "run the profile task to generate the profile information" in line:
-            print("Running tests to generate profile data")
+            print("Running tests to generate profile data", flush=True)
         elif "Rebuilding with profile guided optimizations:" in line and first:
             first = False
-            print("Rebuilding with profile guided optimizations")
+            print("Rebuilding with profile guided optimizations", flush=True)
     process.wait()
     setup_compiler(clang, clear=True)
     if process.returncode != 0:
         if line:
-            print(line.strip())
+            print(line.strip(), flush=True)
         raise subprocess.CalledProcessError(process.returncode, cmd)
 
 
@@ -573,14 +573,14 @@ def build_numpy_lite(clang):
     if sys.platform != "linux":
         fprint("Skipping numpy lite (no openblas) building on non-linux platforms")
         return
-    fprint("Building numpy lite (no openblas)")
+    fprint("Building numpy-lite (no openblas)")
     cmd = [
         "uv", "run", "python", "-c",
         "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))",
     ]   # check if numpy without blas is not already installed
     value = subprocess.run(cmd, capture_output=True, text=True, check=False).stdout.strip()
     if not value or not int(value):
-        print("Numpy lite (no openblas) is already built")
+        print("Numpy-lite (no openblas) is already built", flush=True)
         return
     setup_compiler(clang)
     subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
@@ -594,9 +594,11 @@ def build_numpy_lite(clang):
             python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", "numpy",
             "--config-settings=setup-args=-Dblas=None",
             "--config-settings=setup-args=-Dlapack=None",
+            "-vv",
         ], check=True)
-    except subprocess.CalledProcessError:   # fallback
-        print("Failed building numpy lite (no openblas), faling back to default numpy")
+    except subprocess.CalledProcessError as e:   # fallback
+        print(e, flush=True)
+        print("Failed building numpy-lite (no openblas), faling back to default numpy", flush=True)
         subprocess.run(["uv", "pip", "install", "numpy"], check=True)
     subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
 
@@ -616,7 +618,7 @@ def build_package(package, clang, safe=False):
         subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", package], check=True)
         subprocess.run([python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", package], check=True)
     except subprocess.CalledProcessError:   # fallback
-        print(f"Failed building {package}, faling back to default prebuilt version")
+        print(f"Failed building {package}, faling back to default prebuilt version", flush=True)
         subprocess.run(["uv", "pip", "install", package], check=True)
     subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
 
@@ -641,7 +643,7 @@ def build_cython(clang, mingw):
     for line in process.stdout:
         line_clean = line.rstrip("\n")
         if len(line_clean) < 100 and not any(s in line_clean for s in ("Cythonizing", "Compiling", "creating", "  warn(")):
-            print(line_clean)
+            print(line_clean, flush=True)
     process.wait()
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd)
@@ -657,10 +659,10 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     if not print_cmd:
         if check_media_support():
             pkgname = PKGNAME
-            fprint("ASCII media support is enabled")
+            fprint("Media support is enabled")
         else:
             pkgname = f"{PKGNAME}-lite"
-            fprint("ASCII media support is disabled")
+            fprint("Media support is disabled")
         emoji_path = compress_emoji()
     else:
         pkgname = PKGNAME
@@ -745,12 +747,12 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd
             if check_venv_file_size("Crypto", "_chacha", 10000):
                 build_package("pycryptodome", clang, safe=True)
             else:
-                print("Pycryptodome is already compiled locally")
+                print("Pycryptodome is already compiled locally", flush=True)
             if full:
                 if check_venv_file_size("pynacl", "_sodium.", 1000000):
                     build_package("pynacl", clang)
                 else:
-                    print("PyNaCl is already compiled locally")
+                    print("PyNaCl is already compiled locally", flush=True)
         patch_soundcard()
         emoji_path = compress_emoji()
     else:
