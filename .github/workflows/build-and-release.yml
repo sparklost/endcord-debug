@@ -108,7 +108,11 @@ jobs:
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            python build.py "${args[@]}"
+            if [[ "${{ matrix.platform }}" == "linux" ]]; then
+                python build.py "${args[@]}"
+            else
+                uv run build.py "${args[@]}"
+            fi
 
       - name: Run build lite script
         shell: bash
@@ -117,7 +121,11 @@ jobs:
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            python build.py --lite "${args[@]}"
+            if [[ "${{ matrix.platform }}" == "linux" ]]; then
+                python build.py --lite "${args[@]}"
+            else
+                uv run build.py --lite "${args[@]}"
+            fi
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
