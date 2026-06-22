@@ -12,18 +12,18 @@ jobs:
       matrix:
         os: [windows-latest]
         include:
-          - os: ubuntu-latest
-            platform: linux
-            python-version: 3.14
-            nuitka: true
-            clang: true
-            clang-version: 21.1.8
-          # - os: windows-latest
-          #   platform: windows
+          # - os: ubuntu-latest
+          #   platform: linux
           #   python-version: 3.14
           #   nuitka: true
-          #   clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+          #   clang: true
           #   clang-version: 21.1.8
+          - os: windows-latest
+            platform: windows
+            python-version: 3.14
+            nuitka: true
+            clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+            clang-version: 21.1.8
           # - os: macos-15
           #   platform: macos
           #   python-version: 3.14
