@@ -101,7 +101,10 @@ jobs:
         run: |
           chmod +x ./tools/build_python.sh
           args=("${{ matrix.python-version }}")
-          [[ "${{ matrix.clang }}" == "true" ]] && args+=("clang")
+          if [ "${{ matrix.clang }}" = "true" ]; then
+            args+=("clang")
+            export LLVM_PROFDATA="${{ env.LLVM_PATH }}/bin/llvm-profdata"
+          fi
           ./tools/build_python.sh "${args[@]}"
           echo "UV_PYTHON=${{ github.workspace }}/.cpython/bin/python3" >> $GITHUB_ENV
 
