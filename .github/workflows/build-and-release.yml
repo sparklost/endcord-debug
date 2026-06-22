@@ -14,7 +14,7 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-            python-version: 3.14
+            python-version: 3.14.6
             nuitka: true
             clang: true
             clang-version: 21.1.8
