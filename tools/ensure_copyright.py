@@ -1,23 +1,22 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import os
 from datetime import datetime
 
+PROJECT_NAME = "endcord"
 AUTHOR = "SparkLost"
 START_YEAR = "2025"
 CURRENT_YEAR = str(datetime.now().year)
-HEADER_LINE = f"# Copyright (C) {START_YEAR}-{CURRENT_YEAR} {AUTHOR}\n"
+HEADER_LINE = f"# {PROJECT_NAME} - Copyright (C) {START_YEAR}-{CURRENT_YEAR} {AUTHOR}. All Rights Reserved.\n"
 HEADER_FULL = f"""{HEADER_LINE.strip()}
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 """
-extensions_white = [".py"]
-extensions_black = [".pyc", "pb2.py", "wide_ranges.py", "xterm256.py", "setup.py", "acs.py"]
+extensions_white = [".py", ".pyx"]
+extensions_black = [".pyc", "pb2.py", "endcord/wide_ranges.py", "xterm256.py", "setup.py", "acs.py"]
 
 
 def get_file_list():
@@ -28,7 +27,7 @@ def get_file_list():
         for name in files:
             file_path = os.path.join(path, name)
             if any(name.endswith(x) for x in extensions_white) and not name.startswith("."):
-                if not any(name.endswith(x) for x in extensions_black):
+                if not any(file_path.endswith(x) for x in extensions_black):
                     file_list.append(file_path)
     return file_list
 

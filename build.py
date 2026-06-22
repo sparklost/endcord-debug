@@ -1,10 +1,8 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import argparse
-import glob
 import importlib.metadata
 import importlib.util
 import json
@@ -14,15 +12,46 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from importlib.metadata import distribution
 
 PYTHON_MAX_MINOR = 14
 PYTHON_FREETHREADED = 14
 PYTHON_LAST_SAFE = 13
+PYTHON_PATCH = 6
+
+CUSTOM_CFLAGS = [
+    "-DNDEBUG",
+    "-g0",
+    "-O3",
+    "-march=x86-64",
+    "-mtune=generic",
+    "-fno-semantic-interposition",
+    "-fno-strict-overflow",
+    "-fvisibility=hidden",
+    # "-flto=thin",
+]
+CUSTOM_CXXFLAGS = CUSTOM_CFLAGS
+CUSTOM_LDFLAGS = [
+    "-Wl,-s",
+    "-Wl,-O1",
+    "-Wl,--sort-common",
+    "-Wl,--as-needed",
+    "-Wl,-z,pack-relative-relocs",
+    "-Wl,--exclude-libs,ALL",
+    # "-flto=thin",
+]
+UNSAFE_FLAGS = [   # unsafe to use when building some libraries
+    "-fvisibility=hidden",
+]
+CFLAGS_OLD = os.environ.get("CFLAGS", "")
+CXXFLAGS_OLD = os.environ.get("CFLAGS", "")
+LDFLAGS_OLD = os.environ.get("CFLAGS", "")
 
 if sys.platform.startswith("android"):
     sys.platform = "linux"
 if "bsd" in sys.platform:
     sys.platform = "linux"
+
 
 def get_app_name():
     """Get app name from pyproject.toml"""
@@ -176,8 +205,9 @@ def ensure_python(freethreaded, safe=False):
 def check_media_support():
     """Check if media is supported"""
     return (
-        importlib.util.find_spec("PIL") is not None and
         importlib.util.find_spec("av") is not None and
+        importlib.util.find_spec("dave") is not None and
+        importlib.util.find_spec("PIL") is not None and
         importlib.util.find_spec("nacl") is not None
     )
 
@@ -202,11 +232,28 @@ def check_dev():
         subprocess.run(["uv", "sync", "--group", "build"], check=True)
 
 
+def is_local_build(package_name):
+    """Check if package is locally built"""
+    try:
+        dist = distribution(package_name)
+        for file in dist.files or []:
+            if file.name == "WHEEL":
+                wheel_path = dist.locate_file(file)
+                break
+        else:
+            return False
+        with open(wheel_path, "r", encoding="utf-8") as f:
+            return "manylinux" not in f.read()
+    except Exception:
+        pass
+    return False
+
+
 def force_ujson():
     """Remove orjson and force installing ujson instead. WARNING: this modifies pyproject.toml"""
     try:
         subprocess.run(["uv", "remove", "orjson"], check=True, stderr=subprocess.DEVNULL)
-        fprint("Switching orjson -> ujson   !! pyproject.toml is modified !!")
+        fprint("Switching orjson -> ujson   !! pyproject.toml is modified !!", color_code="\033[1;31m")
         subprocess.run(["uv", "add", "ujson"], check=True)
     except subprocess.CalledProcessError:
         pass
@@ -218,7 +265,7 @@ def build_third_party_licenses(exclude=[]):
     subprocess.run(["uv", "pip", "install", "pip-licenses"], check=True)
     command = [
         "uv", "run", "pip-licenses",
-        "--ignore-packages " + " ".joind(exclude),
+        "--ignore-packages " + " ".join(exclude),
         "--format=plain-vertical",
         "--no-license-path",
         "--output-file=THIRD_PARTY_LICENSES.txt",
@@ -237,26 +284,29 @@ def get_cython_bins(directory="endcord_cython", startswith=None):
     return bins
 
 
-def find_file_in_venv(lib_name, file_name, silent=False, recurse=False):
+def find_file_in_venv(lib_name, file_name, silent=False, recurse=False, startswith=False):
     """Search for file in specified library in current venv"""
     if isinstance(file_name, list):
         file_name = os.path.join(*file_name)
     for root, dirs, files in os.walk(".venv"):
-        if lib_name in dirs:
-            lib_dir = os.path.join(root, lib_name)
-            if not recurse:
-                path = os.path.join(lib_dir, file_name)
-                if os.path.isfile(path):
-                    return path
-            else:
-                for sub_root, sub_dirs, sub_files in os.walk(lib_dir):
-                    path = os.path.join(sub_root, file_name)
-                    if os.path.isfile(path):
-                        return path
-            break
+        path_parts = root.split(os.sep)
+        if lib_name in path_parts:
+            if not recurse and path_parts[-1] != lib_name:
+                continue
+            for f in files:
+                if (startswith and f.startswith(file_name)) or f == file_name:
+                    return os.path.join(root, f)
     if not silent:
         print(f"{lib_name}/{file_name} not found")
     return None
+
+
+def check_venv_file_size(lib_name, file_name, min_file_size):
+    """Crude way to check if this is already custom compiled library or downloaded binary. Return True if it should be built."""
+    path = find_file_in_venv(lib_name, file_name, silent=True, recurse=True, startswith=True)
+    if not path:
+        return True
+    return os.stat(path).st_size > min_file_size
 
 
 def patch_soundcard():
@@ -321,64 +371,21 @@ def patch_soundcard():
         print(f"Nothing to patch in file {path}")
 
 
-def clean_emoji():
-    """Clean emoji dict from unused emojis and data"""
-    fprint("Cleaning emoji data")
-    changed = False
-    # find emoji file
-    if not os.path.exists(".venv"):
-        print(".venv dir not found")
-        return
-    path = find_file_in_venv("emoji", ["unicode_codes", "emoji.json"])
-
-    # clean emoji
-    with open(path, "r", encoding="utf-8") as f:
+def compress_emoji():
+    """Compress emoji dict"""
+    fprint("Compressing emoji data")
+    json_path_in = os.path.join("endcord", "emoji.json")
+    json_path_out = os.path.join("build", "emoji.json")
+    if not os.path.exists(json_path_in):
+        print("emoji.json not found")
+        return None
+    if not os.path.exists("build"):
+        os.mkdir("build")
+    with open(json_path_in, "r", encoding="utf-8") as f:
         data = json.load(f)
-    cleaned = {}
-    for key, value in data.items():
-        if value.get("status", 0) <= 2:
-            value.pop("E", None)
-            cleaned[key] = value
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cleaned, f, ensure_ascii=False, indent=None, separators=(",", ":"))
-
-    # remove unused languages
-    pattern = os.path.join(os.path.dirname(path), "emoji_*.json")
-    for path in glob.glob(pattern):
-        changed = True
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-    # remove example from py file
-    path = find_file_in_venv("emoji", ["unicode_codes", "data_dict.py"])
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith("EMOJI_DATA"):
-            break
-        new_lines.append(line)
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-
-    if not changed:
-        print("Emoji data is already cleaned")
-
-
-def clean_qrcode():
-    """Clean qrcode library from unused code to reduce binary size"""
-    blacklist = ["console_scripts.py", "release.py", "styledpil.py", "svg.py", "pil.py", "tests"]
-    for file in blacklist:
-        path = True
-        path = find_file_in_venv("qrcode", file, silent=True, recurse=True)
-        while path:
-            try:
-                os.remove(path)
-            except Exception:
-                break
-            path = find_file_in_venv("qrcode", file, silent=True, recurse=True)
+    with open(json_path_out, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=None, separators=(",", ":"))
+    return json_path_out
 
 
 def toggle_experimental(check_only=False):
@@ -479,7 +486,86 @@ def enable_extensions(enable=True, check_only=False, silent=False):
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
     if not check_only and not silent:
-        fprint(f"Extensions {"enabled" if enable else "disabled"}!")
+        fprint(f"Extensions are {"enabled" if enable else "disabled"}!")
+
+
+def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], cxxflags=[], safe=False):
+    """Set compiler and its flags in environment variables"""
+    if clang:
+        os.environ["CC"] = "clang"
+        os.environ["CXX"] = "clang++"
+        os.environ["LD"] = "lld"
+    if clear:
+        os.environ["CFLAGS"] = CFLAGS_OLD
+        os.environ["CXXFLAGS"] = CXXFLAGS_OLD
+        os.environ["LDFLAGS"] = LDFLAGS_OLD
+        return [], [], []
+    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in UNSAFE_FLAGS] if safe else CUSTOM_CFLAGS
+    cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
+    cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
+    ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + CUSTOM_LDFLAGS + ldflags
+    if shutil.which("lld") and clang:
+        ldflags.append("-fuse-ld=lld")
+    os.environ["CFLAGS"] = " ".join(cflags)
+    os.environ["CXXFLAGS"] = " ".join(cxxflags)
+    os.environ["LDFLAGS"] = " ".join(ldflags)
+    return cflags, cxxflags, ldflags
+
+
+def ensure_custom_python(safe, clang):
+    """Check if current python is custom built, setup env or build it if not"""
+    minor = PYTHON_LAST_SAFE if safe else PYTHON_MAX_MINOR
+    version = f"3.{minor}.{PYTHON_PATCH}"
+    if importlib.util.find_spec("_bz2") is None:
+        return
+    if os.path.exists(".cpython") and os.path.exists(f".cpython/bin/python3.{version.split(".")[1]}"):
+        if os.environ.get("UV", ""):
+            if os.environ.get("_CUSTOM_PYTHON_CHECKED"):
+                fprint("Failed starting custom python build, delete .cpython dir and try again")
+                sys.exit(1)
+            os.environ["_CUSTOM_PYTHON_CHECKED"] = "1"
+            subprocess.run(["uv", "venv", "--clear", "--python", f".cpython/bin/python3.{minor}"], check=True)
+        os.execvp("uv", ["uv", "run", *sys.argv])
+        sys.exit(0)
+    else:
+        build_custom_python(version, clang)
+
+
+def build_custom_python(version, clang):
+    """Build custom Pyhon in .cpython dir"""
+    fprint("Building custom Python")
+    setup_compiler(clang, clear=True)
+    cmd = ["/bin/bash", "tools/build_python.sh", version, "clang"]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    line = None
+    first = True
+    for line in process.stdout:
+        # print(line.strip())
+        if len(line) > 100:
+            continue
+        if "Resolving www.python.org" in line:
+            print("Downloading Python source")
+        elif "checking build system type" in line:
+            print("Configuring build system")
+        elif "Building with support for profile generation" in line:
+            print("Compiling instrumented binaries")
+        elif "run the profile task to generate the profile information" in line:
+            print("Running tests to generate profile data")
+        elif "Rebuilding with profile guided optimizations:" in line and first:
+            first = False
+            print("Rebuilding with profile guided optimizations")
+    process.wait()
+    setup_compiler(clang, clear=True)
+    if process.returncode != 0:
+        if line:
+            print(line.strip())
+        raise subprocess.CalledProcessError(process.returncode, cmd)
 
 
 def build_numpy_lite(clang):
@@ -487,45 +573,61 @@ def build_numpy_lite(clang):
     if sys.platform != "linux":
         fprint("Skipping numpy lite (no openblas) building on non-linux platforms")
         return
-
-    # check if numpy without blas is not already installed
+    fprint("Building numpy lite (no openblas)")
     cmd = [
         "uv", "run", "python", "-c",
         "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))",
-    ]
-    fprint("Building numpy lite (no openblas)")
-    if int(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()):
-        if clang:
-            os.environ["CC"] = "clang"
-            os.environ["CXX"] = "clang++"
-        subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as intended
-        try:
-            if sys.platform == "win32":
-                python_interpreter = r".venv\Scripts\python.exe"
-            else:
-                python_interpreter = ".venv/bin/python"
-            subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", "numpy"], check=True)
-            subprocess.run([
-                python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", "numpy",
-                "--config-settings=setup-args=-Dblas=None",
-                "--config-settings=setup-args=-Dlapack=None",
-            ], check=True)
-        except subprocess.CalledProcessError:   # fallback
-            print("Failed building numpy lite (no openblas), faling back to default numpy")
-            subprocess.run(["uv", "pip", "install", "numpy"], check=True)
-        subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
-    else:
+    ]   # check if numpy without blas is not already installed
+    value = subprocess.run(cmd, capture_output=True, text=True, check=False).stdout.strip()
+    if not value or not int(value):
         print("Numpy lite (no openblas) is already built")
+        return
+    setup_compiler(clang)
+    subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    try:
+        if sys.platform == "win32":
+            python_interpreter = r".venv\Scripts\python.exe"
+        else:
+            python_interpreter = ".venv/bin/python"
+        subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", "numpy"], check=True)
+        subprocess.run([
+            python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", "numpy",
+            "--config-settings=setup-args=-Dblas=None",
+            "--config-settings=setup-args=-Dlapack=None",
+        ], check=True)
+    except subprocess.CalledProcessError:   # fallback
+        print("Failed building numpy lite (no openblas), faling back to default numpy")
+        subprocess.run(["uv", "pip", "install", "numpy"], check=True)
+    subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
+
+
+def build_package(package, clang, safe=False):
+    """Build any python C compiled package with custom compiler args to reduce final binary size"""
+    if sys.platform != "linux":
+        return
+    fprint(f"Building {package} with custom compiler args")
+    setup_compiler(clang, safe=safe)
+    subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    try:
+        if sys.platform == "win32":
+            python_interpreter = r".venv\Scripts\python.exe"
+        else:
+            python_interpreter = ".venv/bin/python"
+        subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", package], check=True)
+        subprocess.run([python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", package], check=True)
+    except subprocess.CalledProcessError:   # fallback
+        print(f"Failed building {package}, faling back to default prebuilt version")
+        subprocess.run(["uv", "pip", "install", package], check=True)
+    subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
 
 
 def build_cython(clang, mingw):
     """Build cython extensions"""
+    clang = clang or os.environ.get("CC") == "clang"
     fprint(f"Compiling cython code with {"clang" if clang else "gcc"}{("mingw") if mingw else ""}")
+    setup_compiler(clang)
     cmd = ["uv", "run", "python", "setup.py", "build_ext", "--inplace"]
-    if clang:
-        os.environ["CC"] = "clang"
-        os.environ["CXX"] = "clang++"
-    elif mingw and sys.platform == "win32":
+    if mingw and sys.platform == "win32":
         cmd.append("--compiler=mingw32")   # covers mingw 32 and 64
 
     # run process with control of stdout
@@ -559,8 +661,10 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
         else:
             pkgname = f"{PKGNAME}-lite"
             fprint("ASCII media support is disabled")
+        emoji_path = compress_emoji()
     else:
         pkgname = PKGNAME
+        emoji_path = "endcord/emoji.json"
 
     mode = "--onedir" if onedir else "--onefile"
     hidden_imports = ["--hidden-import=uuid"]
@@ -568,10 +672,7 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
         "--exclude-module=cython",
         "--exclude-module=zstandard",
     ]
-    package_data = [
-        "--collect-data=emoji",
-        "--collect-data=soundcard",
-    ]
+    package_data = ["--collect-data=soundcard"]
 
     # options
     if nosoundcard:
@@ -582,12 +683,15 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     if sys.platform == "linux":
         options = []
         hidden_imports += ["--hidden-import=soundcard.pulseaudio"]
+        add_data = [f"--add-data={emoji_path}:."]
     elif sys.platform == "win32":
         options = ["--console"]
         hidden_imports += ["--hidden-import=win32timezone"]
+        add_data = [f"--add-data={emoji_path};."]
     elif sys.platform == "darwin":
         options = []
         package_data += ["--collect-data=certifi"]
+        add_data = [f"--add-data={emoji_path}:."]
 
     # prepare command and run it
     cmd = [
@@ -596,6 +700,7 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
         *hidden_imports,
         *exclude_imports,
         *package_data,
+        *add_data,
         *options,
         "--noconfirm",
         "--clean",
@@ -623,25 +728,38 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     fprint(f"Finished building {pkgname}")
 
 
-def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experimental=False):
+def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd=False, experimental=False):
     """Build with nuitka"""
+    clang = clang or os.environ.get("CC") == "clang"
     if not print_cmd:
-        if check_media_support():
+        full = check_media_support()
+        if full:
             pkgname = PKGNAME
             fprint("ASCII media support is enabled")
         else:
             pkgname = f"{PKGNAME}-lite"
             fprint("ASCII media support is disabled")
 
-        build_numpy_lite(clang)
+        if compile_deps:
+            build_numpy_lite(clang)
+            if check_venv_file_size("Crypto", "_chacha", 10000):
+                build_package("pycryptodome", clang, safe=True)
+            else:
+                print("Pycryptodome is already compiled locally")
+            if full:
+                if check_venv_file_size("pynacl", "_sodium.", 1000000):
+                    build_package("pynacl", clang)
+                else:
+                    print("PyNaCl is already compiled locally")
         patch_soundcard()
-        clean_emoji()
-        clean_qrcode()
+        emoji_path = compress_emoji()
     else:
         pkgname = PKGNAME
+        emoji_path = "endcord/emoji.json"
     full = pkgname == PKGNAME
+    static_python = False   # might be useful with custom python build
 
-    mode = "--standalone" if onedir else "--onefile"
+    mode = "standalone" if onedir else "onefile"
     compiler = ""
     if clang:
         compiler = "--clang"
@@ -649,24 +767,20 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experi
         compiler = "--mingw64"
     python_flags = ["--python-flag=-OO"]
     hidden_imports = ["--include-module=uuid"]
-    # excluding zstandard because its nuitka dependency bu also urllib3 optional dependency, and uses lots of space
     exclude_imports = [
         "--nofollow-import-to=cython",
         "--nofollow-import-to=tkinter",
         "--nofollow-import-to=zstandard",
-        "--nofollow-import-to=google._upb",
     ]
-    package_data = [
-        "--include-package-data=emoji:unicode_codes/emoji.json",
-        "--include-package-data=soundcard",
-    ]
+    package_data = ["--include-package-data=soundcard"]
+    add_data = [f"--include-data-files={emoji_path}=emoji.json"]
+
+    setup_compiler(clang)
 
     # options
     if nosoundcard:
         exclude_imports.append("--nofollow-import-to=soundcard")
         package_data.remove("--include-package-data=soundcard")
-    if clang:
-        os.environ["CFLAGS"] = "-Wno-macro-redefined"
     if full:
         hidden_imports += ["--include-module=av.sidedata.encparams"]
 
@@ -675,6 +789,7 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experi
         options = []
         if experimental:
             options.append("--include-package=gi._enum")
+            hidden_imports += ["--include-package=ctypes.util"]
     elif sys.platform == "win32":
         options = ["--assume-yes-for-downloads"]
         hidden_imports += [
@@ -695,13 +810,16 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experi
     # prepare command and run it
     cmd = [
         "uv", "run", "python", "-m", "nuitka",
-        mode,
+        f"--mode={mode}",
         compiler,
         *python_flags,
         *hidden_imports,
         *exclude_imports,
         *package_data,
+        *add_data,
         *options,
+        "--static-libpython=yes" if static_python else "",
+        "--no-prefer-source-code",
         "--remove-output",
         "--output-dir=dist",
         f"--output-filename={pkgname}",
@@ -721,7 +839,6 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, print_cmd=False, experi
     # cleanup
     fprint("Cleaning up")
     try:
-        os.remove(f"{pkgname}.spec")
         shutil.rmtree("build")
     except FileNotFoundError:
         pass
@@ -741,9 +858,9 @@ def parser():
         help="build with nuitka, takes a long time, but more optimized executable",
     )
     parser.add_argument(
-        "--clang",
+        "--noclang",
         action="store_true",
-        help="use clang when building with nuitka",
+        help="script prefers clang if its installed, set this to not use it, or change CC and LD env vars",
     )
     parser.add_argument(
         "--lite",
@@ -756,9 +873,19 @@ def parser():
         help="build into directory instead single executable",
     )
     parser.add_argument(
+        "--custom-python",
+        action="store_true",
+        help="build and use python with custom settings, will reduce final binary size, only for linux",
+    )
+    parser.add_argument(
         "--nocython",
         action="store_true",
         help="build without compiling cython code",
+    )
+    parser.add_argument(
+        "--nocompile-deps",
+        action="store_true",
+        help="do not compile dependencies with custom compiler flags (compiled only in nuitka mode)",
     )
     parser.add_argument(
         "--nosoundcard",
@@ -810,13 +937,17 @@ def parser():
 
 if __name__ == "__main__":
     args = parser()
+    clang = not (args.noclang or args.mingw)
 
     if args.print_cmd:
         if args.nuitka:
-            build_with_nuitka(args.onedir, args.clang, args.mingw, args.nosoundcard, print_cmd=True)
+            build_with_nuitka(args.onedir, clang, args.mingw, args.nosoundcard, print_cmd=True)
         else:
             build_with_pyinstaller(args.onedir, args.nosoundcard, print_cmd=True)
         sys.exit(0)
+
+    if args.custom_python:
+        ensure_custom_python(args.safe, clang)
 
     if check_python():
         version, freethreaded = ensure_python(args.freethreaded, args.safe)
@@ -831,7 +962,6 @@ if __name__ == "__main__":
     if args.freethreaded:
         force_ujson()
 
-    check_dev()
     if args.toggle_experimental:
         toggle_experimental()
         sys.exit(0)
@@ -839,6 +969,9 @@ if __name__ == "__main__":
         remove_media()
     else:
         add_media()
+
+    if not args.nobuild:
+        check_dev()
 
     experimental = toggle_experimental(check_only=True)
     if experimental:
@@ -848,11 +981,11 @@ if __name__ == "__main__":
         subprocess.run(["uv", "pip", "install"] + experimental_dependencies, check=True)
         fprint("Experimental windowed mode enabled!")
 
+    enable_extensions(enable=(not args.disable_extensions))
+
     if sys.platform not in ("linux", "win32", "darwin"):
         print(f"This platform is not supported: {sys.platform}", file=sys.stderr)
         sys.exit(1)
-
-    enable_extensions(enable=(not args.disable_extensions))
 
     if args.nocython:
         bins = get_cython_bins(directory="endcord_cython")
@@ -861,7 +994,7 @@ if __name__ == "__main__":
         fprint("Deleted compiled cython extensions")
     else:
         try:
-            build_cython(args.clang, args.mingw)
+            build_cython(clang, args.mingw)
         except Exception as e:
             fprint(f"Failed building cython extensions, error: {e}")
 
@@ -871,7 +1004,7 @@ if __name__ == "__main__":
 
     if not args.nobuild:
         if args.nuitka:
-            build_with_nuitka(args.onedir, args.clang, args.mingw, args.nosoundcard, experimental=experimental)
+            build_with_nuitka(args.onedir, clang, args.mingw, args.nosoundcard, not(args.nocompile_deps), experimental=experimental)
         else:
             build_with_pyinstaller(args.onedir, args.nosoundcard)
 

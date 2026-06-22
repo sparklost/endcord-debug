@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import curses
 import importlib.util
@@ -9,21 +8,23 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 import traceback
 
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"   # fix for https://github.com/Nuitka/Nuitka/issues/3442
 if os.environ.get("ENDCORD_APP_NAME"):
-    APP_NAME =  str(os.environ.get("ENDCORD_APP_NAME"))
+    APP_NAME = str(os.environ.get("ENDCORD_APP_NAME"))
 else:
     APP_NAME = "endcord"
 
 from endcord import arg, config, defaults, peripherals, utils
 
-VERSION = "1.4.2"
+VERSION = "1.5.0"
 default_config_path = peripherals.config_path
 log_path = peripherals.log_path
+threading.stack_size(512 * 1024)
 uses_pgcurses = hasattr(curses, "PGCURSES")
+run = True
 
 logger = logging
 logging.basicConfig(
@@ -113,9 +114,8 @@ def main(args):
         sys.exit(0)
     elif args.media:
         if not (
-            importlib.util.find_spec("PIL") is not None and
             importlib.util.find_spec("av") is not None and
-            importlib.util.find_spec("nacl") is not None
+            importlib.util.find_spec("PIL") is not None
         ):
             print("Terminal media player is not supported", file=sys.stderr)
             sys.exit(1)
@@ -162,7 +162,12 @@ def main(args):
 
     try:
         from endcord import app
-        curses.wrapper(app.Endcord, config_data, keybindings, command_bindings, profiles, VERSION)
+        endcord = app.Endcord
+        curses.wrapper(endcord, config_data, keybindings, command_bindings, profiles, VERSION)
+        if hasattr(app, "target_profile"):
+            cmd = utils.get_executable()
+            cmd = utils.remove_args(cmd, "-a", "--manager", "-p", "--profile")
+            os.execvp(cmd[0], cmd + ["--profile", app.target_profile])
     except curses.error as e:
         if str(e) != "endwin() returned ERR":
             logger.error(traceback.format_exc())

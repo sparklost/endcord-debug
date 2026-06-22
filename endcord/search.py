@@ -1,13 +1,13 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import heapq
 import importlib.util
 import re
+from itertools import chain
 
-import emoji
+from endcord import utils
 
 COMMAND_OPT_TYPE = ("subcommand", "group", "string", "integer", "True/False", "user ID", "channel ID", "role ID", "mentionable ID", "number", "attachment")
 
@@ -56,7 +56,7 @@ def fuzzy_match_score(query, candidate):
     return total_score
 
 
-# use cython if available, ~6.7 times faster
+# use cython if available, ~10 times faster
 if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.search"):
     from endcord_cython.search import fuzzy_match_score
 
@@ -247,12 +247,12 @@ def search_usernames_roles(roles, query_results, guild_id, gateway, query, prese
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_emojis(all_emojis, premium, guild_id, query, safe_emoji=False, limit=50, score_cutoff=15):
+def search_emojis(all_emojis, favorite_emojis, local_emojis, premium, guild_id, query, safe_emoji=False, limit=50, score_cutoff=15):
     """Search for emoji"""
     results = []
     worst_score = score_cutoff
 
-    # guild emoji
+    # select discord emojis
     if premium:
         emojis = all_emojis
     else:
@@ -263,10 +263,58 @@ def search_emojis(all_emojis, premium, guild_id, query, safe_emoji=False, limit=
         else:
             emojis = []
 
+    # favorites
+    for emoji_name in chain(local_emojis, favorite_emojis):
+        try:
+            int(emoji_name)   # if success its discord emoji id
+            for guild in emojis:
+                guild_name = guild["guild_name"]
+                for guild_emoji in guild["emojis"]:
+                    if guild_emoji["id"] == emoji_name:
+                        break
+                else:
+                    continue
+                formatted = f"** {guild_emoji["name"]} ({guild_name})"
+                if query.startswith("**"):
+                    score = 1000 + fuzzy_match_score(query[2:].strip(), formatted)
+                else:
+                    score = fuzzy_match_score(query, formatted)
+                if score < worst_score:
+                    continue
+                heapq.heappush(results, (formatted, f"<:{guild_emoji["name"]}:{guild_emoji["id"]}>", score + 1000))
+        except ValueError:
+            emoji_string = f":{emoji_name}:"
+            for emoji, data in utils.EMOJI_DATA.items():
+                if emoji_string in data:
+                    break
+            else:
+                continue
+            formatted = "** "
+            if not safe_emoji:
+                formatted += emoji
+            if len(data) > 1:
+                if len(data[1]) < len(data[0]):
+                    formatted += f" - {data[1]} ({data[0]})"
+                else:
+                    formatted += f" - {data[0]} ({data[1]})"
+            else:
+                formatted += " - " + data[0]
+            if query.startswith("**"):
+                score = 1000 + fuzzy_match_score(query[3:].strip(), formatted)
+            else:
+                score = fuzzy_match_score(query, formatted) * 2
+            if score < worst_score:
+                continue
+            heapq.heappush(results, (formatted, emoji_string, score + 1000))
+
+    if query.startswith("**"):
+        return sorted(results, key=lambda x: x[2], reverse=True)
+
+    # discord emoji
     for guild in emojis:
         guild_name = guild["guild_name"]
         for guild_emoji in guild["emojis"]:
-            formatted = f"{guild_emoji["name"]} ({guild_name})"
+            formatted = f" {guild_emoji["name"]} ({guild_name})"
             score = fuzzy_match_score(query, formatted)
             if score < worst_score:
                 continue
@@ -277,19 +325,29 @@ def search_emojis(all_emojis, premium, guild_id, query, safe_emoji=False, limit=
 
     # standard emoji
     if len(results) < limit:
-        for key, item in emoji.EMOJI_DATA.items():
-            if item["status"] > 2:   # skip unqualified and minimally qualified emoji
-                continue
-            # emoji.EMOJI_DATA = {emoji: {"en": ":emoji_name:", "status": 2, "E": 3}...}
-            # using only qualified emojis (status: 2)
-            if safe_emoji:
-                formatted = item["en"]
+        for key, data in utils.EMOJI_DATA.items():
+            # utils.EMOJI_DATA = {emoji: {":emoji_name:", ":alias:"}...}
+            if any((0x1F3FB <= ord(ch) <= 0x1F3FF) for ch in key):
+                continue   # skip variation emoji
+            formatted = " "
+            if not safe_emoji:
+                formatted += str(key)
+            if len(data) > 1:
+                if len(data[1]) < len(data[0]):
+                    emoji_name = data[1]
+                    long_name = data[0]
+                else:
+                    emoji_name = data[0]
+                    long_name = data[1]
+                formatted += f" - {emoji_name} ({data[1]})"
             else:
-                formatted = f"{item["en"]} - {key}"
-            score = fuzzy_match_score(query, formatted)
+                emoji_name = data[0]
+                long_name = None
+                formatted += " - " + data[0]
+            score = fuzzy_match_score(query, emoji_name + f" {long_name}" if long_name else "")
             if score < worst_score:
                 continue
-            heapq.heappush(results, (formatted, item["en"], score))
+            heapq.heappush(results, (formatted, emoji_name, score))
             if len(results) > limit:
                 heapq.heappop(results)
                 worst_score = results[0][2]
@@ -462,7 +520,7 @@ def search_client_commands(commands, query, limit=50, score_cutoff=15):
 
 
 def search_games(games, blacklist, query, limit=50, score_cutoff=15):
-    """Search for settings"""
+    """Search for games in game detection"""
     results = []
     worst_score = score_cutoff
 
@@ -482,17 +540,98 @@ def search_games(games, blacklist, query, limit=50, score_cutoff=15):
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_tabs(tabs, query, limit=50, score_cutoff=15):
+def search_tabs(channel_cache, query, limit=50, score_cutoff=15):
     """Search for tabs"""
     results = []
     worst_score = score_cutoff
 
-    for num, tab in enumerate(tabs):
-        formatted = f"{num + 1} - {tab["channel_name"]} ({tab["guild_name"]})"
+    for num, tab in enumerate(channel_cache):
+        formatted = f"{num + 1} - {tab[4]} ({tab[5]})"
         score = fuzzy_match_score(query, formatted)
         if score < worst_score and query:
             continue
         heapq.heappush(results, (formatted, f"switch_tab {num + 1}", score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_mics(devices, current_device, query, limit=50, score_cutoff=15):
+    """Search for microphones"""
+    results = []
+    worst_score = score_cutoff
+    if current_device is None:
+        current_device = "Auto"
+    results.append(("Auto", "voice_set_input_device " + "Auto", score_cutoff + fuzzy_match_score(query, "Auto") + 0.1))
+
+    for device in devices:
+        score = fuzzy_match_score(query, device)
+        if score < worst_score and query:
+            continue
+        heapq.heappush(results, (device, "voice_set_input_device " + device, score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    results.append(("OFF", "voice_set_input_device " + "OFF", score_cutoff + fuzzy_match_score(query, "OFF") + 0.1))
+    for num, result in enumerate(results):
+        if current_device == result[0]:
+            results[num] = (f"* {result[0]}", *result[1:])
+            break
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_profiles(profiles, query, limit=50, score_cutoff=15):
+    """Search for profiles"""
+    results = []
+    worst_score = score_cutoff
+    keyring_len = len(profiles["keyring"])
+
+    for num, profile in enumerate(chain(profiles["keyring"], profiles["plaintext"])):
+        score = fuzzy_match_score(query, profile["name"])
+        if not query:
+            score = score_cutoff
+        elif score < worst_score and query:
+            continue
+        keyring = "keyring" if num < keyring_len else "plaintext"
+        active = "[Active]" if profile["name"] == profiles["selected"] else ""
+        heapq.heappush(results, (f"{profile["name"]} - ({keyring}) {active}", "switch_profile " + profile["name"], score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_gif(gifs, query, limit=50, score_cutoff=15, fav=True, cmd=True):
+    """Search for gifs"""
+    results = []
+    worst_score = score_cutoff
+    if query:
+        results.append(("Search: " + query, ("gif " if cmd else "") + query, 1000, None))
+
+    if not fav and gifs and len(gifs[0]) > 2:
+        return []
+    iterable = gifs if not fav else gifs.items()
+    for url, data in iterable:
+        formatted = " ".join(url.split("/")[-1].split("-")[:-1])
+        if fav:
+            preview = data["src"]
+            order = data["order"]
+        else:
+            preview = data
+            order = 0
+        if formatted.endswith("gif"):
+            formatted = formatted[:-4]
+        if query:
+            score = fuzzy_match_score(query, formatted)
+        else:
+            score = score_cutoff + int(order) if fav else 0
+        if score < worst_score and query:
+            continue
+        heapq.heappush(results, (("Favorite: " if fav else "Tenor: ") + formatted, ("gif " if cmd else "") + url, score, preview))
         if len(results) > limit:
             heapq.heappop(results)
             worst_score = results[0][2]

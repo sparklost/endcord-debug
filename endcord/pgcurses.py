@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import importlib.util
 import json
@@ -82,7 +81,7 @@ elif sys.platform == "win32":
     config_path = os.path.join(os.environ["LOCALAPPDATA"], APP_NAME, "pgcurses.json")
 elif sys.platform == "darwin":
     config_path = f"~/Library/Application Support/{APP_NAME.lower()}/pgcurses.json"
-#config_path = os.environ.get("PGCURSES_CONFIG")
+# config_path = os.environ.get("PGCURSES_CONFIG")
 
 # load config
 if config_path:
@@ -165,7 +164,7 @@ COLOR_PAIRS = 1000000
 run = True
 screen = None
 toggle_window = False
-open_window = True
+focused = True
 mouse_event = (0, 0, 0, 0, 0)
 main_thread_queue = queue.Queue()
 event_queue = queue.Queue()
@@ -408,6 +407,27 @@ def insstr(buffer, nlines, ncols, dirty_lines, dirty_lock, y, x, text, attr):
             dirty_lines.add(row)
 
 
+def chgat(buffer, nlines, ncols, dirty_lines, dirty_lock, y, x, num, attr):
+    """Internal function for curses.chgat"""
+    if y < 0 or y >= nlines:
+        return
+    if x >= ncols:
+        return
+    x = max(x, 0)
+    if num < 0:
+        end = ncols
+    else:
+        end = x + num
+        end = min(end, ncols)
+    with dirty_lock:
+        row_buffer = buffer[y]
+        for i in range(x, end):
+            ch, _old_attr = row_buffer[i]
+            row_buffer[i] = (ch, attr)
+        if x < end:
+            dirty_lines.add(y)
+
+
 def render(screen, buffer, dirty_lines, dirty_lock, ncols, char_width, char_height, pxx, pxy, font_regular, font_bold, font_italic, font_bold_italic, emoji_font, color_map):
     """Render buffer onto screen"""
     with dirty_lock:
@@ -478,6 +498,7 @@ def render(screen, buffer, dirty_lines, dirty_lock, ncols, char_width, char_heig
 
         dirty_lines.clear()
 
+
 # use cython if available, ~1.5 times faster insstr and ~1.3 times faster render
 if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.pgcurses"):
     from endcord_cython.pgcurses import insstr, render
@@ -516,7 +537,7 @@ class Window:
     def screen_resize(self):
         """Internal function used to update screen dimensions on VIDEORESIZE event"""
         global screen
-        self.ncols = screen.get_width()  // self.char_width
+        self.ncols = screen.get_width() // self.char_width
         self.nlines = screen.get_height() // self.char_height
         with self.dirty_lock:
             self.buffer = [[(" ", 0) for _ in range(self.ncols)]for _ in range(self.nlines)]
@@ -544,6 +565,21 @@ class Window:
             y=y,
             x=x,
             text=text,
+            attr=attr,
+        )
+
+
+    def chgat(self, y, x, num, attr=0):
+        """curses.insstr clone using pygame"""
+        chgat(
+            buffer=self.buffer,
+            nlines=self.nlines,
+            ncols=self.ncols,
+            dirty_lines=self.dirty_lines,
+            dirty_lock=self.dirty_lock,
+            y=y,
+            x=x,
+            num=num,
             attr=attr,
         )
 
@@ -765,7 +801,7 @@ def initscr():
 
 def wrapper(func, *args, **kwargs):
     """curses.wrapper clone using pygame"""
-    global screen, run, toggle_window, open_window
+    global screen, run, toggle_window, focused
     window = initscr()
 
     if have_tray:
@@ -789,10 +825,10 @@ def wrapper(func, *args, **kwargs):
                 last_window_size = screen.get_size()
                 pygame.display.quit()
                 screen = None
-                open_window = False
+                focused = False
             else:
                 screen = pygame.display.set_mode(last_window_size, pygame.RESIZABLE)
-                open_window = True
+                focused = True
                 event_queue.put(fake_videoresize)   # used to trigger redraw
 
         if screen:
@@ -843,41 +879,51 @@ def color_pair(color_id):
     """curses.color_pair clone using pygame, returns color id"""
     return color_id
 
+
 def start_color():
     """curses.start_color clone using pygame, does nothing"""
     pass
+
 
 def use_default_colors():
     """curses.use_default_colors clone using pygame, does nothing"""
     pass
 
+
 def curs_set(x):
     """curses.curs_set clone using pygame, does nothing"""
     pass
+
 
 def mousemask(x):
     """curses.mousemask clone using pygame, does nothing"""
     pass
 
+
 def mouseinterval(x):
     """curses.mouseinterval clone using pygame, does nothing"""
     pass
+
 
 def nocbreak():
     """curses.nocbreak clone using pygame, does nothing"""
     pass
 
+
 def echo():
     """curses.echo clone using pygame, does nothing"""
     pass
+
 
 def endwin():
     """curses.endwin clone using pygame"""
     pass
 
+
 def def_prog_mode():
     """curses.def_prog_mode clone using pygame"""
     pass
+
 
 def reset_prog_mode():
     """curses.reset_prog_mode clone using pygame"""

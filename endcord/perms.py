@@ -1,12 +1,12 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 def decode_flag(flags, flag_num):
     """Return value for specified flag number (int)"""
     flag = (1 << flag_num)
     return (flags & flag) == flag
+
 
 def decode_permission(permission, flag):
     """
@@ -21,6 +21,8 @@ def decode_permission(permission, flag):
     ATTACH_FILES    0x8000 (1 << 15)
     MENTION_EVERYONE    0x20000 (1 << 17)
     USE_EXTERNAL_EMOJIS 0x40000 (1 << 18)
+    CONNECT (VOICE)     0x100000 (1 << 20)
+    SPEAK (VOICE)       0x200000 (1 << 21)
     BYPASS_SLOWMODE     0x10000000000000 (1 << 52)
     """
     return (permission & flag) == flag
@@ -102,6 +104,10 @@ def compute_permissions(guilds, this_guild_roles, this_guild_id, my_roles, my_id
         guild["channels"][num]["allow_attach"] = decode_permission(permissions, 0x8000)   # ATTACH_FILES
         if decode_permission(permissions, 0x10000000000000):   # BYPASS_SLOWMODE
             guild["channels"][num]["bypass_slowmode"] = True
+        if channel["type"] == 2 and not decode_permission(permissions, 0x100000):   # CONNECT (VOICE)
+            guild["channels"][num]["allow_voice"] = False
+        if channel["type"] == 2 and not decode_permission(permissions, 0x200000):   # SPEAK (VOICE)
+            guild["channels"][num]["allow_speak"] = False
     return guilds
 
 

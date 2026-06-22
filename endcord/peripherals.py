@@ -1,17 +1,22 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
+import http.client
 import importlib.util
 import logging
 import os
 import shutil
+import ssl
+import struct
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
+
+import socks
 
 if sys.platform.startswith("android"):
     sys.platform = "linux"
@@ -26,7 +31,7 @@ try:
     logger.info(APP_NAME)
 except (AttributeError, NameError):
     APP_NAME = "endcord"
-VERSION = "1.4.2"
+VERSION = "1.5.0"
 NO_NOTIFY_SOUND_DE = ("kde", "plasma")   # linux desktops without notification sound
 
 # platform specific code
@@ -59,7 +64,7 @@ elif sys.platform == "linux":
 
 # get platform specific paths
 if sys.platform == "linux":
-    path = os.environ.get("XDG_DATA_HOME", "")
+    path = os.environ.get("XDG_CONFIG_HOME", "")
     if path.strip():
         config_path = os.path.join(path, APP_NAME)
         log_path = os.path.join(path, APP_NAME)
@@ -111,7 +116,10 @@ for app_path in (config_path, log_path, temp_path, cache_path, downloads_path):
 
 # platform specific commands
 if sys.platform == "linux":
-    runner = "xdg-open"
+    if shutil.which("xdg-open"):
+        runner = "xdg-open"
+    else:
+        runner = None
     if shutil.which("zenity"):
         filedialog = "zenity"
     elif shutil.which("kdialog"):
@@ -209,7 +217,7 @@ def notify_send(title, message, sound="message", image_path=None, custom_sound=N
             threading.Thread(target=play_audio, daemon=True, args=(custom_sound, )).start()
         command = ["osascript", "-e", f"'display notification \"{message}\" with title \"{title}\"'"]
         # osascript cant display image in notification
-        _ = subprocess.Popen(
+        subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -221,7 +229,7 @@ def notify_remove(notification_id):
     """Removes notification by its id. Linux only."""
     if sys.platform == "linux" and have_gdbus:
         command = ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.CloseNotification", str(notification_id)]
-        _ = subprocess.Popen(
+        subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -231,6 +239,7 @@ def notify_remove(notification_id):
 def copy_to_clipboard(text):
     """Copy text to clipboard. Cross-platform."""
     text = str(text)
+
     if sys.platform == "linux":
         if os.getenv("WAYLAND_DISPLAY"):
             try:
@@ -254,11 +263,16 @@ def copy_to_clipboard(text):
                 proc.communicate(input=text.encode("utf-8"))
             except FileNotFoundError:
                 logger.warning("Cant copy: xclip not found on system")
+
     elif sys.platform == "win32":
         win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText(text)
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(text)
+        except Exception:
+            pass
         win32clipboard.CloseClipboard()
+
     elif sys.platform == "darwin":
         proc = subprocess.Popen(
             ["pbcopy", "w"],
@@ -269,9 +283,60 @@ def copy_to_clipboard(text):
         proc.communicate(input=text.encode("utf-8"))
 
 
+def copy_file_to_clipboard(path):
+    """Copy file from specified path to clipboard, without loading file in RAM"""
+    path = os.path.expanduser(path)
+
+    if sys.platform == "linux":
+        if os.getenv("WAYLAND_DISPLAY"):
+            try:
+                proc = subprocess.Popen(
+                    ["wl-copy", "--type", "text/uri-list"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                proc.communicate(input=f"file://{urllib.parse.quote(path)}\n".encode("utf-8"))
+            except FileNotFoundError:
+                logger.warning("Cant copy: wl-clipboard not found on system")
+        else:
+            try:
+                proc = subprocess.Popen(
+                    ["xclip", "-selection", "clipboard", "-t", "text/uri-list"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                proc.communicate(input=f"file://{urllib.parse.quote(path)}\n".encode("utf-8"))
+            except FileNotFoundError:
+                logger.warning("Cant copy: xclip not found on system")
+
+    elif sys.platform == "win32":
+        path_utf16 = path.encode("utf-16le") + b"\x00\x00"
+        header = struct.pack("<Illii", 20, 0, 0, 0, 1)   # pFiles, pt_x, pt_y, fNC, fWide (utf16)
+        data = header + path_utf16
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_HDROP, data)
+        except Exception:
+            pass
+        win32clipboard.CloseClipboard()
+
+    elif sys.platform == "darwin":
+        proc = subprocess.Popen(
+            ["pbcopy"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        proc.communicate(input=f"file://{urllib.parse.quote(path)}".encode("utf-8"))
+
+
 def paste_clipboard_files(save_path=None):
     """Get files paths from clipboard, linux only, needs xclip or wl-clipboard"""
-    save_path = os.path.expanduser(save_path)
+    if save_path:
+        save_path = os.path.expanduser(save_path)
     if sys.platform == "linux":
 
         if os.getenv("WAYLAND_DISPLAY"):
@@ -316,17 +381,19 @@ def paste_clipboard_files(save_path=None):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )
-                data = proc.communicate()[0].decode().strip("\n")
+                data = urllib.parse.unquote(proc.communicate()[0].decode().strip("\n"))
                 return [line[7:] for line in data.splitlines() if line.startswith("file://")]
 
             # plain text or nothing
-            if "text/plain" in types_list:
-                proc = subprocess.Popen(
-                    query_command[:] + ["text/plain"] + ([suffix] if suffix else []),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                )
-                return proc.communicate()[0].decode().strip("\n")
+            for data_type in types_list:
+                if "text/plain" in data_type:
+                    proc = subprocess.Popen(
+                        query_command[:] + [data_type] + ([suffix] if suffix else []),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    return proc.communicate()[0].decode().strip("\n")
+            return []
 
         except FileNotFoundError:
             logger.warning("Cant paste: wl-clipboard or xclip not found on system")
@@ -420,10 +487,22 @@ def native_select_files(file_filter=None, multiple=True, auto=False):
             return []
 
     elif filedialog == "mac":
-        command = f'choose file default location "{init_dir}"  with prompt "Import File"'
-        data = subprocess.run(["osascript", "-"], input=command, text=True, capture_output=True, check=False)
-        data = data.stdout.strip().split(",")
-        return data[data.find(":"):].replace(":", "/")
+        command = f"""
+        set files to choose file default location "{init_dir}" with prompt "Import File" with multiple selections allowed true
+        set out to ""
+        repeat with f in files
+            set out to out & (POSIX path of f) & linefeed
+        end repeat
+        out
+        """
+        result = subprocess.run(
+            ["osascript", "-"],
+            input=command,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return [p for p in result.stdout.splitlines() if p]
 
     else:
         return "ERROR"
@@ -483,7 +562,7 @@ def play_audio(path):
 
 
 def native_open(path, mpv_path="", yt_in_mpv=True):
-    """Open media file in native application, cross-system"""
+    """Open media file in native application, cross-platform"""
     if not path:
         return
     if path.startswith("https://") and "youtu" in path:
@@ -492,17 +571,51 @@ def native_open(path, mpv_path="", yt_in_mpv=True):
         else:
             webbrowser.open(path, new=0, autoraise=True)
             return
-    else:
+    elif runner:
         current_runner = runner
-    _ = subprocess.Popen(
+    else:
+        logger.warning("Could not find runner on this platform")
+        return
+    subprocess.Popen(
         [current_runner, path],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
 
+def get_connection(host, port=443, timeout=2, proxy=None):
+    """Get connection object and handle proxying"""
+    if sys.platform == "darwin":
+        import certifi
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+    else:
+        ssl_context = ssl.create_default_context()
+    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+
+    if not proxy:
+        proxy = ""
+    proxy = urllib.parse.urlsplit(proxy)
+    if proxy.scheme:
+        if proxy.scheme.lower() == "http":
+            connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
+            connection.set_tunnel(host, port=port)
+        elif "socks" in proxy.scheme.lower():
+            proxy_sock = socks.socksocket()
+            proxy_sock.set_proxy(socks.SOCKS5, proxy.hostname, proxy.port)
+            proxy_sock.settimeout(timeout)
+            proxy_sock.connect((host, port))
+            proxy_sock = ssl_context.wrap_socket(proxy_sock, server_hostname=host)
+            connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)   # extra time for tor
+            connection.sock = proxy_sock
+        else:
+            connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+    else:
+        connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+    return connection
+
+
 def find_aspell():
-    """Find aspell exe path on windows system"""
+    """Find aspell executable"""
     if sys.platform == "linux":
         if shutil.which("aspell"):
             return "aspell"
@@ -580,7 +693,7 @@ class SpellCheck():
                 self.aspell.stdin.flush()
                 result = self.aspell.stdout.readline().strip()
                 next_line = result
-                while next_line != "\n":   # read until it prints empty line
+                while next_line and next_line != "\n":   # read until it prints empty line
                     next_line = self.aspell.stdout.readline()
                 if result.startswith("*"):
                     return False
@@ -627,6 +740,17 @@ class SpellCheck():
         return misspelled
 
 
+def get_audio_input_devices():
+    """Get all available audio input devices, physical and virtual"""
+    soundcard = import_soundcard()
+    if soundcard:
+        devices = []
+        for mic in soundcard.all_microphones():
+            devices.append(mic.name)
+        return devices
+    return []
+
+
 class Recorder():
     """Sound recorder"""
 
@@ -641,7 +765,8 @@ class Recorder():
         soundcard = import_soundcard()
         if soundcard:
             try:
-                mic = soundcard.default_microphone()
+                os.environ["PULSE_LATENCY_MSEC"] = "20"
+                microphone = soundcard.default_microphone()
             except Exception as e:
                 logger.warning(f"No microphone found. Error: {e}")
                 self.recording = False
@@ -650,14 +775,14 @@ class Recorder():
             logger.warning("Failed connecting to sound system")
             self.recording = False
             return
-        with mic.recorder(samplerate=48000, channels=1) as rec:
+        with microphone.recorder(samplerate=48000, channels=1) as rec:
             while self.recording:
                 if timer >= 600:   # 10min limit
                     del self.audio_data
                     self.recording = False
                     break
-                data = rec.record(numframes=48000)
-                self.audio_data.append(data)
+                audio_data = rec.record(numframes=48000)
+                self.audio_data.append(audio_data)
                 timer += 1
 
 
@@ -781,23 +906,26 @@ def make_round_image(image_path):
     Use pillow if available, fallback to imagemagick if available.
     Save image as _round and delete original, and dont re-edit same image.
     """
-    if not image_path or not os.path.exists(image_path):
-        return None
-    if "_round" in image_path:
-        return image_path
-    if importlib.util.find_spec("PIL") is not None:
-        base, ext = os.path.splitext(image_path)
-        save_path = base + "_round" + ext
-        make_round_image_pillow(image_path, save_path)
-        os.remove(image_path)
-        return save_path
-    if shutil.which("magick"):
-        try:
+    try:
+        if not image_path or not os.path.exists(image_path):
+            return None
+        if "_round" in image_path:
+            return image_path
+        if importlib.util.find_spec("PIL") is not None:
             base, ext = os.path.splitext(image_path)
             save_path = base + "_round" + ext
-            make_round_image_imagemagick(image_path, save_path)
+            make_round_image_pillow(image_path, save_path)
             os.remove(image_path)
             return save_path
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    return image_path
+        if shutil.which("magick"):
+            try:
+                base, ext = os.path.splitext(image_path)
+                save_path = base + "_round" + ext
+                make_round_image_imagemagick(image_path, save_path)
+                os.remove(image_path)
+                return save_path
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        return image_path
+    except FileNotFoundError:   # failsafe in case file was deleted mid-conversion
+        return None

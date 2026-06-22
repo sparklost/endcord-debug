@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import base64
 import gc
@@ -15,7 +14,6 @@ import sys
 import threading
 import time
 import traceback
-import urllib
 import urllib.parse
 import zlib
 
@@ -29,20 +27,20 @@ except ImportError:
 
 import socks
 import websocket
-from google.protobuf.json_format import MessageToDict
 
-from endcord import debug, perms, user_settings_pb2
+from endcord import debug, perms, protobuf, protobuf_schemata
 from endcord.message import is_relevant_message, prepare_message
 
 DISCORD_HOST = "discord.com"
 LOCAL_MEMBER_COUNT = 50   # members per guild, CPU-RAM intensive
+LOCAL_VOICE_PRESENCE_LIMIT = 50   # per guild, slightly RAM intensive
 ZLIB_SUFFIX = b"\x00\x00\xff\xff"
 VOICE_FLAGS = 3   # CLIPS_ENABLED and ALLOW_VOICE_RECORDING
 DEFAULT_CAPABILITIES = 30717
 DEFAULT_INTENTS = 50364033
 QOS_HEARTBEAT = True
 QOS_PAYLOAD = {"ver": 26, "active": True, "reason": "foregrounded"}
-inflator = zlib.decompressobj()
+inflator = None
 logger = logging.getLogger(__name__)
 status_unpacker = struct.Struct("!H")
 
@@ -97,6 +95,8 @@ class Gateway():
             except ValueError:
                 pass
 
+        reset_inflator()
+
         self.extensions = []
         self.client_prop = client_prop
         self.init_time = time.time() * 1000
@@ -104,6 +104,7 @@ class Gateway():
         self.proxy = urllib.parse.urlsplit(proxy)
         self.bot = self.token.startswith("Bot")
         self.run = True
+        self.stop_event = threading.Event()
         self.wait = False
         self.state = 0
         self.heartbeat_received = True
@@ -153,7 +154,7 @@ class Gateway():
         if self.bot:
             self.interactions_buffer = []
         threading.Thread(target=self.thread_guard, daemon=True, args=()).start()
-        threading.Thread(target=self.stats_rotaor, daemon=True, args=()).start()
+        threading.Thread(target=self.stats_rotator, daemon=True, args=()).start()
 
 
     def clear_ready_vars(self):
@@ -175,6 +176,8 @@ class Gateway():
         self.app_command_autocomplete_resp = []
         self.voice_gateway_data = {}
         self.voice_gateway_data_ready = 0
+        self.voice_states = {}
+        self.should_redraw_tree = None
 
 
     def load_extensions(self, extensions):
@@ -193,7 +196,7 @@ class Gateway():
             for extension_point in self.extension_cache:
                 if extension_point[0] == method_name:
                     for method in extension_point[1]:
-                        _ = method(*args)
+                        method(*args)
             return
 
         # try to load method from extensions and add to cache
@@ -203,7 +206,7 @@ class Gateway():
             if callable(method):
                 if cache:
                     methods.append(method)
-                _ = method(*args)
+                method(*args)
         if cache:
             self.extension_cache.append((method_name, methods))
 
@@ -250,17 +253,16 @@ class Gateway():
             time.sleep(0.5)
 
 
-    def stats_rotaor(self):
+    def stats_rotator(self):
         """Rotate stats every 1h"""
         last_rotation = int(time.time())
-        while self.run:
+        while self.run and not self.stop_event.wait(30):
             if int(time.time()) > last_rotation + 3600:
                 last_rotation = int(time.time())
                 self.last_gateway_events_per_h = self.gateway_events_per_h
                 self.last_gateway_msg_per_h = self.gateway_msg_per_h
                 self.gateway_events_per_h = 0
                 self.gateway_msg_per_h = 0
-            time.sleep(30)
 
 
     def connect_ws(self, resume=False):
@@ -269,17 +271,33 @@ class Gateway():
             gateway_url = self.resume_gateway_url
         else:
             gateway_url = self.gateway_url
-        self.ws = websocket.WebSocket()
-        if self.proxy.scheme:
-            self.ws.connect(
-                gateway_url + "/?v=9&encoding=json&compress=zlib-stream",
-                header=self.header,
-                proxy_type=self.proxy.scheme,
-                http_proxy_host=self.proxy.hostname,
-                http_proxy_port=self.proxy.port,
-            )
-        else:
-            self.ws.connect(gateway_url + "/?v=9&encoding=json&compress=zlib-stream", header=self.header)
+        try:
+            if sys.platform == "darwin":
+                import certifi
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+            else:
+                ssl_context = ssl.create_default_context()
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            self.ws = websocket.WebSocket(sslopt={"context": ssl_context})
+            if self.proxy.scheme:
+                self.ws.connect(
+                    gateway_url + "/?v=9&encoding=json&compress=zlib-stream",
+                    header=self.header,
+                    proxy_type=self.proxy.scheme,
+                    http_proxy_host=self.proxy.hostname,
+                    http_proxy_port=self.proxy.port,
+                )
+            else:
+                self.ws.connect(gateway_url + "/?v=9&encoding=json&compress=zlib-stream", header=self.header)
+        except (websocket._exceptions.WebSocketException, OSError) as e:
+            return e
+
+
+    def stop(self):
+        """Stop gatway"""
+        self.run = False
+        self.stop_event.set()
+        self.disconnect_ws()
 
 
     def disconnect_ws(self, timeout=2, status=1000):
@@ -306,7 +324,11 @@ class Gateway():
                 proxy_sock = socks.socksocket()
                 proxy_sock.set_proxy(socks.SOCKS5, self.proxy.hostname, self.proxy.port)
                 proxy_sock.connect((self.host, 443))
-                ssl_context = ssl.create_default_context()
+                if sys.platform == "darwin":
+                    import certifi
+                    ssl_context = ssl.create_default_context(cafile=certifi.where())
+                else:
+                    ssl_context = ssl.create_default_context()
                 ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
                 proxy_sock = ssl_context.wrap_socket(proxy_sock, server_hostname=self.host)
                 proxy_sock.do_handshake()   # seems like its not needed
@@ -336,7 +358,10 @@ class Gateway():
             logger.error(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
             sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
 
-        self.connect_ws()
+        error = self.connect_ws()
+        if error:
+            logger.error(f"Failed to get gateway url. Error: {error}. Exiting...")
+            sys.exit(f"Failed to get gateway url. Error: {error}. Exiting...")
         self.state = 1
         self.heartbeat_interval = int(json.loads(zlib_decompress(self.ws.recv()))["d"]["heartbeat_interval"])
         self.receiver_thread = threading.Thread(target=self.safe_function_wrapper, daemon=True, args=(self.receiver, ))
@@ -475,15 +500,16 @@ class Gateway():
 
         # channels
         for channel in guild["channels"]:
-            if channel["type"] in (0, 2, 4, 5, 15, 16) and not self.bot:
+            ch_type = channel["type"]
+            if ch_type in (0, 2, 4, 5, 15, 16) and not self.bot:
                 hidden = True   # hidden by default
             else:
                 hidden = False
             data = {
                 "id": channel["id"],
-                "type": channel["type"],
+                "type": ch_type,
                 "name": channel["name"],
-                "topic": channel.get("topic"),
+                "topic": channel.get("status") if ch_type == 2 else channel.get("topic"),
                 "parent_id": channel.get("parent_id"),
                 "position": channel["position"],
                 "permission_overwrites": channel["permission_overwrites"],
@@ -491,6 +517,9 @@ class Gateway():
             }
             if channel.get("rate_limit_per_user"):
                 data["rate_limit"] = channel["rate_limit_per_user"]
+            if ch_type == 2:
+                data["user_limit"] = channel.get("user_limit", 0)   # 0 means no limit
+            # if changing "data" here also change it in CHANNEL_UPDATE event handling
             guild_channels.append(data)
         guild_roles = []
         base_permissions = 0
@@ -761,7 +790,7 @@ class Gateway():
             logger.debug(f"Received: opcode={opcode}, optext={response["t"] if (response and "t" in response and response["t"] and "LIST" not in response["t"]) else 'None'}")
             # debug_events
             # if response.get("t"):
-            #     debug.save_json(response, f"{response["t"]}.json", False)
+            #     debug.save_json(response, f"{int(time.time())}_{response["t"]}.json", False)
 
             # events sorted by frequency and importance
             if opcode == 0:
@@ -893,8 +922,7 @@ class Gateway():
                     ready_time_mid = time.time()
                     # get user settings
                     if "user_settings_proto" in data and not self.legacy:
-                        decoded = user_settings_pb2.UserSettings.FromString(base64.b64decode(data["user_settings_proto"]))
-                        self.user_settings_proto = MessageToDict(decoded)
+                        self.user_settings_proto = protobuf.parse_message(base64.b64decode(data["user_settings_proto"]), protobuf_schemata.USER_SETTINGS)
                     else:
                         self.legacy = True
                         old_user_settings = data["user_settings"]
@@ -902,13 +930,13 @@ class Gateway():
                             "status": {
                                 "status": old_user_settings.get("status", "online"),
                             },
-                            "guildFolders": {
-                                "guildPositions": old_user_settings.get("guild_positions"),
+                            "guild_folders": {
+                                "guild_positions": old_user_settings.get("guild_positions"),
                             },
                         })
                         self.user_settings_proto = old_user_settings
                         if old_user_settings.get("custom_status"):
-                            self.user_settings_proto["status"]["customStatus"] = old_user_settings["custom_status"]
+                            self.user_settings_proto["status"]["custom_tatus"] = old_user_settings["custom_status"]
                     self.proto_changed = True
                     time_log_string += f"    protobuf - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
@@ -924,6 +952,7 @@ class Gateway():
                                 "guild_id": guild_id,
                                 "roles": roles,
                             })
+                    self.merged_users = data.get("users", [])   # this is for ready_supplemental
                     time_log_string += f"    roles - {round((time.time() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.time()
                     # write debug data
@@ -949,14 +978,15 @@ class Gateway():
                                 if activity["type"] == 4:
                                     custom_status = activity.get("state", "")
                                 elif activity["type"] in (0, 2):
-                                    assets = activity.get("assets", {})
+                                    # assets = activity.get("assets", {})
                                     activities.append({
                                         "type": activity["type"],
                                         "name": activity["name"],
                                         "state": activity.get("state"),
                                         "details": activity.get("details"),
-                                        "small_text": assets.get("small_text"),
-                                        "large_text": assets.get("large_text"),
+                                        # "small_text": assets.get("small_text"),
+                                        # "large_text": assets.get("large_text"),
+                                        "start": int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
                                     })
                             self.dm_activities.append({
                                 "id": user["user_id"],
@@ -973,14 +1003,15 @@ class Gateway():
                             if activity["type"] == 4:
                                 custom_status = activity.get("state")
                             elif activity["type"] in (0, 2):
-                                assets = activity.get("assets", {})
+                                # assets = activity.get("assets", {})
                                 activities.append({
                                     "type": activity["type"],
                                     "name": activity["name"],
                                     "state": activity.get("state"),
                                     "details": activity.get("details"),
-                                    "small_text": assets.get("small_text"),
-                                    "large_text": assets.get("large_text"),
+                                    # "small_text": assets.get("small_text"),
+                                    # "large_text": assets.get("large_text"),
+                                    "start": int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
                                 })
                         self.dm_activities.append({
                             "id": user["user_id"],
@@ -988,8 +1019,36 @@ class Gateway():
                             "custom_status": custom_status,
                             "activities": activities,
                         })
+                    # get initial voice presences
+                    for num, guild in enumerate(data["guilds"]):
+                        count = 0
+                        for state in guild["voice_states"]:
+                            count += 1
+                            channel_id = state["channel_id"]
+                            user_id = state["user_id"]
+                            username = "Unknown"
+                            global_name = None
+                            nick = None
+                            try:
+                                for user in data["merged_members"][num]:
+                                    if user["user_id"] == user_id:
+                                        nick = user["nick"]
+                                        break
+                                for user in self.merged_users:
+                                    if user["id"] == user_id:
+                                        username = user["username"]
+                                        global_name = user["global_name"]
+                                        break
+                            except IndexError:
+                                continue
+                            if channel_id not in self.voice_states:
+                                self.voice_states[channel_id] = {}
+                            self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) + 1
+                            if count > LOCAL_VOICE_PRESENCE_LIMIT:
+                                continue
+                            self.voice_states[channel_id][user_id] = (username, global_name, nick)
                     self.dm_activities_changed = True
-                    del (guild)   # this is large dict so lets save some memory
+                    del (guild, self.merged_users)   # this is large so lets save some memory
                     gc.collect()
 
                 elif optext == "MESSAGE_CREATE" and "content" in response["d"]:
@@ -1005,6 +1064,8 @@ class Gateway():
                             nonce=message["channel_id"],
                         )
                     if not is_relevant_message(optext, message, self.active_channel, self.channel_cache, self.guilds, self.my_id, self.my_roles) and not self.execute_extensions_method_first("on_message_event_is_irrelevant", message, optext, cache=True):
+                        if message["author"]["id"] == self.my_id:   # dont process my messages from other clients
+                            continue
                         self.messages_buffer.append({
                             "op": "MESSAGE_CREATE_QUICK",
                             "d": (message["content"], message["id"], message["channel_id"]),   # just to set channel as unread in tree
@@ -1178,7 +1239,7 @@ class Gateway():
                         self.activities.append([guild_id, {}])   # [guild_id, member_lists]
                         guild_index = -1
                     for memlist in data["ops"]:
-                        # keeping only necessary data, because the rest can be fetched with discord.get_user_guild()
+                        # keeping only necessary data to reduce ram usage
                         if memlist["op"] == "SYNC":
                             if memlist["range"][0] != 0:
                                 # keeping only first chunk (first 99)
@@ -1189,22 +1250,22 @@ class Gateway():
                                     members_sync.append({"group": item["group"]["id"]})
                                 else:
                                     member_data = item["member"]
-                                    ## unused for now
-                                    # custom_status = None
-                                    # activities = []
-                                    # for activity in member_data["presence"]["activities"]:
-                                    #     if activity["type"] == 4:
-                                    #         custom_status = activity.get("state", "")
-                                    #     elif activity["type"] in (0, 2):
-                                    #         assets = activity.get("assets", {})
-                                    #         activities.append({
-                                    #             "type": activity["type"],
-                                    #             "name": activity["name"],
-                                    #             "state": activity.get("state"),
-                                    #             "details": activity.get("details"),
-                                    #             "small_text": assets.get("small_text"),
-                                    #             "large_text": assets.get("large_text"),
-                                    #         })
+                                    custom_status = None
+                                    activities = []
+                                    for activity in member_data["presence"]["activities"]:
+                                        if activity["type"] == 4:
+                                            custom_status = activity.get("state", "")
+                                        elif activity["type"] in (0, 2):
+                                            # assets = activity.get("assets", {})
+                                            activities.append((   # using tuple to save on ram
+                                                activity["type"],
+                                                activity["state"] if activity["type"] == 2 and "state" in activity else activity["name"],
+                                                # int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
+                                                # activity.get("state"),
+                                                # activity.get("details"),
+                                                # assets.get("small_text"),
+                                                # assets.get("large_text"),
+                                            ))
                                     members_sync.append({
                                         "id": member_data["user"]["id"],
                                         "username": member_data["user"]["username"],
@@ -1212,15 +1273,15 @@ class Gateway():
                                         "nick": member_data["nick"],
                                         "roles": member_data["roles"],
                                         "status": member_data["presence"]["status"],
-                                        # "custom_status": custom_status,
-                                        # "activities": activities,
+                                        "custom_status": custom_status,
+                                        "activities": activities,
                                     })
                             self.activities[guild_index][1][list_id] = [0, members_sync]
                             self.activities_changed.append(guild_id)
                         elif memlist["op"] == "DELETE":
                             try:
                                 del self.activities[guild_index][1][list_id][1][memlist["index"]]
-                            except (IndexError, NameError,KeyError):
+                            except (IndexError, NameError, KeyError):
                                 pass
                         elif memlist["op"] in ("UPDATE", "INSERT"):
                             try:
@@ -1241,15 +1302,16 @@ class Gateway():
                                     if activity["type"] == 4:
                                         custom_status = activity.get("state", "")
                                     elif activity["type"] in (0, 2):
-                                        assets = activity.get("assets", {})
-                                        activities.append({
-                                            "type": activity["type"],
-                                            "name": activity["name"],
-                                            "state": activity.get("state"),
-                                            "details": activity.get("details"),
-                                            "small_text": assets.get("small_text"),
-                                            "large_text": assets.get("large_text"),
-                                        })
+                                        # assets = activity.get("assets", {})
+                                        activities.append((   # using tuple to save on ram
+                                            activity["type"],
+                                            activity["state"] if activity["type"] == 2 and "state" in activity else activity["name"],
+                                            # int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
+                                            # activity.get("state"),
+                                            # activity.get("details"),
+                                            # assets.get("small_text"),
+                                            # assets.get("large_text"),
+                                        ))
                                 member_id = member_data["user"]["id"]
                                 ready_data = {
                                     "id": member_id,
@@ -1258,8 +1320,8 @@ class Gateway():
                                     "nick": member_data["nick"],
                                     "roles": member_data["roles"],
                                     "status": member_data["presence"]["status"],
-                                    # "custom_status": custom_status,
-                                    # "activities": activities,
+                                    "custom_status": custom_status,
+                                    "activities": activities,
                                 }
                                 if memlist["op"] == "UPDATE":
                                     try:
@@ -1289,19 +1351,20 @@ class Gateway():
                         if activity["type"] == 4:
                             custom_status = activity.get("state")
                         elif activity["type"] in (0, 2):
-                            if "assets" in activity:
-                                small_text =  activity["assets"].get("small_text")
-                                large_text =  activity["assets"].get("large_text")
-                            else:
-                                small_text = None
-                                large_text = None
+                            # if "assets" in activity:
+                            #     small_text =  activity["assets"].get("small_text")
+                            #     large_text =  activity["assets"].get("large_text")
+                            # else:
+                            #     small_text = None
+                            #     large_text = None
                             activities.append({
                                 "type": activity["type"],
                                 "name": activity["name"],
-                                "state": activity.get( "state"),
+                                "state": activity.get("state"),
                                 "details": activity.get("details"),
-                                "small_text": small_text,
-                                "large_text": large_text,
+                                # "small_text": small_text,
+                                # "large_text": large_text,
+                                "start": int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
                             })
                     # select what list of activities to update
                     if "guild_id" in data:
@@ -1401,8 +1464,7 @@ class Gateway():
                 elif optext == "USER_SETTINGS_PROTO_UPDATE":
                     if data["partial"] or data["settings"]["type"] != 1:
                         continue
-                    decoded = user_settings_pb2.UserSettings.FromString(base64.b64decode(data["settings"]["proto"]))
-                    self.user_settings_proto = MessageToDict(decoded)
+                    self.user_settings_proto = protobuf.parse_message(base64.b64decode(data["settings"]["proto"]), protobuf_schemata.USER_SETTINGS)
                     self.proto_changed = True
 
                 elif optext == "USER_GUILD_SETTINGS_UPDATE":
@@ -1468,34 +1530,119 @@ class Gateway():
                         "d": data,
                     })
 
-                elif optext == "VOICE_STATE_UPDATE":
-                    if "session_id" not in self.voice_gateway_data and self.voice_gateway_data_ready >= 1:
-                        self.voice_gateway_data["session_id"] = data["session_id"]
-                        self.voice_gateway_data["guild_id"] = data.get("guild_id")
-                        if not self.voice_gateway_data["guild_id"]:
-                            self.voice_gateway_data["guild_id"] = data["channel_id"]   # must be channel_id in DM
-                        self.voice_gateway_data["channel_id"] = data["channel_id"]
-                        self.voice_gateway_data_ready += 1
-                    elif data["user_id"] != self.my_id:
-                        name = None
-                        if "member" in data:
-                            name = data["member"].get("nick")
-                            if not name:
-                                name = data["member"]["user"].get("global_name", data["member"]["user"]["username"])   # spacebar_fix - get
-                        self.call_buffer.append({
-                            "op": "STATE_UPDATE",
-                            "channel_id": data["channel_id"],
-                            "user_id": data["user_id"],
-                            "name": name,
-                            "muted": data["self_mute"] or data["mute"],
-                        })
-                        # this is just to get mute states, enter/leave call and speaking are sent in voice gateway
+                elif optext == "PASSIVE_UPDATE_V2":
+                    # channel unread states
+                    for channel in data["updated_channels"]:
+                        channel_id = channel["id"]
+                        if channel_id in self.read_state:
+                            self.read_state[channel_id]["last_message_id"] = channel["last_message_id"]
+                            # the change goes to app.py, since self.read_state there is reference
+                    # changed voice states
+                    for user in data["updated_voice_states"]:
+                        user_id = user["user_id"]
+                        channel_id = user["channel_id"]
+                        if channel_id not in self.voice_states:
+                            self.voice_states[channel_id] = {}
+                        if channel_id and user_id not in self.voice_states[channel_id]:
+                            self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) + 1
+                            if len(self.voice_states) - 1 <= LOCAL_VOICE_PRESENCE_LIMIT:
+                                for member in data["updated_members"]:
+                                    if member["user"]["id"] == user_id:
+                                        username = member["user"]["username"]
+                                        global_name = member["user"].get("global_name")
+                                        nick = member.get("nick")
+                                        break
+                                else:
+                                    username = "Unknown"
+                                    global_name = None
+                                    nick = None
+                                self.voice_states[channel_id][user_id] = (username, global_name, nick)
+                            self.should_redraw_tree = data["guild_id"]
+                    # removed voice states
+                    for user_id in data["removed_voice_states"]:
+                        for channel_id, activities in self.voice_states.items():   # search for channel and activity
+                            if user_id not in activities:
+                                continue
+                            self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) - 1
+                            del self.voice_states[channel_id][user_id]
+                            self.should_redraw_tree = data["guild_id"]
 
-                elif optext == "VOICE_SERVER_UPDATE":
-                    if "endpoint" not in self.voice_gateway_data and self.voice_gateway_data_ready >= 1:
-                        self.voice_gateway_data["token"] = data["token"]
-                        self.voice_gateway_data["endpoint"] = data["endpoint"]
-                        self.voice_gateway_data_ready += 1
+                elif optext.startswith("VOICE_"):
+                    if optext == "VOICE_STATE_UPDATE":
+                        user_id = data["user_id"]
+                        channel_id = data["channel_id"]
+                        if user_id == self.my_id:
+                            username = self.my_user_data["username"]
+                            global_name = self.my_user_data.get("global_name")
+                            nick = self.my_user_data.get("nick")
+                            if "session_id" not in self.voice_gateway_data and self.voice_gateway_data_ready >= 1:
+                                self.voice_gateway_data["session_id"] = data["session_id"]
+                                self.voice_gateway_data["guild_id"] = data.get("guild_id")
+                                if not self.voice_gateway_data["guild_id"]:
+                                    self.voice_gateway_data["guild_id"] = channel_id   # must be channel_id in DM
+                                self.voice_gateway_data["channel_id"] = channel_id
+                                self.voice_gateway_data_ready += 1
+                        else:
+                            if "member" in data:
+                                username = data["member"]["user"]["username"]
+                                global_name = data["member"]["user"].get("global_name")
+                                nick = data["member"].get("nick")
+                            else:
+                                username = "Unknown"
+                                global_name = None
+                                for dm in self.dms:
+                                    for recipient in dm["recipients"]:
+                                        if recipient["id"] == user_id:
+                                            username = recipient["username"]
+                                            global_name = recipient["global_name"]
+                                            break
+                                    if username:
+                                        break
+                                nick = None
+                            name = nick if nick else global_name if global_name else username   # spacebar_fix - get
+                            self.call_buffer.append({
+                                "op": "STATE_UPDATE",
+                                "channel_id": channel_id,
+                                "user_id": user_id,
+                                "name": name,
+                                "muted": data["self_mute"] or data["mute"],
+                            })  # this is just to get mute states, enter/leave call and speaking are sent in voice gateway
+                        # update voice channels states
+                        if channel_id:
+                            if channel_id not in self.voice_states:
+                                self.voice_states[channel_id] = {}
+                            if user_id not in self.voice_states[channel_id]:
+                                self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) + 1
+                                if len(self.voice_states) - 1 <= LOCAL_VOICE_PRESENCE_LIMIT:
+                                    self.voice_states[channel_id][user_id] = (username, global_name, nick)
+                                self.should_redraw_tree = data["guild_id"] if data["guild_id"] else -1
+                        else:
+                            for channel_id, activities in self.voice_states.items():   # search for channel and activity
+                                if user_id not in activities:
+                                    continue
+                                self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) - 1
+                                del self.voice_states[channel_id][user_id]
+                                self.should_redraw_tree = data["guild_id"] if data["guild_id"] else -1
+
+                    elif optext == "VOICE_SERVER_UPDATE":
+                        if "endpoint" not in self.voice_gateway_data and self.voice_gateway_data_ready >= 1:
+                            self.voice_gateway_data["token"] = data["token"]
+                            self.voice_gateway_data["endpoint"] = data["endpoint"]
+                            self.voice_gateway_data_ready += 1
+
+                    elif optext == "VOICE_CHANNEL_START_TIME_UPDATE":
+                        pass   # unused for now - cant find initial start time in the api
+
+                    elif optext == "VOICE_CHANNEL_STATUS_UPDATE":
+                        guild_id = data["guild_id"]
+                        channel_id = data["id"]
+                        for num, guild in enumerate(self.guilds):
+                            if guild["guild_id"] == guild_id:
+                                for num_ch, channel in enumerate(guild["channels"]):
+                                    if channel["id"] == channel_id:
+                                        self.guilds[num]["channels"][num_ch]["topic"] = data["status"]
+                                        break
+                                break
 
                 elif optext == "CALL_CREATE":
                     # event is received even when this client creates call
@@ -1589,9 +1736,10 @@ class Gateway():
                                 break
                         else:
                             continue
+                        ch_type = new_channel["type"]
                         ready_data = {
                             "id": new_channel["id"],
-                            "type": new_channel["type"],
+                            "type": ch_type,
                             "name": new_channel["name"],
                             "topic": new_channel.get("topic"),
                             "parent_id": new_channel.get("parent_id"),
@@ -1601,6 +1749,8 @@ class Gateway():
                         }
                         if new_channel.get("rate_limit_per_user"):
                             ready_data["rate_limit"] = new_channel["rate_limit_per_user"]
+                        if ch_type == 2:
+                            ready_data["user_limit"] = new_channel.get("user_limit", 0)   # 0 means no limit
                         self.guilds[num]["channels"][num_ch] = ready_data
                     self.guilds_changed = True
 
@@ -1707,19 +1857,20 @@ class Gateway():
                     activities = []
                     for activity in data[0]["activities"]:
                         if activity["type"] in (0, 2):
-                            if "assets" in activity:
-                                small_text = activity["assets"].get("small_text")
-                                large_text = activity["assets"].get("large_text")
-                            else:
-                                small_text = None
-                                large_text = None
+                            # if "assets" in activity:
+                            #     small_text = activity["assets"].get("small_text")
+                            #     large_text = activity["assets"].get("large_text")
+                            # else:
+                            #     small_text = None
+                            #     large_text = None
                             activities.append({
                                 "type": activity["type"],
                                 "name": activity["name"],
                                 "state": activity.get("state", ""),
                                 "details": activity.get("details", ""),
-                                "small_text": small_text,
-                                "large_text": large_text,
+                                # "small_text": small_text,
+                                # "large_text": large_text,
+                                "start": int(activity["timestamps"].get("start", 0)/1000) if "timestamps" in activity else None,
                             })
                     self.my_status = {
                         "activities": activities,
@@ -1735,9 +1886,14 @@ class Gateway():
                 break
 
             elif opcode == 9:
-                if response["d"]:
-                    logger.info("Session invalidated, reconnecting")
+                if not self.ready:
+                    logger.error("Failed initializing a session: There is probably a server-side error")
+                    self.state = 3
                     break
+                logger.info("Session invalidated, reconnecting")
+                if response["d"]:
+                    self.resumable = True
+                break
 
             elif opcode == 10:
                 self.heartbeat_interval = int(response["d"]["heartbeat_interval"])
@@ -1835,16 +1991,17 @@ class Gateway():
         Try to resume discord gateway session on url provided by Discord in READY event.
         Return gateway response code, 9 means resumming has failed
         """
+        if not self.ws:
+            return 9
         self.ws.close(timeout=0)   # this will stop receiver
         time.sleep(1)   # so receiver ends before opening new socket
         reset_inflator()   # otherwise decompression wont work
         self.ws = websocket.WebSocket()
-        try:
-            self.connect_ws(resume=True)
-        except websocket._exceptions.WebSocketBadStatusException:
+        error = self.connect_ws(resume=True)
+        if error:
             logger.info("Failed to resume connection")
             return 9
-        _ = zlib_decompress(self.ws.recv())
+        zlib_decompress(self.ws.recv())
         payload = {"op": 6, "d": {"token": self.token, "session_id": self.session_id, "seq": self.sequence}}
         self.send(payload)
         try:
@@ -1868,12 +2025,19 @@ class Gateway():
                 code = self.resume()
             if code == 9 or code is None:
                 logger.debug("Restarting connection")
-                self.ws.close(timeout=0)   # this will stop receiver
-                time.sleep(1)   # so receiver ends before opening new socket
+                if self.ws:
+                    self.ws.close(timeout=0)   # this will stop receiver
+                    time.sleep(1)   # so receiver ends before opening new socket
                 reset_inflator()   # otherwise decompression wont work
                 self.ready = False   # will receive new ready event
                 self.ws = websocket.WebSocket()
-                self.connect_ws()
+                error = self.connect_ws()
+                if error:
+                    logger.debug("No internet connection")
+                    self.ws.close()
+                    if not self.wait:
+                        threading.Thread(target=self.wait_online, daemon=True, args=()).start()
+                    return
                 self.authenticate()
             self.wait = False
             # restarting threads
@@ -1884,8 +2048,8 @@ class Gateway():
                 self.heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
                 self.heartbeat_thread.start()
             self.state = 1
-            logger.info("Connection established")
-        except (websocket._exceptions.WebSocketAddressException, socket.gaierror, TimeoutError, ConnectionResetError):
+            logger.debug("Connection established")
+        except (socket.gaierror, TimeoutError, ConnectionResetError):
             if not self.wait:   # if not running from wait_oline
                 logger.warning("No internet connection")
                 self.ws.close()
@@ -1932,7 +2096,7 @@ class Gateway():
             "op": 3,
             "d": {
                 "status": status,
-                "afk": afk,
+                "afk": bool(afk),
                 "since": 0,
                 "activities": all_activities,
             },
@@ -2187,6 +2351,15 @@ class Gateway():
         return None
 
 
+    def get_should_redraw_tree(self):
+        """Get what guild causes tree redraw"""
+        if self.should_redraw_tree:
+            cache = self.should_redraw_tree
+            self.should_redraw_tree = None
+            return cache
+        return None
+
+
     def get_roles(self):
         """Get list of roles for all guilds with their metadata, updated only when reconnecting"""
         return self.roles
@@ -2275,7 +2448,7 @@ class Gateway():
 
 
     def get_member_roles(self):
-        """Get member roles, updated regularly."""
+        """Get member roles, updated regularly"""
         if self.roles_changed:
             temp = self.roles_changed
             self.roles_changed = False
@@ -2341,6 +2514,11 @@ class Gateway():
             self.guild_roles_changed = None
             return cache
         return None
+
+
+    def get_voice_states(self):
+        """Get voice states"""
+        return self.voice_states
 
 
     def get_stats(self):

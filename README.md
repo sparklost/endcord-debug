@@ -16,21 +16,27 @@
 Endcord is a third-party feature rich Discord client, running entirely in terminal.  
 It is built with Python (this [doesnt mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
+Official endcord will always stay **purely human project**.  
+Endcord is source-available licensed, and thus not open source, more [here](#source-available-license).  
+Any third party endcord forks may add features that can lead to account ban, contain outdated or even malicious code, cause instability, especially if they include LLM generated/modified code, so it is strongly recommended to avoid them. If you want to create fork that modifies the code, YOU ARE NOT ALLOWED TO.  
+
 
 ## Features
 - Extremely low CPU and RAM usage (see [RAM usage](#ram-usage))
-- Voice calls (WIP)
+- Voice calls (DM, groups and servers)
 - Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
 - Mouse controls
+- Kitty protocol images (through extensions: [1](https://github.com/sparklost/endcord-image-emoji), [[2](https://github.com/sparklost/endcord-image-inline)])
 - Login with email, 2fa, QR code, or paste token
 - Desktop notifications
+- Inline images (pixelated/ascii-art/[kitty-protocol](https://github.com/sparklost/endcord-image-inline))
 - View images, gifs, videos, audio, stickers and YouTube with ASCII art or in external app
 - Download/upload attachments
 - Select message and: reply, edit, delete, go to replied, react, vote in a poll...
 - Member list (toggleable)
 - Search messages
-- Client commands with history, custom commands can be bound to key
+- Many more features as [client commands](#client-side-commands) with history, custom commands can be bound to key
 - App commands and some interactions
 - View user profile
 - Channel tree (toggleable)
@@ -46,7 +52,7 @@ It is built with Python (this [doesnt mean its slow](#note-on-python-performance
 - Show embeds, attachment types and links, code blocks
 - Spellchecking
 - Advanced input line operations and ability to use external editor
-- Tabs
+- Tabs and temporary tabs with mouse controls (click, double click, middle click)
 - Assist when typing channel/username/role/emoji/sticker
 - Search, preview and send gifs
 - Record and send voice messages
@@ -170,16 +176,16 @@ Type path to file that should be uploaded and press enter. Cached content will b
 Wait until file is uploaded and then send the message. Multiple files can be added this way.  
 Path can be absolute or relative, and has autocomplete on `tab` key.  
 If file size exceeds discord's limit it will not be added to the sent message.  
-Attachments can be navigated with `Ctrl+Left/Right` in extra line (above status line).  
+Attachments can be navigated with `Ctrl+Left/Right` in popup line (above status line).  
 `Ctrl+X` will cancel ALL downloads and attachments, with a confirmation prompt.  
 `Ctrl+K` will cancel selected attachment (and stop upload) and remove it from attachments list.
 
-### Extra window and member list navigation
-Same controls for navigating in extra window and member list:
+### Popup window and member list navigation
+Same controls for navigating in popup window and member list:
 `Alt+Up/Down` - Go up/down  
 `Alt+Enter` - perform action on selected line (depends on context)  
-Extra window navigation is prioritized over member list.  
-Extra window is drawn for viewing:
+Popup window navigation is prioritized over member list.  
+Popup window is drawn for viewing:
 - User profile info - from selected message (`Alt+P`)
 - Channel/server info - from selected tree channel (`Alt+I`)
 - Summaries for currently open channel (`Alt+S`), `Alt+Enter` will jump to first message in chat on that summary topic.
@@ -188,13 +194,13 @@ Extra window is drawn for viewing:
 `Alt+Enter` in member list will show user profile of the selected member.  
 
 ### Assist with mention, role, channel, emoji, sticker
-When typing eg. username prepended with `@`, assist will open as extra window with search results for typed text after `@` (search is case-insensitive).  
+When typing eg. username prepended with `@`, assist will open as popup window with search results for typed text after `@` (search is case-insensitive).  
 Assist triggers are (the first character): `@username`, `@role`, `#channel`, `:emoji:`, `;sticker;`.  
 Press `Esc` to stop assist. Re-type trigger to start it again.  
 Navigation: `Alt+Up/Down` - Go up/down, `Alt+Enter` or `Enter` - insert selected item.  
 When inserted in input line, item will usually be shown as `<some_numbers>` - that is intended - do not alter it.  
 Stickers and emoji are sorted into packs, and will be shown as `pack name - emoji/sticker name`, and search is performed on that string.  
-Sticker will also be added to message text and removed when sending.  
+Emoji assist has special feature: type `:**` to search all favorited emojis.  
 
 ### Adding/Removing reactions
 To start reaction assist, press `Alt+E`.  
@@ -204,10 +210,12 @@ To add/remove one of already present reactions, only type its index (starts from
 If this account reacted to the message, that reaction will have `*` prepended to reaction count.  
 
 ### Escape key priority order
-Stop recording, close extra window, stop replying, everything else.
+Stop recording, close popup window, stop replying, everything else.
 
 ### Client-side commands
-Press `Ctrl+/` to switch to command mode. Command mode has its own assist but can also trigger regular assist. [Commands list](docs/commands.md).
+Press `Ctrl+/` to switch to command mode. Command mode has its own assist but can also trigger regular assist.  
+Last 10 commands can be cycled with `Arrow Up/Down` bindings while in command mode.  
+[Commands list](docs/commands.md).  
 
 ### App commands
 App commands assist is initiated by typing `/` at the start of input line.  
@@ -305,7 +313,7 @@ Wether endcord will work or crash depends on hosts api implementation, the more 
 
 ### Termux
 Endcord does work under termux, but some keybindings don't (`Ctrl/Alt+Space`). It is recommended to rebind them in endcord config or use endcord in desktop environment (like `openbox`) in a terminal emulator with xterm256-colors (like `alacritty`) and with Termux:X11 app.  
-Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pynacl pycryptodome psutil`.
+Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pycryptodome psutil`.
 To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
 Notifications will work as ling as endcord is running, so it might be necessary for termux to "Acquire wakelock".  
 
@@ -340,12 +348,12 @@ Optional dependencies:
 - `git` - Install and update extensions from other sources than github
 - `yt-dlp` - youtube support
 - `mpv` - Play youtube videos in native player (non-ascii)
-- `libsecret` - Store token in system keyring (`gnome-keyring` is also required, with `dbus` as dependency)
+- `libsecret` - Store token in system keyring (secret service provider is also required (eg. `gnome-keyring`, `KWallet`, `KeePassXC`), with `dbus` as dependency)
 - `libappindicator-gtk3` - Tray support under wayland, for [experimental windowed mode](#experimental-windowed-mode) only.
 - `imagemagick` - To make notification images round; only needed for endcord-lite.
 
 ### Windows
-- Pre-built binaries (built with nuitka using clang) are available in releases
+- Pre-built binaries (built with nuitka) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`  
 
 Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with experimental windowed mode, terminal is not required to use endcord.  
@@ -355,7 +363,7 @@ Emoji are known to work only with WezTerm but many will fail to draw and mess-up
 Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.   
 
 ### macOS
-- Pre-built binaries (built with nuitka using clang) are available in releases
+- Pre-built binaries (built with pyinstaller and clang) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/`.  
 - Install script (installs binary from latest release or updates existing):
     - `bash -c "$(curl -fsSL https://raw.githubusercontent.com/sparklost/endcord/main/tools/install.sh)"`
@@ -372,7 +380,7 @@ Optional dependency for spellchecking: `aspell`. Can be installed with: `brew as
 > **Use endcord at your own risk!**  
 > For more info see [FAQ](#FAQ).  
 
-Third party endcord forks may add features that can lead to account ban, or contain malicious code, cause instability, especially if they include LLM generated/modified code.
+Third party endcord forks may add features that can lead to account ban, contain malicious code, cause instability, especially if they include LLM generated/modified code, so it is strongly recommended to avoid them. **Official endcord will always stay purely human project.**  
 
 
 ## Building
@@ -443,22 +451,14 @@ Then force build.py to skip auto-python setup: `uv run -p 3.13 build.py`, and ad
 7. This is your discord token. **Do not share it!**
 
 ### To further decrease probability of getting banned
-Endcord does its best to avoid causing any suspicious activity, so using it as-is is pretty much enough, but most important steps are:
+Endcord does its best to avoid causing any suspicious activity, so using it as-is is pretty much enough.
 - Do not use endcord to perform any out-of-ordinary actions (i.e. self-bots). Third party clients can sometimes trip anti-spam heuristic algorithm for catching self-bots.
-- Do not use endcord at the same time with the client from which you coped token from, it might be it suspicios to have 2 clients using same token at the same time.
+- Do not use endcord at the same time with the client from which you copied token from, it might be suspicios to have 2 clients using same token at the same time.
 - Do not use same token across different third party clients.
 - Do not use `--token` flag, endcord automatically refreshes token stored with profile manager, so there is no need to update it manually.
-- Increase `limit_channel_cache` in config - so REST API is not called on every channel switch. This will also slightly increase RAM and CPU usage.
 - `anonymous` mode in `client_properties` setting might be more risky than `default` mode.
-- If endcord hasnt been updated in a while, set `custom_user_agent` to the one found in API requests in official Discord client.
 - Do not set invalid `custom_user_agent` setting, and try to match it with your OS.
-- Do not use public proxy, like VPN or TOR.
-Less important steps is to decrease REST API calls, which might have little to no effect:
-- Discord REST API is called (most notably) each time client is started, when channel is changed, app command is sent and message is seen or sent. It would be best to not abuse these actions in order to reduce REST API calls.
-- Do not leave endcord on busy channels running in background.
-- Sending ack (when channel is marked as seen) is throttled by endcord to 5s (configurable).
-- Disable `rpc_external` in config - it calls REST API for fetching external resources for Rich Presence, but it shouldn't be critical.
-- Disable `send_typing` in config - it calls REST API every 7s when typing, but it shouldn't be critical.
+- Do not use public proxy, like VPN or TOR.  
 
 ### What if you get banned?
 You can write to Discord Support team: https://dis.gd/request.  
@@ -469,7 +469,10 @@ Anonymized data that might help in debugging is saved in `Debug` directory, see 
 All channel and server names, topics, descriptions are replaced. All channel and server IDs are added to random number and hashed, so they are irreversible changed, and will be different on each run.
 
 ### Note on Python performance misconceptions
-Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka). And all CPU-critical components are implemented in Cython. Python was chosen because it enables rapid development.
+Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound, not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka).  
+All CPU-critical components are implemented in Cython with minimal python calls, resulting in near-C speeds.  
+Python was chosen because it enables rapid development.  
+Additionally if built with nuitka, custom Python is compiled from source (preferrably with clang) with custom compiler flags for performance.
 
 ### Running multiple endcord instances
 To run multiple endcord instances at the same time, while keeping them completely separated, run endcord with `ENDCORD_APP_NAME` environment variable set to something else. This will change "endcord" everywhere: in config and cache paths, notifications, keyring...
@@ -496,6 +499,9 @@ The client will refuse to send message in newly-created DM channels. This measur
 ### Messages wont send and in log it says error code 400
 In config, disable `send_x_super_properties`. These properties may be used in spam detection so disable them only if necessary, and report the issue.
 
+### Higher voice call quality
+To increase quality of the sound sent from this device, set `ENDCORD_VOICE_OPUS_MODE=audio` enviroment variable. (options: `audio`, `voip`, `lowdelay`). This will make it encode opus with 96KB/s instead default 64KB/s (variable bitrate), but use more bandwidth.
+
 ### No notification sound
 Custom notification sound can be set in config: `custom_notification_sound = /path/to/file.mp3`.
 
@@ -514,6 +520,9 @@ If there are no colors in Linux tty (but there should be), endcord can run insid
 Follow [fbterm setup instructions](https://wiki.archlinux.org/title/Fbterm#Installation), then set environment variable: `export TERM=fbterm` and run endcord.  
 Some characters may fail to render so set `emoji_as_text = True` in config and `compact = True` in theme. Some theme characters should also be tweaked.  
 Note: keybinding `Ctrl+Up/Down/Left/Right` does not work in tty, either rebind them or add custom keymap, or in `/etc/vconsole.conf`.  
+
+### Keybindings dont work in tmux
+Add this to tmux.conf: `set -g default-terminal xterm-256color`
 
 ### RAM usage
 RAM usage greatly depends on multiple factors:
@@ -542,6 +551,15 @@ Or, if you don't have a github account, want more interactive support, to share 
 As endcord build script requires network access in order to install dependencies, it is impossible to use it to build endcord binaries for many distributions/repositories.  
 If thats the case, custom build script must be made, guidelines and commands for writing such are available in [contributing.md](.github/CONTRIBUTING.md#build-steps-for-package-maintainers).  
 After submitting a package to distributions package repository, open an issue here, so I can review it and add it to readme after it gets accepted.
+
+### Source-available license
+Endcord is licensed under source-available license. This means it is **NOT OPEN SOURCE**. How this affects you:
+If you are a user, this **doesn't affect** the slightest how you are using endcord.  
+If you are a developer, you are **NOT ALLOWED TO PUBLICLY MODIFY THE CODE**.  
+If you are a package maintainer, license specifically allows it to distribute **binaries built from verbatim unmodified source code**.  
+Slightly longer and more detailed explanation is in the [license file](LICENSE).
+Why? Because this is one-person project, and this person is greedily taking all the fun of programming for themselves. And as bonus they ensures that this project stays 100% human made, forever.
+
 
 ## Planned features
 Go to [TODO](todo.txt).

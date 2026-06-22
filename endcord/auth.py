@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import base64
 import http.client
@@ -372,7 +371,6 @@ class Gateway():
         self.receiver_thread.start()
         self.heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         self.heartbeat_thread.start()
-        self.reconnect_thread = threading.Thread()
         self.init_auth()
         return True
 
@@ -391,7 +389,6 @@ class Gateway():
         """Initialize rsa keypair"""
         self.private_key = RSA.generate(2048)
         public_key = self.private_key.publickey()
-
         spki_der = public_key.export_key(format="DER")
         return base64.b64encode(spki_der).decode("utf-8")
 
@@ -400,7 +397,6 @@ class Gateway():
         """Decrypt nonce proof received from server"""
         cipher = PKCS1_OAEP.new(self.private_key, hashAlgo=SHA256)
         nonce = cipher.decrypt(base64.b64decode(encrypted_nonce))
-
         return base64.urlsafe_b64encode(nonce).decode("utf-8").rstrip("=")
 
 
@@ -408,7 +404,6 @@ class Gateway():
         """Decrypt user playload received when remote authentication session starts"""
         cipher = PKCS1_OAEP.new(self.private_key, hashAlgo=SHA256)
         user_payload_bytes = cipher.decrypt(base64.b64decode(user_payload))
-
         user_id, _, _, username = user_payload_bytes.decode("utf-8").split(":")
         return user_id, username
 

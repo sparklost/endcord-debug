@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import curses
 import importlib.util
@@ -19,7 +18,7 @@ def argmin(values):
 
 def closest_color(rgb):
     """
-    Find closest 8bit xterm256 color to provided rgb color.
+    Find closest 8bit xterm256 color to provided rgb tuple color.
     Return ANSI code and rgb color.
     """
     r, g, b = rgb
@@ -40,6 +39,12 @@ def int_to_rgb(int_color):
         (int_color >> 8) & 255,   # g
         int_color & 255,   # b
     )
+
+
+def hex_to_rgb(hex_str):
+    """Convert hexadecimal color strin to rgb tuple"""
+    hex_str = hex_str.lstrip("#")
+    return tuple(int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
 
 
 def convert_role_colors(all_roles, guild_id=None, role_id=None, default=-1):
@@ -104,6 +109,8 @@ def check_color_formatted(color_format):
     for color in color_format_new[1:]:
         if color[0] == -2:
             color[0] = color_format_new[0][0]
+        color[2] = max(color[2], 0)
+        color[3] = max(color[3], 0)
     return color_format_new
 
 
@@ -118,22 +125,25 @@ def extract_colors(config):
         check_color(config["color_chat_separator"]),
         check_color(config["color_chat_code"]),
         check_color(config["color_chat_standout"]),
+        check_color(config["color_extra_window_low"]),   # color_extra_window is loaded in tui
+        check_color(config["color_extra_window_standout"]),
     )
 
 
 def extract_colors_formatted(config):
     """Extract complex formatted colors from config"""
     return (   # DO NOT CHANGE ORDER
-        check_color_formatted(config["color_format_message"]),   # 0 9
-        check_color_formatted(config["color_format_newline"]),   # 1 10
-        check_color_formatted(config["color_format_reply"]),   # 2 11
-        check_color_formatted(config["color_format_reactions"]),   # 3 12
-        check_color_formatted(config["color_format_interaction"]),   # 4 13
+        check_color_formatted(config["color_format_message"]),   # 0 10
+        check_color_formatted(config["color_format_message_grouped"]),   # 1 11
+        check_color_formatted(config["color_format_newline"]),   # 2 12
+        check_color_formatted(config["color_format_reply"]),   # 3 13
+        check_color_formatted(config["color_format_reactions"]),   # 4 14
+        check_color_formatted(config["color_format_interaction"]),   # 5 15
         # not complex but is here so it can be initialized for alt bg color
-        [check_color(config["color_chat_edited"])],   # 5 14
-        [check_color(config["color_chat_url"])],   # 6 15
-        [check_color(config["color_chat_spoiler"])],   # 7 16
-        check_color_formatted(config["color_format_forum"]),   # 8 17
+        [check_color(config["color_chat_edited"])],   # 6 16
+        [check_color(config["color_chat_url"])],   # 7 17
+        [check_color(config["color_chat_spoiler"])],   # 8 18
+        check_color_formatted(config["color_format_forum"]),   # 9 19
     )
 
 

@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import glob
 import logging
@@ -49,13 +48,13 @@ def get_user_processes_diff_linux():
 
         # check cache
         if pid in proc_cache:
-           proc_cache[pid][1] = True
-           continue
+            proc_cache[pid][1] = True
+            continue
         proc_cache[pid] = [None, True]
 
         # read and check uid
         try:
-            with open(f"/proc/{pid}/status", "r") as f:
+            with open(f"/proc/{pid}/status", "r") as f:   # noqa
                 uid = None
                 for line in f:
                     if line.startswith("Uid:"):
@@ -121,8 +120,8 @@ def get_user_processes_diff_windows():
 
         # check cache
         if pid in proc_cache:
-           proc_cache[pid][1] = True
-           continue
+            proc_cache[pid][1] = True
+            continue
         proc_cache[pid] = [None, True]
 
         # skip system processes
@@ -183,8 +182,8 @@ def get_user_processes_diff_darwin():
 
         # check cache
         if pid in proc_cache:
-           proc_cache[pid][1] = True
-           continue
+            proc_cache[pid][1] = True
+            continue
         proc_cache[pid] = [None, True]
 
         # check uid
@@ -287,15 +286,22 @@ class GameDetection:
         self.app = app
         self.discord = discord
         self.run = True
+        self.stop_event = threading.Event()
         self.changed = False
         self.cache = []
         self.activities = []
         self.blacklist = blacklist
         self.download_delay = download_delay * 86400
-        threading.Thread(target=self.main, daemon=True, args=()).start()
+        threading.Thread(target=self.game_detector, daemon=True, args=()).start()
 
 
-    def main(self):
+    def stop(self):
+        """Stop game_detector thread"""
+        self.run = False
+        self.stop_event.set()
+
+
+    def game_detector(self):
         """
         Main thread that:
         - checks and downloads detetcable applications list on startup
@@ -356,7 +362,7 @@ class GameDetection:
         logger.info("Game detection service started")
         cache_changed = True   # to save updated times
         _get_user_processes_diff = get_user_processes_diff
-        while self.run:
+        while self.run and not self.stop_event.wait(GAME_DETECTION_DELAY):
             try:
                 added, removed = _get_user_processes_diff()
             except BaseException as e:
@@ -431,8 +437,6 @@ class GameDetection:
             if cache_changed:
                 cache_changed = False
                 utils.save_json(self.cache, "detected_apps_cache.json")
-
-            time.sleep(GAME_DETECTION_DELAY)
 
 
     def get_activities(self):

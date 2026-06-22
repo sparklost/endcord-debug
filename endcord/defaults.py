@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 settings = {
     "theme": None,
@@ -10,12 +9,13 @@ settings = {
     "game_detection": True,
     "vim_mode": False,
     "limit_chat_buffer": 100,
-    "limit_channel_cache": 5,
+    "limit_channel_cache": 10,
     "download_msg": 25,
     "convert_timezone": True,
     "send_typing": True,
     "desktop_notifications": True,
-    "notification_in_active": True,
+    "idle_timeout": 10,
+    "notification_when_focused": False,
     "remove_previous_notification": True,
     "ack_throttling": 5,
     "member_list": True,
@@ -23,6 +23,7 @@ settings = {
     "use_nick_when_available": True,
     "remember_state": True,
     "remember_tabs": True,
+    "new_tab_at_end": False,
     "reply_mention": True,
     "cache_typed": True,
     "show_pending_messages": True,
@@ -33,11 +34,13 @@ settings = {
     "hide_spam": True,
     "keep_deleted": False,
     "limit_cache_deleted": 30,
+    "max_thumb_cache_age": 7,
     "tree_show_folders": True,
     "wrap_around": True,
     "mouse": True,
     "mouse_scroll_sensitivity": 3,
     "mouse_scroll_selection": False,
+    "draw_scrollbar": True,
     "screen_update_delay": 0.01,
     "extra_line_delay": 5,
     "tenor_gif_type": 1,
@@ -46,15 +49,22 @@ settings = {
     "aspell_lang": "en_US",
     "media_mute": False,
     "media_cap_fps": 30,
+    "media_font_aspect_ratio": None,
+    "inline_media": True,
+    "inline_media_height": 14,
+    "inline_media_quality": "low",
     "rpc_external": True,
     "emoji_as_text": False,
     "message_spacing": True,
+    "message_grouping": True,
     "native_media_player": False,
     "native_file_dialog": "auto",
     "save_summaries": True,
     "default_stickers": True,
     "only_one_open_server": False,
+    "remember_collapsed_channels": False,
     "assist": True,
+    "assist_swap_binding": True,
     "assist_skip_app_command": False,
     "assist_limit": 50,
     "assist_score_cutoff": 15,
@@ -74,6 +84,7 @@ settings = {
     "custom_media_hint": False,
     "external_editor": None,
     "calls": True,
+    "call_silence_threshold": -30,
     "yt_dlp_path": "yt-dlp",
     "yt_dlp_format": 18,
     "mpv_path": "mpv",
@@ -94,20 +105,23 @@ theme = {
     "tree_width": 32,
     "extra_window_height": 6,
     "member_list_width": 20,
-    "format_message": "[%timestamp] <%global_name> | %content %edited",
-    "format_newline": "                       %content",
-    "format_reply": "[REPLY] <%global_name> | ╭──🡲 [%timestamp] %content",
-    "format_reactions": "[REACT]                ╰──⤙ %reactions",
-    "format_interaction": "                       ╭──⤙ %global_name used [%command]",
-    "format_one_reaction": "%count:%reaction",
+    "format_message": "[%timestamp] <%global_name> %app%edited\n%content",
+    "format_message_grouped": " ├  %content %edited",
+    "format_newline": " │  %content",
+    "format_reply": " ╭──🡲 [%timestamp] <%global_name>: %content",
+    "format_reactions": " ╰──⤙ %reactions",
+    "format_reactions_newline": "      %reactions",
+    "format_interaction": " ╭──⤙ %global_name used [%command]",
+    "format_one_reaction": "[%count:%reaction]",
     "format_timestamp": "%H:%M",
-    "format_status_line_l": " %global_name (%username) - %status %afk %unreads %action %typing",
+    "format_status_line_l": " ⠀%status_dot %nick %warn_state %unreads %action %typing",
     "format_status_line_r": "%vim_mode %slowmode",
-    "format_title_line_l": " %server: %channel",
-    "format_title_line_r": "%tabs",
+    "format_title_line_l": " %server: %channel_no_tab",
+    "format_title_line_r": None,
+    "format_subtitle_line": "─%tabs",
     "format_title_tree": " %app_name  %task",
     "format_rich": "%type %name - %state - %details",
-    "format_tabs": "%num - %name",
+    "format_tabs": "%name",
     "format_prompt": "[%channel] > ",
     "format_forum": "[%timestamp] - <%msg_count> - %thread_name",
     "format_forum_timestamp": "%Y-%m-%d",
@@ -115,8 +129,9 @@ theme = {
     "edited_string": "(edited)",
     "app_string": "- (%app) ",
     "quote_character": "║",
-    "reactions_separator": "; ",
-    "tabs_separator": " | ",
+    "scrollbar_character": "┃",
+    "reactions_separator": " ",
+    "tabs_separator": "|",
     "chat_date_separator": "─",
     "format_date": " %B %d, %Y ",
     "limit_username": 10,
@@ -124,8 +139,8 @@ theme = {
     "limit_typing_string": 30,
     "limit_prompt": 15,
     "limit_thread_name": 0,
-    "limit_tab_len": 12,
-    "limit_tabs_string": 60,
+    "limit_tab_len": 20,
+    "limit_tabs_string": 0,
     "tree_drop_down_vline": "│",
     "tree_drop_down_hline": "─",
     "tree_drop_down_intersect": "├",
@@ -134,48 +149,59 @@ theme = {
     "tree_drop_down_thread": "⤙",
     "tree_drop_down_forum": "◆",
     "tree_drop_down_folder": "+",
+    "tree_drop_down_voice": "○",
     "tree_dm_status": "●",
     "border_corners": "╭╰╮╯",
+    "smart_chat_lines": True,
     "username_role_colors": True,
-    "dynamic_name_len": False,
+    "dynamic_name_len": True,
     "color_default": [-1, -1],
+    "color_green": [46, -1],
+    "color_orange": [208, -1],
+    "color_red": [196, -1],
     "color_chat_mention": [223, 234],
     "color_chat_blocked": [242, -1],
     "color_chat_deleted": [95, -1],
     "color_chat_pending": [242, -1],
     "color_chat_selected": [233, 255],
     "color_chat_separator": [242, -1, "i"],
+    "color_chat_standout": [153, 234],
+    "color_chat_edited": [241, -1],
+    "color_chat_url": [153, -1, "u"],
+    "color_chat_spoiler": [239, 239],
+    "color_chat_code": [250, 233],
     "color_status_line": [233, 255],
     "color_extra_line": [233, 245],
     "color_title_line": [233, 255],
+    "color_subtitle_line": [245, -1],
     "color_extra_window": [-1, -1],
+    "color_extra_window_low": [245, -1],
+    "color_extra_window_standout": [153, -1],
     "color_prompt": [255, -1],
     "color_input_line": [255, -1],
     "color_cursor": [233, 255],
     "color_misspelled": [222, -1],
     "color_tree_default": [255, -1],
+    "color_tree_category": [153, -1],
+    "color_tree_server": [153, -1],
     "color_tree_selected": [233, 255],
     "color_tree_muted": [242, -1],
     "color_tree_active": [255, 234],
-    "color_tree_unseen": [255, -1, "b"],
+    "color_tree_unseen": [-2, -2, "b"],
     "color_tree_mentioned": [197, -1],
     "color_tree_active_mentioned": [197, 234],
-    "color_format_message": [[-1, -1], [242, -2, 0, 0, 7], [25, -2, 0, 8, 9], [25, -2, 0, 19, 20], [-1, -2, 0, 21, 22]],
-    "color_format_newline": None,
-    "color_format_reply": [[245, -1], [67, -2, 0, 0, 7], [25, -2, 0, 8, 9], [25, -2, 0, 19, 20], [-1, -2, 0, 21, 27]],
-    "color_format_reactions": [[245, -1], [131, -2, 0, 0, 7], [-1, -2, 0, 23, 27]],
-    "color_format_interaction": [[245, -1], [67, -2, 0, 0, 7], [-1, -2, 0, 21, 27]],
+    "color_tree_selected_mentioned": [124, 255],
+    "color_format_message": [[-1, -1], [242, -2, 0, 0, 7], [25, -2, 0, 8, 9], [25, -2, 0, 19, 20]],
+    "color_format_message_grouped": [[-1, -1], [242, -2, 0, 1, 2]],
+    "color_format_newline": [[-1, -1], [242, -2, 0, 1, 2]],
+    "color_format_reply": [[245, -1], [242, -2, 0, 1, 5], [25, -2, 0, 14, 15], [25, -2, 0, 25, 26]],
+    "color_format_reactions": [[245, -1], [242, -2, 0, 1, 5]],
+    "color_format_interaction": [[245, -1], [242, -2, 0, 1, 5]],
     "color_format_forum": [[-1, -1], [242, -2, 0, 0, 12], [25, -2, 0, 15, 20]],
-    "color_chat_standout": [153, 234],
-    "color_chat_edited": [241, -1],
-    "color_chat_url": [153, -1, "u"],
-    "color_chat_spoiler": [245, -1],
-    "color_chat_code": [250, 233],
     "media_use_blocks": True,
     "media_truecolor": True,
     "media_ascii_palette": "  ..',;:c*loexk#O0XNW",
     "media_saturation": 1.2,
-    "media_font_aspect_ratio": 2.25,
     "media_color_bg": 16,
     "media_bar_ch": "━",
 }
@@ -203,9 +229,11 @@ keybindings = {
     "undo": "ALT+122",   # Alt+Z
     "redo": "ALT+90",   # Alt+Shift+Z
     "select_all": "ALT+97",   # Alt+A
-    "copy_sel": "ALT+99",   # Alt+C
-    "cut_sel": "ALT+120",   # Alt+X
+    "copy": "ALT+99",   # Alt+C
+    "cut": "ALT+120",   # Alt+X
+    "paste": 22,   # Ctrl+V
     "delete_word": 8,   # Ctrl+Backspace/Ctrl+H
+    "delete_word_forward": 528,   # Ctrl+Del
     # chat
     "send_message": 10,   # Enter
     "chat_up": 259,   # Up
@@ -216,11 +244,10 @@ keybindings = {
     "toggle_ping": 16,   # Ctrl+P
     "scroll_bottom": 2,   # Ctrl+B
     "go_replied": 7,   # Ctrl+G
-    "download": 23,   # Ctrl+W
+    "download": 12,   # Ctrl+L
     "upload": 21,   # Ctrl+U
     "browser": 15,   # Ctrl+O
-    "copy_msg": 12,   # Ctrl+L
-    "view_media": 22,   # Ctrl+V
+    "view_media": 23,   # Ctrl+W
     "spoil": "ALT+115",   # Alt+S
     "search": 6,   # Ctrl+F
     "search_gif": "ALT+102",   # Alt+F
@@ -264,8 +291,8 @@ command_bindings = {
     "11": "command_palette; type 'goto '",
     "336": "tree_select server; collapse_all_except selected",
     "337": "tree_select server prev; collapse_all_except selected",
-    "25-259": "resize_extra_window +1",
-    "25-258": "resize_extra_window -1",
+    "25-259": "resize_popup_window +1",
+    "25-258": "resize_popup_window -1",
 }
 
 
@@ -293,8 +320,9 @@ vim_mode_bindings = {
     "select_word_left": "H",
     "select_word_right": "L",
     "select_all": "a",
-    "copy_sel": "y",
-    "cut_sel": "Y",
+    "copy": "y",
+    "cut": "Y",
+    "paste": "p",   # Ctrl+V
     "delete_word": "X",
     # chat
     "send_message": 10,   # Enter
@@ -303,18 +331,17 @@ vim_mode_bindings = {
     "reply": "r",
     "edit": "e",
     "delete": "d",
-    "toggle_ping": "p",
+    "toggle_ping": "P",
     "scroll_bottom": "B",
     "go_replied": "g",
     "download": "D",
     "upload": "U",
     "browser": "o",
-    "copy_msg": "c",
     "view_media": "v",
     "spoil": "S",
     "search": "f",
     "search_gif": "F",
-    "profile_info": "P",
+    "profile_info": "c",
     "copy_message_link": "M",
     "add_reaction": "R",
     "show_reactions": "A",
@@ -354,4 +381,21 @@ macos_override_keybindings = {
     "tree_up": 337,   # Shift+Up
     "tree_down": 336,   # Shift+Down
     "browser": "ALT+111",   # Alt+O
+}
+
+
+state = {
+    "last_guild_id": None,
+    "last_channel_id": None,
+    "member_list": True,
+    "tree": True,
+    "collapsed": [],
+    "folder_names": [],
+    "tabbed_channels": [],
+    "recent_channels": [],
+    "favorite_emojis": [],
+    "volume_out": 100,
+    "volume_in": 100,
+    "audio_input_device": None,
+    "games_blacklist": [],
 }

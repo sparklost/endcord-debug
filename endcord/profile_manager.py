@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import curses
 import json
@@ -135,7 +134,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_secret_service():
-    """Check if secret-tool can be run, and if not, setup gnome-keyring daemon running on dbus"""
+    """Check if secret-tool can be run, and if not, setup secret service daemon running on dbus"""
     try:
         # ensure dbus is running
         if "DBUS_SESSION_BUS_ADDRESS" not in os.environ:
@@ -148,8 +147,7 @@ def setup_secret_service():
                     key, value = line.strip().split("=", 1)
                     os.environ[key] = value
 
-        # ensure gnome-keyring is running
-        # this should start gnome-keyring-daemon
+        # ensure secret service is running
         result = subprocess.run(
             ["secret-tool", "lookup", "service", "keyring-check"],
             stdout=subprocess.DEVNULL,
@@ -157,11 +155,11 @@ def setup_secret_service():
             check=False,
         )
         if "not activatable" in result.stderr.decode():
-            logger.warning("Cant use keyring: failed to start 'gnome-keyring' daemon, it is probably not installed")
+            logger.warning("Cant use keyring: failed to start Secret Service Provider daemon, it is probably not installed")
             return False
 
     except subprocess.CalledProcessError:
-        logger.warning("Cant use keyring: failed to start gnome-keyring")
+        logger.warning("Cant use keyring: failed to start Secret Service Provider")
         return False
 
     return True
@@ -275,7 +273,7 @@ def load_plain(profiles_path):
     if not os.path.exists(path):
         return []
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         logger.warning("Invalid profiles.json file")
@@ -292,7 +290,7 @@ def save_plain(profiles, profiles_path):
         with os.fdopen(fd, "w") as f:
             json.dump(profiles, f, indent=2)
     else:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(profiles, f, indent=2)
 
 
@@ -425,7 +423,7 @@ def main_tui(screen, profiles_enc, profiles_plain, selected, have_keyring, confi
             elif selected_button == 2 and profiles:   # EDIT
                 enc_source = profiles[selected_num]["source"] == "keyring"
                 for num, profile in enumerate(profiles_enc if enc_source else profiles_plain):
-                    if profile["name"] ==  profiles[selected_num]["name"]:
+                    if profile["name"] == profiles[selected_num]["name"]:
                         break
                 profile, edit = manage_profile(screen, have_keyring, config, editing_profile=profiles[selected_num])
                 screen.clear()
@@ -440,7 +438,7 @@ def main_tui(screen, profiles_enc, profiles_plain, selected, have_keyring, confi
                 profiles_enc, profiles_plain, deleted = delete_profile(screen, profiles_enc, profiles_plain, profiles[selected_num])
                 screen.clear()
                 if deleted and selected_num > 0:
-                    selected_num -=1
+                    selected_num -= 1
                 regenerate = True
             elif selected_button == 4:   # QUIT
                 break
@@ -682,10 +680,10 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                     break
 
         elif step == 300:   # qr code login
-            from endcord import auth, client_properties, terminal_qr, terminal_utils
+            from endcord import auth, client_properties, qr_code, terminal_utils
             discord_auth = init_auth(config)
             if config["custom_user_agent"]:
-                user_agent =  config["custom_user_agent"]
+                user_agent = config["custom_user_agent"]
             else:
                 user_agent = client_properties.get_user_agent(anonymous=(config["client_properties"].lower() == "anonymous"))
             gateway_auth = auth.Gateway(user_agent, proxy=config["proxy"])
@@ -761,7 +759,7 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                 if drawing:
                     text_above = "Scan this QR code with your phone to login:"
                     text_bellow = url + "\n\n" + timeout_text + "\nEsc to go back."
-                    _, string = terminal_qr.gen_qr_terminal_string(url, text_above, text_bellow)
+                    _, string = qr_code.gen_qr_terminal_string(url, text_above, text_bellow)
                     terminal_utils.draw(string)
                 time.sleep(0.1)
             terminal_utils.stop_esc_detector()
@@ -831,14 +829,18 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
             prompt_len = len(prompt) + 2
             text = texts[i]
             if mask[i]:
-                dots = "•" * len(text[:w - prompt_len])
-                line = prompt + dots
+                shift = max(len(text) - (w - prompt_len), 0)
+                line = prompt + "•" * len(text[-(w-prompt_len):])
+                screen_input_index = input_index - shift
             else:
-                line = prompt + text[:w - prompt_len]
+                shift = max(len(text) - (w - prompt_len), 0)
+                line = prompt + text[-(w-prompt_len):]
+                screen_input_index = input_index - shift
             line += " " * (w - len(line) - 1)
             if i == selected:
                 screen.addstr(y, 1, line, curses.color_pair(1) | curses.A_STANDOUT)
-                screen.addch(y, input_index + prompt_len - 1, line[input_index + prompt_len - 2], curses.color_pair(2))
+                if screen_input_index + prompt_len - 1 < w:
+                    screen.addch(y, screen_input_index + prompt_len - 1, line[screen_input_index + prompt_len - 2], curses.color_pair(2))
             else:
                 screen.addstr(y, 1, line, curses.color_pair(2))    # gray
         screen.refresh()
@@ -876,7 +878,7 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
                 proceed = True
                 break
 
-        elif key == BACKSPACE or key == 127:
+        elif key in (BACKSPACE, 127) and input_index > 0:
             texts[selected] = texts[selected][:input_index-1] + texts[selected][input_index:]
             input_index -= 1
 

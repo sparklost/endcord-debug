@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import os
 import shutil
@@ -21,6 +20,7 @@ if sys.platform == "win32":
     kernel32.GetConsoleMode(H_STDOUT, ctypes.byref(OLD_OUT_MODE))
 else:
     import fcntl
+    import select
     import termios
     import tty
     STDIN_FD = sys.stdin.fileno()
@@ -28,16 +28,16 @@ else:
 
 
 KEY_CODES = {   # from curses for consistency
-    b"\x1b[A": 259,  # UP
-    b"\x1b[B": 258,  # DOWN
-    b"\x1b[D": 260,  # LEFT
-    b"\x1b[C": 261,  # RIGHT
-    b"\x1b[H": 262,  # HOME
-    b"\x1b[F": 360,  # END
-    b"\x1b[5~": 339, # PG_UP
-    b"\x1b[6~": 338, # PG_DOWN
-    b"\x1b[3~": 330, # DELETE
-    b"\x1b[2~": 331, # INSERT
+    b"\x1b[A": 259,   # UP
+    b"\x1b[B": 258,   # DOWN
+    b"\x1b[D": 260,   # LEFT
+    b"\x1b[C": 261,   # RIGHT
+    b"\x1b[H": 262,   # HOME
+    b"\x1b[F": 360,   # END
+    b"\x1b[5~": 339,  # PG_UP
+    b"\x1b[6~": 338,  # PG_DOWN
+    b"\x1b[3~": 330,  # DELETE
+    b"\x1b[2~": 331,  # INSERT
 }
 
 KEY_CODES_WIN = {
@@ -124,46 +124,55 @@ def draw(lines):
         pass
 
 
+def draw_over_curses(text, y, x):
+    """Draw lines on screen already used by curses, and restore cursor position"""
+    sys.stdout.write("\x1b[s")  # save cursor
+    for i, line in enumerate(text.split("\n")):
+        sys.stdout.write(f"\x1b[{y + i + 1};{x + 1}H")
+        sys.stdout.write(line)
+    sys.stdout.write("\x1b[u")  # restore cursor
+    sys.stdout.flush()
+
+
 def read_key():
     """Blocking read key, return key code like curses.getch(), alt sequences are not handled"""
     fd = sys.stdin.fileno()
-    old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-    try:
-        # wait for first byte
-        first = os.read(fd, 1)
 
-        # using O_NONBLOCK instead select() for windows compatibility
-        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+    # wait for first byteZ
+    first = os.read(fd, 1)
 
-        # backspace
-        if first == b"\x7f":
-            return 263
+    # backspace
+    if first == b"\x7f":
+        return 263
 
-        # single code
-        if first != b"\x1b":
-            return KEY_CODES.get(first, ord(first))
+    # single code
+    if first != b"\x1b":
+        return KEY_CODES.get(first, ord(first))
 
-        # escape sequences
-        seq = first
-        start = time.time()
-        while time.time() - start < 0.01:   # 10ms timeout
+    # escape sequences
+    seq = first
+    start = time.time()
+    while True:
+        time_left = 0.01 - (time.time() - start)
+        if time_left <= 0:
+            break
+        ready, _, _ = select.select([fd], [], [], time_left)
+        if ready:
             try:
                 byte = os.read(fd, 1)
                 if not byte:
-                    time.sleep(0.001)
                     continue
                 seq += byte
                 if seq in KEY_CODES:
                     return KEY_CODES[seq]
                 if len(seq) > 6:
                     break
-            except BlockingIOError:
-                time.sleep(0.001)
+            except (IOError, OSError):
+                break
+        else:
+            break
 
-        return 27
-
-    finally:
-        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+    return 27
 
 
 def read_key_win():
@@ -192,22 +201,15 @@ def esc_detector():
     global run_esc_detector
     run_esc_detector = True
     fd = sys.stdin.fileno()
-    old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-    try:
-        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
-        while run_esc_detector:
+    while run_esc_detector:
+        ready_to_read, _, _ = select.select([fd], [], [], 0.01)
+        if ready_to_read:
             try:
                 byte = os.read(fd, 1)
-                if not byte:
-                    time.sleep(0.01)
-                elif byte == b"\x1b":
+                if byte and byte == b"\x1b":
                     run_esc_detector = False
-                else:
-                    time.sleep(0.01)
-            except BlockingIOError:
-                time.sleep(0.01)
-    finally:
-        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+            except (IOError, OSError):
+                pass
 
 
 def esc_detector_win():
@@ -241,3 +243,44 @@ if sys.platform == "win32":
     leave_tui = leave_tui_win
     read_key = read_key_win
     esc_detector = esc_detector_win
+
+
+def query_terminal(query, timeout=0.1, read_bytes=1024):
+    """Query terminal with specific sequence, wait for response and return decoded response bytes"""
+    if sys.platform == "win32":
+        return None
+    stdin_fd = sys.stdin.fileno()
+    old_term = termios.tcgetattr(stdin_fd)
+    old_flags = fcntl.fcntl(stdin_fd, fcntl.F_GETFL)
+    response = b""
+    try:
+        tty.setraw(stdin_fd)
+        fcntl.fcntl(stdin_fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+        os.write(stdin_fd, query)
+        while timeout > 0:
+            try:
+                response = os.read(stdin_fd, read_bytes)
+                if response:
+                    break
+            except BlockingIOError:
+                pass
+            timeout -= 0.01
+            time.sleep(0.01)
+    finally:
+        termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
+        fcntl.fcntl(stdin_fd, fcntl.F_SETFL, old_flags)
+    return response.decode()
+
+
+def get_font_size():
+    """Query font size from terminal"""
+    response = query_terminal(b"\033[14t")
+    if not response:
+        return None, None
+    parts = response.lstrip("\033[").rstrip("t").split(";")
+    if len(parts) != 3:
+        return None, None
+    cols, rows = os.get_terminal_size()
+    height = int(parts[1]) // rows
+    width = int(parts[2]) // cols
+    return width, height

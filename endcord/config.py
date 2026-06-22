@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import logging
 import os
@@ -10,9 +9,11 @@ import sys
 from ast import literal_eval
 from configparser import ConfigParser
 
-from endcord import defaults, peripherals
+from endcord import color, defaults, peripherals
 
 logger = logging.getLogger(__name__)
+
+XTERM_LIKE_BINDINGS_TERMS = ("xterm", "foot")
 
 
 def save_config(path, data, section):
@@ -30,7 +31,7 @@ def save_config(path, data, section):
         if data[key] in (True, False, None) or isinstance(data[key], (list, tuple, int, float)):
             config.set(section, key, str(data[key]))
         else:
-            config.set(section, key, f'"{str(data[key]).replace("\\", "\\\\")}"')
+            config.set(section, key, f'"{str(data[key]).replace("\\", "\\\\").replace("\n", "\\n")}"')
     with open(path, "w", encoding="utf-8") as f:
         config.write(f)
 
@@ -61,6 +62,8 @@ def load_config(path, default, section="main", gen_config=False, merge=False):
             if key in list(config[section].keys()):
                 try:
                     eval_value = literal_eval(config_data_raw[key])
+                    if section == "theme":
+                        eval_value = parse_color(eval_value)
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = config_data_raw[key]
@@ -70,6 +73,8 @@ def load_config(path, default, section="main", gen_config=False, merge=False):
             if key.startswith("ext_") or merge:
                 try:
                     eval_value = literal_eval(value)
+                    if section == "theme":
+                        eval_value = parse_color(eval_value)
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = value
@@ -124,6 +129,20 @@ def merge_configs(custom_config_path, theme_path):
     return config, gen_config, error
 
 
+def parse_color(data):
+    """Automatically parse (r, g, b) and '#123abc' color formats and convert to 8-bit ansi"""
+    if isinstance(data, list):
+        for i, value in enumerate(data):
+            data[i] = parse_color(value)
+    if isinstance(data, int):   # already ansi
+        return data
+    if isinstance(data, tuple) and len(data) == 3:   # rgb tuple
+        return color.closest_color(data)[0]
+    if isinstance(data, str) and data.startswith("#"):   # hex string
+        return color.closest_color(color.hex_to_rgb(data))[0]
+    return data
+
+
 def alt_shift(value, shift):
     """Try to change "ALT+Key into integer key value"""
     val = re.sub(r"ALT\+(\d+)", lambda m: str(int(m.group(1)) + shift), value)
@@ -159,7 +178,7 @@ def convert_keybindings_cmd(keybindings):
     """Convert keybinding codes to os-specific codes, for command bindings"""
     if sys.platform == "win32":
         shift = 320
-    elif os.environ.get("TERM", "") == "xterm":
+    elif os.environ.get("TERM", "") in XTERM_LIKE_BINDINGS_TERMS:
         shift = 64
     else:
         shift = 0

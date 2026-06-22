@@ -1,39 +1,77 @@
-Voice calls
-    start recorder thread, set volume, record and add to queue encode
-    dave encrypt, transport encrypt, pack, send
-    stop when leave call
-    leave call on error
-    pause recorder when muted
-    send and receive RTCP and show connection quality
-    send speaking event
+commit
+build on gh
+comit and release extensions
+release 1.5.0
+send discord announccement
+close issues
+comment on nix endcord package pr
 
-Voice channels
-    add voice channels to tree
-    show voice channel activity
-    join call from tree
-    join call with goto
-    handle calls in dm groups
-    handle multiple speaking at the same time
+Add subtitle line
+Add temporary tabs
+Add colors to status line
+Add colors to extra line
+Add click, double click and middle click on tabs
+Add colors for tree channels and servers
+Add mini member list
+Add auto-idle
+Add middle click on tree to open in new tab
+Add double click on thread in forum
+Add status and spacing to member list
+Add play_in_native command
+Add option to build with custom python
+Add %nick, %status_dot and %warn_state to status line
+Add about command
+Add colors to log viewer
+Fix terminal issues on macos
+Fix inline media removing mention background
+Fix inline media messing tree on startup and channel switch
+Fix media player crash with grayscale images
+Fix emoji messing member list
+Fix crash with spacebar/harmony
+Detect when terminal is focused
+Change option notification_in_active to notification_when_focused
+Remember tree open/closed in state
+Auto-select uploaded attachment
+Merge block and unblock commands into toggle_block
+Dont send notification from self messages
+Remove username from status line
+Remove %afk - merged into %warn_state
+Optimize media player (~10 times faster)
+Optimize search (~2 times faster)
+Remove qrcode dependency - now using custom implementation
+Remove urllib3 dependency - reducing RAM usage
+Remove protobuf dependency - reducing RAM usage
+Remove python_socks dependency - already using pysocks
+Make build script prefer clang
+Make build script also build pycryptodome and pynacl with custom flags
+Update screenshots
+Bump dependencies
+Update client properties
+Switch to source-available license
 
-after fixing https://github.com/python/cpython/issues/119138
-    Add colors for status sign in selected and active dm in tree
-    Add red fg white bg color for selected and unread in tree
-    Add red fg gray bg color for active and unread in tree
-    Show inline media in chat
-    Add bg color for mentions and channels in chat
-    Add status dot color to active and muted line in tree
+Fix sent audio is delayed and low quality
+Fix receiver audio mixer
+Add transmmitter audio mixer
 
-Add colors in assist window
-Add scrollbar to chat
-Add ability to switch profile without closing
-Rewrite experimental mode in not-pygame
+Add custom python package management through build.py
+Add --norust option to build script
+Add --minimal option to build script (rempves numpy orjson soundcard)
+Remove ruff and uv
+
+Add inbox
+Fix RTP metrics
+Fix some emoji are drawn as text
 Fix issues with wide characters in input line
+Add multiline input line
 Add option to select individual message
 Fix per-channel member list
-Video calls
+Rewrite experimental mode in not-pygame
+Video, stage and stream calls
 Localization
 
-
-Exntensions:
+Extensions:
 endcord-termux-rich
 endcord-undelete
+endcord-message-replace
+endcord-image-pfp
+endcord-kitty-media

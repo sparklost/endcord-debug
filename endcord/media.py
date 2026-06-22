@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import importlib.util
 import logging
@@ -106,10 +105,8 @@ def img_to_term(img, img_gray, bg_color, ascii_palette, ascii_palette_len, scree
     return "\n".join(out_lines)
 
 
-def img_to_term_block(img, bg_color, screen_width, screen_height, img_width, img_height):
+def img_to_term_block(data, bg_color, screen_width, screen_height, img_width, img_height):
     """Convert image to ANSI-colored string made of half-blocks, ready to be printed in terminal"""
-    pixels = img.load()
-
     padding_h = (screen_height - img_height // 2) // 2
     padding_w = (screen_width - img_width) // 2
 
@@ -132,8 +129,8 @@ def img_to_term_block(img, bg_color, screen_width, screen_height, img_width, img
 
         # image columns
         for x in range(img_width):
-            top_color = pixels[x, y] + 16
-            bot_color = pixels[x, y + 1] + 16
+            top_color = data[y * img_width + x] + 16
+            bot_color = data[(y + 1) * img_width + x] + 16
             if top_color != current_fg:
                 line_parts.append(f"{ESC}[38;5;{top_color}m")
                 current_fg = top_color
@@ -153,62 +150,66 @@ def img_to_term_block(img, bg_color, screen_width, screen_height, img_width, img
     # bottom padding
     while len(out_lines) < screen_height:
         out_lines.append(bg + (" " * screen_width) + RESET)
-
     return "\n".join(out_lines)
 
 
-def img_to_term_block_truecolor(img, bg_color, screen_width, screen_height, img_width, img_height):
+def img_to_term_block_truecolor(data, bg_color, screen_width, screen_height, img_width, img_height):
     """Convert image to ANSI true-color string made of half-blocks"""
-    pixels = img.load()
-
     padding_h = (screen_height - img_height // 2) // 2
     padding_w = (screen_width - img_width) // 2
 
-    bg = f"{ESC}[48;5;{bg_color}m"   # bg color is not in r;g;b
+    bgr = f"{ESC}[48;5;{bg_color}m"   # bg color is not in r;g;b
     out_lines = []
 
     # top padding
     for _ in range(padding_h):
-        out_lines.append(bg + (" " * screen_width) + RESET)
+        out_lines.append(bgr + (" " * screen_width) + RESET)
 
     # image rows
     for y in range(0, img_height - 1, 2):
         line_parts = []
-        current_fg = None
-        current_bg = None
+        cfr, cfg, cfb = None, None, None
+        cbr, cbg, cbb = None, None, None
 
         # left padding
         if padding_w > 0:
-            line_parts.append(bg + (" " * padding_w))
+            line_parts.append(bgr + (" " * padding_w))
 
         # image columns
+        row_top = y * img_width * 3
         for x in range(img_width):
-            top_color = pixels[x, y]
-            bot_color = pixels[x, y + 1]
-            if top_color != current_fg:
-                line_parts.append(f"{ESC}[38;2;{top_color[0]};{top_color[1]};{top_color[2]}m")
-                current_fg = top_color
-            if bot_color != current_bg:
-                line_parts.append(f"{ESC}[48;2;{bot_color[0]};{bot_color[1]};{bot_color[2]}m")
-                current_bg = bot_color
+            idx = row_top + x * 3
+            fr = data[idx]
+            fg = data[idx + 1]
+            fb = data[idx + 2]
+            idx += img_width * 3
+            br = data[idx]
+            bg = data[idx + 1]
+            bb = data[idx + 2]
+            if fr != cfr or fg != cfg or fb != cfb:
+                line_parts.append(f"{ESC}[38;2;{fr};{fg};{fb}m")
+                cfr, cfg, cfb = fr, fg, fb
+            if br != cbr or bg != cbg or bb != cbb:
+                line_parts.append(f"{ESC}[48;2;{br};{bg};{bb}m")
+                cbr, cbg, cbb = br, bg, bb
             line_parts.append("▀")
 
         # right padding
         visible_len = padding_w + img_width
         if visible_len < screen_width:
-            line_parts.append(bg + (" " * (screen_width - visible_len)))
+            line_parts.append(bgr + (" " * (screen_width - visible_len)))
 
         line_parts.append(RESET)
         out_lines.append("".join(line_parts))
 
     # bottom padding
     while len(out_lines) < screen_height:
-        out_lines.append(bg + (" " * screen_width) + RESET)
+        out_lines.append(bgr + (" " * screen_width) + RESET)
 
     return "\n".join(out_lines)
 
 
-# use cython if available, ~1.7 times faster
+# use cython if available, ~5 times faster
 if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.media"):
     from endcord_cython.media import (
         img_to_term,
@@ -226,14 +227,15 @@ if have_soundcard:
 else:
     have_sound = False
 
+
 class TerminalMedia():
     """Methods for showing and playing media in terminal"""
 
-    def __init__(self, config, keybindings, ui=True, external=False, volume=100):
+    def __init__(self, config, keybindings, ui=True, external=False, volume=100, font_ratio=2.25):
         logging.getLogger("libav").setLevel(logging.ERROR)
-        media_block = config["media_use_blocks"]
         self.truecolor = config["media_truecolor"]
-        self.font_ratio = config["media_font_aspect_ratio"]   # 2.25
+        self.use_blocks = config["media_use_blocks"]
+        self.font_ratio = font_ratio   # 2.25
         self.font_ratio_block = self.font_ratio / 2
         self.ascii_palette = list(config["media_ascii_palette"])   # "  ..',;:c*loexk#O0XNW"
         self.saturation = config["media_saturation"]   # 1.2
@@ -260,7 +262,11 @@ class TerminalMedia():
         self.path = None
         self.media_type = None
         self.seek = None
-        self.screen_size = terminal_utils.get_size()
+        self.video_duration = 0
+        self.video_time = 0
+        self.video_h, self.video_w = None, None
+        self.frame_h, self.frame_w = None, None
+        self.screen_h, self.screen_w = terminal_utils.get_size()
         self.img = None
         self.ui = ui
         self.ui_line = None
@@ -268,7 +274,7 @@ class TerminalMedia():
             self.ui_timer = 0
         else:
             self.ui_timer = 30
-        if media_block:
+        if self.use_blocks:
             self.pil_img_to_term = self.pil_img_to_term_block
         if self.truecolor:   # select drawing algorithm
             self.img_to_term_block = img_to_term_block_truecolor
@@ -278,6 +284,7 @@ class TerminalMedia():
         self.gain = volume_to_gain(volume)
         self.audio_queue = Queue(maxsize=10)
         self.video_queue = Queue(maxsize=10)
+        self.times = []
 
 
     def sigint_handler(self, _signum, _frame):
@@ -288,21 +295,46 @@ class TerminalMedia():
         sys.exit(0)   # failsafe
 
 
-    def pil_img_to_term(self, img, remove_alpha=True):
-        """Convert pillow image to ascii art and display it in terminal with media controls of needed"""
+    def calculate_image_size(self):
+        """Calculate image size for video player so it fits the screen area (image that will be used in img_to_term methods)"""
+        if not self.video_h:
+            return
         screen_height, screen_width = terminal_utils.get_size()
-        height, width = terminal_utils.get_size()
-
-        # scale image preserving aspect ratio
-        wpercent = width / (img.size[0] * self.font_ratio)
-        hsize = int(img.size[1] * wpercent)
+        height = screen_height * (2 if self.use_blocks else 1)
+        width = screen_width
+        wpercent = width / (self.video_w * (self.font_ratio_block if self.use_blocks else self.font_ratio))
+        hsize = int(self.video_h * wpercent)
         if hsize > height:
-            hpercent = height / img.size[1]
-            wsize = int(img.size[0] * hpercent * self.font_ratio)
+            hpercent = height / self.video_h
+            wsize = int(self.video_w * hpercent * (self.font_ratio_block if self.use_blocks else self.font_ratio))
             width = wsize
         else:
             height = hsize
-        img = img.resize((width, height), Image.Resampling.LANCZOS)
+        if self.use_blocks:
+            height &= ~1   # must be even height
+        self.screen_height, self.screen_width = screen_height, screen_width
+        self.frame_h, self.frame_w = height, width
+
+
+    def pil_img_to_term(self, img, remove_alpha=True):
+        """Convert pillow image to ascii art and display it in terminal with media controls of needed"""
+        # scale image preserving aspect ratio
+        if self.frame_h:
+            screen_height, screen_width = self.screen_height, self.screen_width
+            height, width = self.frame_h, self.frame_w
+        else:
+            screen_height, screen_width = terminal_utils.get_size()
+            height, width = terminal_utils.get_size()
+            wpercent = width / (img.size[0] * self.font_ratio)
+            hsize = int(img.size[1] * wpercent)
+            if hsize > height:
+                hpercent = height / img.size[1]
+                wsize = int(img.size[0] * hpercent * self.font_ratio)
+                width = wsize
+            else:
+                height = hsize
+
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
         img_gray = img.convert("L")
 
         # increase saturation
@@ -329,35 +361,38 @@ class TerminalMedia():
             self.ascii_palette,
             self.ascii_palette_len,
             screen_width,
-            screen_height - bool(self.ui_line),
+            screen_height,
             width,
             height,
         )
         if self.ui_line:
-            string += f"\n{ESC}[48;5;{self.bg_color}m{self.ui_line}{RESET}"
+            string = string[:string.rfind("\n") + 1] + f"\n{ESC}[48;5;{self.bg_color}m{self.ui_line}{RESET}"
         terminal_utils.draw(string)
 
 
     def pil_img_to_term_block(self, img, remove_alpha=True):
         """Convert pillow image to half-block terminal output"""
-        screen_height, screen_width = terminal_utils.get_size()
-        height = screen_height * 2
-        width = screen_width
-
         # scale image preserving aspect ratio
-        wpercent = width / float(img.size[0] * self.font_ratio_block)
-        hsize = int(img.size[1] * wpercent)
-        if hsize > height:
-            hpercent = height / float(img.size[1])
-            wsize = int(img.size[0] * hpercent * self.font_ratio_block)
-            width = wsize
+        if self.frame_h:
+            screen_height, screen_width = self.screen_height, self.screen_width
+            height, width = self.frame_h, self.frame_w
         else:
-            height = hsize
-        height &= ~1   # must be even height
-        img = img.resize((width, height), Image.Resampling.LANCZOS)
+            screen_height, screen_width = terminal_utils.get_size()
+            height = screen_height * 2
+            width = screen_width
+            wpercent = width / float(img.size[0] * self.font_ratio_block)
+            hsize = int(img.size[1] * wpercent)
+            if hsize > height:
+                hpercent = height / float(img.size[1])
+                wsize = int(img.size[0] * hpercent * self.font_ratio_block)
+                width = wsize
+            else:
+                height = hsize
+            height &= ~1   # must be even height
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
 
         # remove alpha
-        if remove_alpha and img.mode not in ("RGB", "L"):
+        if remove_alpha and img.mode == "RGBA":
             background = Image.new("RGB", img.size, (0, 0, 0))
             background.paste(img, mask=img.split()[3])
             img = background
@@ -373,15 +408,15 @@ class TerminalMedia():
 
         # draw
         string = self.img_to_term_block(   # truecolor is selected at init
-            img,
+            img.tobytes(),
             self.bg_color,
             screen_width,
-            screen_height - bool(self.ui_line),
+            screen_height,
             width,
             height,
         )
         if self.ui_line:
-            string += f"\n{ESC}[48;5;{self.bg_color}m{self.ui_line}{RESET}"
+            string = string[:string.rfind("\n") + 1] + f"{ESC}[48;5;{self.bg_color}m{self.ui_line}{RESET}"
         terminal_utils.draw(string)
 
 
@@ -409,9 +444,9 @@ class TerminalMedia():
         self.hide_ui()
         self.pil_img_to_term(img)
         while self.run:
-            screen_size = terminal_utils.get_size()
-            if self.screen_size != screen_size:
-                self.screen_size = screen_size
+            h, w = terminal_utils.get_size()
+            if self.screen_h != h or self.screen_h != w:
+                self.screen_h, self.screen_w = h, w
                 self.pil_img_to_term(img)
             time.sleep(0.1)
         self.stop_playback()
@@ -443,56 +478,29 @@ class TerminalMedia():
         """Play only audio"""
         if self.ui:
             self.show_ui()
-
-        self.seek = None
         if not have_sound:
             self.ended = True
             return
         if self.ui:
             self.draw_blank()
-
         container = av.open(path)
         self.ended = False
-        self.video_time = 0   # using video_time to simplify controls
-
         all_audio_streams = container.streams.audio
         if not all_audio_streams:   # no audio?
             return
         audio_stream = all_audio_streams[0]
 
-        if audio_stream.duration:
-            self.video_duration = float(audio_stream.duration * audio_stream.time_base)
-        else:
-            self.video_duration = audio_stream.frames / audio_stream.average_rate * audio_stream.time_base
-        if self.video_duration == 0:
-            self.video_duration = 1   # just in case
-
-        frame_duration = 1 / container.streams.audio[0].codec_context.sample_rate
-
         with speaker.player(samplerate=audio_stream.rate, channels=audio_stream.channels, blocksize=1152) as stream:
             start = int(time.time())
             while self.playing:
                 for frame in container.decode(audio=0):
-                    if self.seek is not None:
-                        container.seek(int(self.seek / audio_stream.time_base), stream=audio_stream)
-                        self.video_time = self.seek
-                        self.seek = None
-                        if self.pause_after_seek:
-                            self.pause_after_seek = False
-                            self.pause = True
-                            self.ui_line = self.build_ui_string()
-                            self.show_ui()
-                        continue
                     if not self.playing:
                         break
                     while self.pause:
                         time.sleep(0.1)
-                    if self.pause_after_seek:
-                        continue
                     audio = frame.to_ndarray().astype("float32").T
                     audio *= self.gain
                     stream.play(audio)
-                    self.video_time += frame.samples * frame_duration
                 if loop:
                     if int(time.time()) - start > loop_max:
                         break
@@ -553,7 +561,13 @@ class TerminalMedia():
             if audio_queue.qsize() >= 1 or no_audio:
                 start_time = time.time()
                 self.img = frame.to_image()
-                self.pil_img_to_term(self.img, remove_alpha=False)
+                try:
+                    self.pil_img_to_term(self.img, remove_alpha=False)
+                except IndexError:
+                    pass
+                h, w = terminal_utils.get_size()
+                if self.screen_h != h or self.screen_w != w:
+                    self.calculate_image_size()
             if audio_queue.qsize() >= 3 or no_audio:
                 time.sleep(max(frame_duration - (time.time() - start_time), 0))
             while self.pause:
@@ -580,6 +594,8 @@ class TerminalMedia():
         video_fps = video_stream.guessed_rate
         frame_duration = 1 / video_fps
         frame_index = max(int(video_fps / self.cap_fps), 1)
+        self.video_h, self.video_w = video_stream.height, video_stream.width
+        self.calculate_image_size()
 
         # prepare audio
         have_audio = False
@@ -621,7 +637,7 @@ class TerminalMedia():
                 self.audio_queue.put(frame)
             if isinstance(frame, av.video.frame.VideoFrame):
                 if num == frame_index:   # limit fps
-                    self.video_queue.put(frame)
+                    self.video_queue.put(frame.reformat(height=self.frame_h, width=self.frame_w))
                     num = 0
                 num += 1
                 self.video_time += frame_duration
@@ -707,9 +723,9 @@ class TerminalMedia():
                 time.sleep(0.2)
         except Exception as e:
             logger.error("".join(traceback.format_exception(e)))
-        finally:
-            terminal_utils.leave_tui()
-
+            if self.external:
+                print("".join(traceback.format_exception(e)))
+        terminal_utils.leave_tui()
         self.run = False
         self.playing = False
 
@@ -760,7 +776,6 @@ class TerminalMedia():
             self.show_ui()
 
 
-
     def start_ui_thread(self):
         """Start UI drawing thread"""
         self.ui_thread = threading.Thread(target=self.draw_ui_loop, daemon=True)
@@ -770,6 +785,7 @@ class TerminalMedia():
     def show_ui(self):
         """Show UI after its been hidden"""
         self.ui_timer = 0
+        self.ui_line = self.build_ui_string()
         if self.img:
             self.pil_img_to_term(self.img, remove_alpha=False)
 
@@ -820,12 +836,11 @@ class TerminalMedia():
 
     def wait_input(self):
         """Handle input from user"""
-        run = True
-        while run:
+        while self.run:
             key = terminal_utils.read_key()
             if key == 27:   # ESCAPE
                 self.control_codes(100)
-                run = False
+                self.run = False
             elif key in self.keybindings["media_pause"]:
                 self.control_codes(101)
             elif key in self.keybindings["media_replay"]:

@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import base64
 import json
@@ -12,9 +11,9 @@ import sys
 import uuid
 
 # default client properties
-CLIENT_BUILD_NUMBER = None   # should only affect experimental features availability
-CLIENT_VERSION = "0.0.115"
-USER_AGENT_WEB = "Mozilla/5.0 (%OS; rv:145.0) Gecko/20100101 Firefox/145.0"
+CLIENT_BUILD_NUMBER = None   # 535363   # should only affect experimental features availability
+CLIENT_VERSION = "1.0.143"
+USER_AGENT_WEB = "Mozilla/5.0 (%OS; rv:152.0) Gecko/20100101 Firefox/152.0"
 USER_AGENT_DESKTOP = f"Mozilla/5.0 (%OS) AppleWebKit/537.36 (KHTML, like Gecko) discord/{CLIENT_VERSION} Chrome/138.0.7204.251 Electron/37.6.0 Safari/537.36"
 LINUX_UA_STRING = "X11; Linux x86_64"
 WINDOWS_UA_STRING = "Windows NT %VER; Win64; x64"

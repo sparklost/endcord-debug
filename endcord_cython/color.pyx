@@ -1,3 +1,7 @@
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
+
 # cython: boundscheck=False, wraparound=False, freethreading_compatible=True
 
 from libc.stdint cimport int16_t, int32_t

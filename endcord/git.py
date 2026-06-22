@@ -1,26 +1,26 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
-import http.client
 import json
 import logging
 import os
 import shutil
 import socket
 import subprocess
-from urllib.parse import urlencode, urlparse
+import urllib.parse
 
 from endcord import peripherals
 
 logger = logging.getLogger(__name__)
+APP_NAME = "endcord"
 HEADER = {
-    "User-Agent": peripherals.APP_NAME + "/" + peripherals.VERSION,   # required by github
+    "User-Agent": APP_NAME + "/" + peripherals.VERSION,   # required by github
     "Accept": "application/vnd.github+json",
 }
 
-def install_extension(url, cli=False, prefer_tag=None, update=False):
+
+def install_extension(url, cli=False, prefer_tag=None, update=False, proxy=None):
     """Install extension from specified git repo url"""
     # init stuff
     if ":" not in url and "@" not in url and len(url.split("/")) == 2:
@@ -43,8 +43,8 @@ def install_extension(url, cli=False, prefer_tag=None, update=False):
         # use github api
         if "github.com" in url:
             if not prefer_tag:
-                prefer_tag = check_for_update("0.0.0", ext_owner, ext_name)
-            status = download_gh_repo(ext_owner, ext_name, ext_path, prefer_tag)
+                prefer_tag = check_for_update("0.0.0", ext_owner, ext_name, proxy=proxy)
+            status = download_gh_repo(ext_owner, ext_name, ext_path, prefer_tag, proxy=proxy)
             if status == 1:
                 setup_extension(ext_path)
                 return 1, "Extension installed successfully. Restart endcord to load it"
@@ -52,6 +52,8 @@ def install_extension(url, cli=False, prefer_tag=None, update=False):
                 return 4, "Error occured. See log for more info"
             if status == 3:
                 return 3, "Could not find this extension"
+            if status == 4:
+                return 4, "Error occured. See log for more info"
             return None, ""
 
         # pull/clone with git command
@@ -102,10 +104,10 @@ def ver_to_tuple(v):
     return tuple(int(p) for p in v.split("."))
 
 
-def check_for_update(current_version, owner, repo):
+def check_for_update(current_version, owner, repo, proxy=None):
     """Chek specified repo for update"""
     try:
-        connection = http.client.HTTPSConnection("api.github.com", timeout=10)
+        connection = peripherals.get_connection("api.github.com", timeout=10, proxy=proxy)
         connection.request("GET", f"/repos/{owner}/{repo}/releases/latest", headers=HEADER)
         response = connection.getresponse()
     except (socket.gaierror, TimeoutError):
@@ -123,15 +125,15 @@ def check_for_update(current_version, owner, repo):
     return None
 
 
-def search_gh_repos(topic, num=30, page=1):
+def search_gh_repos(topic, num=30, page=1, official_maintainer=peripherals.REPO_OWNER, proxy=None):
     """Search github repositories"""
-    query = urlencode({
+    query = urllib.parse.urlencode({
         "q": f"topic:{topic}",
         "per_page": num,
         "page": page,
     })
     try:
-        connection = http.client.HTTPSConnection("api.github.com", timeout=10)
+        connection = peripherals.get_connection("api.github.com", timeout=10, proxy=proxy)
         connection.request("GET", f"/search/repositories?{query}", headers=HEADER)
         response = connection.getresponse()
     except (socket.gaierror, TimeoutError):
@@ -145,14 +147,14 @@ def search_gh_repos(topic, num=30, page=1):
             repo_name = item["name"]
             description = item["description"] or "No description"
             owner = item["owner"]["login"]
-            repos.append((owner, repo_name, description))
+            repos.append((owner, repo_name, description, owner == official_maintainer))
         return repos
     connection.close()
     logger.error(f"Failed searching for repos: {topic}, page: {page}, http error code: {response.status}")
     return None
 
 
-def download_gh_repo(owner, repo, save_path, tag=None):
+def download_gh_repo(owner, repo, save_path, tag=None, proxy=None):
     """Download zipball of repo tag or main and extract it to save_path"""
     host = "api.github.com"
     url = f"/repos/{owner}/{repo}/zipball"
@@ -162,7 +164,7 @@ def download_gh_repo(owner, repo, save_path, tag=None):
 
     while redirects < 2:
         try:
-            connection = http.client.HTTPSConnection(host, timeout=10)
+            connection = peripherals.get_connection(host, timeout=10, proxy=proxy)
             connection.request("GET", url, headers=HEADER)
             response = connection.getresponse()
         except (socket.gaierror, TimeoutError):
@@ -192,11 +194,11 @@ def download_gh_repo(owner, repo, save_path, tag=None):
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader("Location")
             if not location:
-                print("Error: Redirect without lcation")
-                return []
+                logger.error("Redirect without lcation")
+                return 4
             redirects += 1
             connection.close()
-            parsed = urlparse(location)
+            parsed = urllib.parse.urlparse(location)
             if parsed.netloc:
                 host = parsed.netloc
             if parsed.path:

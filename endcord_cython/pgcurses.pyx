@@ -1,4 +1,8 @@
-# cython: boundscheck=False, wraparound=False, cdivision=True, freethreading_compatible=True
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
+
+# cython: boundscheck=False, wraparound=False, freethreading_compatible=True
 
 from cpython.tuple cimport PyTuple_GET_ITEM
 import pygame

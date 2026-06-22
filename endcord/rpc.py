@@ -1,7 +1,6 @@
-# Copyright (C) 2025-2026 SparkLost
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, version 3.
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
 
 import json
 import logging
@@ -45,12 +44,20 @@ def receive_data_linux(connection):
     """Receive and decode nicely packed json data"""
     try:
         header = connection.recv(8)
+        if not header:
+            return None, None
         op, length = struct.unpack("<II", header)
-        data = connection.recv(length)
-        final_data = json.loads(data)
-        return op, final_data
+        data = b""
+        while len(data) < length:
+            chunk = connection.recv(length - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return op, json.loads(data)
     except struct.error as e:
         logger.error(e)
+        return None, None
+    except ConnectionResetError:
         return None, None
 
 
@@ -72,8 +79,7 @@ def receive_data_win(pipe):
         header = win32file.ReadFile(pipe, 8)[1]
         op, length = struct.unpack("<II", header)
         data = win32file.ReadFile(pipe, length)[1]
-        final_data = json.loads(data.decode("utf-8"))
-        return op, final_data
+        return op, json.loads(data.decode("utf-8"))
     except (struct.error, pywintypes.error) as e:
         logger.error(e)
         return None, None
@@ -111,6 +117,7 @@ class RPC:
         self.external = config["rpc_external"]
         self.activities = []
         self.not_exist = []
+        self.connections = []
         if user["bot"]:
             logger.warning("RPC server cannot be started for bot accounts")
             return
@@ -128,6 +135,22 @@ class RPC:
         else:
             logger.warning(f"RPC server cannot be started on this platform: {sys.platform}")
             return
+
+
+    def stop(self):
+        """Stop server and all threads"""
+        self.run = False
+        if self.server:
+            self.server.close()
+        for connection in self.connections:
+            if sys.platform == "win32":
+                win32file.CloseHandle(connection)
+            else:
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                connection.close()
 
 
     def generate_dispatch(self, user):
@@ -185,6 +208,7 @@ class RPC:
         rpc_data = None
 
         try:   # lets keep server running even if there is error in one thread
+            self.connections.append(connection)
             op, init_data = receive_data(connection)
             if op is None or init_data is None:
                 return
@@ -217,7 +241,9 @@ class RPC:
                         break
                     logger.debug(f"Received: {json.dumps(data, indent=2)}")
 
-                    if data["cmd"] == "SET_ACTIVITY" and "activity" in data["args"]:
+                    if data["cmd"] == "SET_ACTIVITY":
+                        if "activity" not in data["args"]:
+                            continue
                         # prevent sending presences too often
                         delay = GATEWAY_RATE_LIMIT_SAME if data["args"]["activity"] == prev_activity else GATEWAY_RATE_LIMIT
                         if time.time() - sent_time < delay:
@@ -233,7 +259,8 @@ class RPC:
 
                         # add everything thats missing
                         activity["application_id"] = app_id
-                        activity["name"] = rpc_data["name"]
+                        if not activity.get("name"):
+                            activity["name"] = rpc_data["name"]
                         assets = {}
                         for asset_client in activity["assets"]:
 
@@ -304,8 +331,6 @@ class RPC:
                             "nonce": data["nonce"],
                         }
                         send_data(connection, op, response)
-                    elif data["cmd"] == "SET_ACTIVITY":
-                        pass
                     else:
                         # all other commands are currently unimplemented
                         # returning them to client so it can keep running with rich presence only
@@ -338,6 +363,10 @@ class RPC:
             win32file.CloseHandle(connection)
         else:
             connection.close()
+        try:
+            self.connections.remove(connection)
+        except ValueError:
+            pass
         logger.info(f"RPC client disconnected: {rpc_data["name"] if rpc_data else "Unknown"}")
 
 
@@ -357,7 +386,7 @@ class RPC:
                     None,   # lpSecurityAttributes
                 )
                 win32pipe.ConnectNamedPipe(pipe, None)
-                threading.Thread(target=self.client_thread, daemon=True, args=(pipe,)).start()
+                threading.Thread(target=self.client_thread, daemon=True, args=(pipe, )).start()
             except pywintypes.error as e:
                 logger.error(e)
 
@@ -375,10 +404,13 @@ class RPC:
         except Exception as e:
             logger.error(e)
             return
+        self.server.listen()
         logger.info("RPC server started")
         while self.run:
-            self.server.listen(1)
-            client, address = self.server.accept()
+            try:
+                client, _ = self.server.accept()
+            except OSError:
+                break
             threading.Thread(target=self.client_thread, daemon=True, args=(client, )).start()
 
 
