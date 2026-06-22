@@ -89,22 +89,37 @@ jobs:
           brew install ccache
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
-      - name: Setup Python
+      - name: Install LLVM and Clang (Linux)
+        if: ${{ matrix.platform == 'linux' && matrix.clang == true }}
+        shell: bash
+        run: |
+          MAJOR_VERSION=$(echo "${{ matrix.clang-version }}" | cut -d. -f1)
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh $MAJOR_VERSION
+          sudo ln -sf /usr/bin/clang-$MAJOR_VERSION /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-$MAJOR_VERSION /usr/bin/clang++
+          sudo ln -sf /usr/bin/llvm-profdata-$MAJOR_VERSION /usr/bin/llvm-profdata
+
+      - name: Install LLVM and Clang (Windows/MacOS)
+        uses: KyleMayes/install-llvm-action@v2
+        if: ${{ matrix.clang && matrix.os != 'macos-15-intel' && matrix.platform != 'linux' }}
+        with:
+          version: ${{ matrix.clang-version }}
+
+      - name: Install Python (Windows/MacOS)
         if: matrix.platform != 'linux'
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Build Custom Python
+      - name: Build Custom Python (Linux)
         if: matrix.platform == 'linux'
         shell: bash
         run: |
           chmod +x ./tools/build_python.sh
           args=("${{ matrix.python-version }}")
-          if [ "${{ matrix.clang }}" = "true" ]; then
-            args+=("clang")
-            export LLVM_PROFDATA="${{ env.LLVM_PATH }}/bin/llvm-profdata"
-          fi
+          [[ "${{ matrix.clang }}" == "true" ]] && args+=("clang")
           ./tools/build_python.sh "${args[@]}"
           echo "UV_PYTHON=${{ github.workspace }}/.cpython/bin/python3" >> $GITHUB_ENV
 
@@ -204,7 +219,7 @@ jobs:
           subject-path: "dist/*"
 
       - name: Draft a release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: '${{ steps.extract_version.outputs.version }} [DRAFTED BY CI]'
           tag_name: '${{ steps.extract_version.outputs.version }}'
