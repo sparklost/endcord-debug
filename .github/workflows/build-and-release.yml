@@ -12,18 +12,18 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
         include:
-          # - os: ubuntu-latest
-          #   platform: linux
-          #   python-version: 3.14
-          #   nuitka: true
-          #   clang: true
-          #   clang-version: 21.1.8
-          - os: windows-latest
-            platform: windows
+          - os: ubuntu-latest
+            platform: linux
             python-version: 3.14
             nuitka: true
-            clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+            clang: true
             clang-version: 21.1.8
+          # - os: windows-latest
+          #   platform: windows
+          #   python-version: 3.14
+          #   nuitka: true
+          #   clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+          #   clang-version: 21.1.8
           # - os: macos-15
           #   platform: macos
           #   python-version: 3.14
@@ -75,7 +75,7 @@ jobs:
         run: |
           sudo apt update --fix-missing
           sudo apt install -y patchelf ccache lld build-essential libssl-dev zlib1g-dev \
-            libbz2-dev libreadline-dev libsqlite-dev wget curl libncursesw5-dev \
+            libbz2-dev libreadline-dev libsqlite3-dev wget curl libncursesw5-dev \
             xz-utils tk-dev libffi-dev liblzma-dev
 
       - name: Install Windows system dependencies
