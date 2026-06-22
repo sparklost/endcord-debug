@@ -24,18 +24,18 @@ jobs:
             nuitka: true
             clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
             clang-version: 21.1.8
-          - os: macos-15
-            platform: macos
-            python-version: 3.14
-            nuitka: false
-            clang: true
-            clang-version: 21.1.8
-          - os: macos-15-intel
-            platform: macos
-            python-version: 3.14
-            nuitka: false
-            clang: true
-            clang-version: 21.1.8
+          # - os: macos-15
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
+          # - os: macos-15-intel
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -70,25 +70,13 @@ jobs:
       #     if_no_artifact_found: warn
       #   continue-on-error: true
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
-
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        if: ${{ matrix.clang && matrix.os != 'macos-15-intel' }}   # issues with uv
-        with:
-          version: ${{ matrix.clang-version }}
-
       - name: Install Linux system dependencies
         if: matrix.platform == 'linux'
-        run: sudo apt update --fix-missing && sudo apt install -y patchelf ccache lld
+        run: |
+          sudo apt update --fix-missing
+          sudo apt install -y patchelf ccache lld build-essential libssl-dev zlib1g-dev \
+            libbz2-dev libreadline-dev libsqlite-dev wget curl libncursesw5-dev \
+            xz-utils tk-dev libffi-dev liblzma-dev
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows'
@@ -101,6 +89,27 @@ jobs:
           brew install ccache
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
+      - name: Setup Python
+        if: matrix.platform != 'linux'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build Custom Python
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          chmod +x ./tools/build_python.sh
+          args=("${{ matrix.python-version }}")
+          [[ "${{ matrix.clang }}" == "true" ]] && args+=("clang")
+          ./tools/build_python.sh "${args[@]}"
+          echo "UV_PYTHON=${{ github.workspace }}/.cpython/bin/python3" >> $GITHUB_ENV
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
       - name: Run build script
         shell: bash
         run: |
@@ -108,11 +117,7 @@ jobs:
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            if [[ "${{ matrix.platform }}" == "linux" ]]; then
-                python build.py "${args[@]}"
-            else
-                uv run build.py "${args[@]}"
-            fi
+            uv run build.py "${args[@]}"
 
       - name: Run build lite script
         shell: bash
@@ -121,11 +126,7 @@ jobs:
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            if [[ "${{ matrix.platform }}" == "linux" ]]; then
-                python build.py --lite "${args[@]}"
-            else
-                uv run build.py --lite "${args[@]}"
-            fi
+            uv run build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
