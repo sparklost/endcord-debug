@@ -594,7 +594,6 @@ def build_numpy_lite(clang):
             python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", "numpy",
             "--config-settings=setup-args=-Dblas=None",
             "--config-settings=setup-args=-Dlapack=None",
-            "-vv",
         ], check=True)
     except subprocess.CalledProcessError as e:   # fallback
         print(e, flush=True)
@@ -617,7 +616,8 @@ def build_package(package, clang, safe=False):
             python_interpreter = ".venv/bin/python"
         subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", package], check=True)
         subprocess.run([python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", package], check=True)
-    except subprocess.CalledProcessError:   # fallback
+    except subprocess.CalledProcessError as e:   # fallback
+        print(e, flush=True)
         print(f"Failed building {package}, faling back to default prebuilt version", flush=True)
         subprocess.run(["uv", "pip", "install", package], check=True)
     subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
