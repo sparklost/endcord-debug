@@ -19,7 +19,7 @@ jobs:
             platform: linux
             python-version: 3.14.6
             nuitka: true
-            clang: true
+            clang: false
             clang-version: 21.1.8
           # - os: windows-latest
           #   platform: windows
@@ -147,14 +147,14 @@ jobs:
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
             uv run build.py "${args[@]}"
 
-      - name: Run build lite script
-        # shell: bash
-        # run: |
-        #     args=()
-        #     [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
-        #     [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
-        #     [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-        #     uv run build.py --lite "${args[@]}"
+      # - name: Run build lite script
+      #   shell: bash
+      #   run: |
+      #       args=()
+      #       [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+      #       [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
+      #       [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
+      #       uv run build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
