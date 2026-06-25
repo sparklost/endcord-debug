@@ -20,7 +20,7 @@ jobs:
             python-version: 3.14.6
             nuitka: true
             clang: true
-            clang-version: 21.1.8
+            clang-version: 22.1.3
           # - os: windows-latest
           #   platform: windows
           #   python-version: 3.14
@@ -106,9 +106,17 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh $MAJOR_VERSION
+          sudo mkdir -p /usr/lib/bfd-plugins
           sudo ln -sf /usr/bin/clang-$MAJOR_VERSION /usr/bin/clang
           sudo ln -sf /usr/bin/clang++-$MAJOR_VERSION /usr/bin/clang++
           sudo ln -sf /usr/bin/llvm-profdata-$MAJOR_VERSION /usr/bin/llvm-profdata
+          sudo ln -sf /usr/bin/llvm-ar-$MAJOR_VERSION /usr/bin/llvm-ar
+          sudo ln -sf /usr/bin/llvm-ranlib-$MAJOR_VERSION /usr/bin/llvm-ranlib
+          sudo ln -sf /usr/bin/llvm-nm-$MAJOR_VERSION /usr/bin/llvm-nm
+          sudo ln -sf /usr/lib/llvm-$MAJOR_VERSION/lib/LLVMgold.so /usr/lib/bfd-plugins/LLVMgold.so
+          echo "AR=llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
+          echo "NM=llvm-nm" >> $GITHUB_ENV
 
       - name: Install LLVM and Clang (Windows/MacOS)
         uses: KyleMayes/install-llvm-action@v2
