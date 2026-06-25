@@ -117,6 +117,10 @@ jobs:
           echo "AR=llvm-ar" >> $GITHUB_ENV
           echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
           echo "NM=llvm-nm" >> $GITHUB_ENV
+          VERSION_FILE="/usr/lib/llvm-$MAJOR_VERSION/include/llvm/Config/llvm-config.h"
+          if [ -f "$VERSION_FILE" ]; then   # cleanup version string
+            sudo sed -i -E 's/(\+[0-9a-f~exp]+[-[0-9a-f~exp\.]*)//g' "$VERSION_FILE"
+          fi
 
       - name: Install LLVM and Clang (Windows/MacOS)
         uses: KyleMayes/install-llvm-action@v2

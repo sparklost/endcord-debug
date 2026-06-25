@@ -45,7 +45,7 @@ LDFLAGS="${LDFLAGS} \
     -Wl,--exclude-libs,ALL \
     -Wl,-rpath,$PREFIX/lib \
     -LModules/_hacl"
-[[ "$2" == "clang" ]] && CFLAGS="${CFLAGS} -flto=thin -fuse-ld=lld"
+[[ "$2" == "clang" ]] && CFLAGS="${CFLAGS} -flto=thin"
 [[ "$2" == "clang" ]] && LDFLAGS="${LDFLAGS} -flto=thin -fuse-ld=lld"
 export CFLAGS LDFLAGS
 
