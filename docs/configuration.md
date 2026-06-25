@@ -34,7 +34,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `remove_previous_notification = True`  
     Remove previous desktop notification thats coming from same DM/Channel.  
 - `ack_throttling = 5`  
-    Delay in seconds between each ack send. Minimum is 3s. The larger it is, the longer will `[New unreads]` stay in status line.
+    Delay in seconds between each ack send. Minimum is 3s. The larger it is, the longer will `[N+ unreads]` stay in status line.
 - `member_list = True`  
     Whether to download member activities. Disable for lower CPU, RAM and network usage. If disabled, member list will be empty and there will be no presences in profile view screen.
 - `member_list_auto_open = False`  
@@ -339,6 +339,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     A single character prepended to DM name in tree drop down, to indicate status: online/away/dnd. Also used in member list.
 - `border_corners = "╭╰╮╯"`  
     Characters used to draw corners in bordered mode.
+- `activity_icons = "🎮︎📺︎♪📺︎🎮︎"`  
+    Characters used to indicate rich presence activiry in member list.  
+    Order of characters: Playing, Streaming, Listening, Watching, Competing.
 - `smart_chat_lines = True`  
     Wether to extend lines in chat, left of reactions, in grouped messages only. Will use `tree_drop_down_intersect` and `tree_drop_down_vline`.
 - `username_role_colors = True`  
@@ -357,6 +360,8 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Characters used to draw in terminal. From darkest to brightest. Same character can be repeated. Number of characters is not fixed.
 - `media_saturation = 1.2`  
     Saturation correction applied to image in order to make colors more visible. Adjust if changing `ascii_palette` or media_color_bg.
+- `media_bar_ch = "━"`  
+    A single character used to draw progress bar in media player when playing video or audio.
 
 ### Colors and attributes
 Colors are part of the theme, configured as 2 or 3 values in a list: `[foreground, background, attribute]`  
@@ -447,8 +452,6 @@ Every next list has additional `start` and `end`- indexes on a line where color 
     Color format for threads in forum. Corresponding to `format_forum`.
 - `media_color_bg = -1`  
     Single color value for background color when showing media.
-- `media_bar_ch = "━"`  
-    A single character used to draw progress bar in media player when playing video or audio.
 
 ### format_message
 - `%content` - message text; to make text appear on next line (`format_newline`), add `\n` just before `%content`, this will ensure `%edited` stays at the end of content
@@ -496,7 +499,7 @@ Note: everything after `%content` may be pushed to newline.
 - `%custom_status` - custom status string
 - `%custom_status_emoji` - custom status emoji or emoji name
 - `%pronouns` - my pronouns
-- `%unreads` - `[New unreads]` if in this channel has unread messages
+- `%unreads` - `[N+ unreads]` if in this channel has unread messages
 - `%typing` - typing string
 - `%rich` - my rich presence, replaced with `format_rich`
 - `%server` - currently viewed server

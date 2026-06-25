@@ -53,6 +53,30 @@ def convert_tenor_gif_type(url, content_type):
     return url.replace("AAAPo/", "AAAAd/")[:-3] + "gif"
 
 
+def extract_file_name(headers, url_path):
+    """Extract file name from Content-Disposition header, fallback to extracting from url + extension from Content-Type"""
+    content_disposition = headers.get("Content-Disposition")
+    if content_disposition:
+        parts = content_disposition.split(";")
+        for part in parts:
+            if part.strip().startswith("filename*="):
+                value = part.split("=", 1)[1]
+                if "''" in value:
+                    _, encoded_filename = value.split("''", 1)
+                    return urllib.parse.unquote(encoded_filename)
+        for part in parts:
+            if part.startswith("filename="):
+                return part.strip().split("=", 1)[1].strip('"\'')
+
+    filename = os.path.basename(url_path) or "downloaded_file"
+    extension = headers.get("Content-Type", None).split("/")[-1].replace("jpeg", "jpg")
+    if extension:
+        if os.path.splitext(filename)[-1] != "":
+            return f"{"".join(os.path.splitext(filename)[:-1])}.{extension}"
+        return f"{filename}.{extension}"
+    return "file"
+
+
 class Downloader:
     """Streaming downloader using http.client"""
 
@@ -80,8 +104,6 @@ class Downloader:
         self.downloading = True
         complete = False
         connection = None
-        destination = None
-        filename = None
         current_url = url
         redirects = 0
         if not headers:
@@ -90,7 +112,6 @@ class Downloader:
         try:
             while redirects < 5:
                 url_object = urllib.parse.urlsplit(current_url)
-                filename = os.path.basename(url_object.path) or "downloaded_file"
                 host = url_object.hostname
                 port = url_object.port or (443 if url_object.scheme.lower() == "https" else 80)
                 path_with_query = url_object.path + (f"?{url_object.query}" if url_object.query else "")
@@ -112,11 +133,9 @@ class Downloader:
                 else:
                     break
 
-            extension = response.headers.get("Content-Type", None).split("/")[-1].replace("jpeg", "jpg")
+            filename = extract_file_name(response.headers, url_object.path)
             unique_filename = f"{file_id}_{filename}" if file_id else filename
             destination = os.path.join(self.save_dir, unique_filename)
-            if os.path.splitext(destination)[-1] == "" and extension:
-                destination = f"{destination}.{extension}"
 
             with open(destination, "wb") as out:
                 while self.downloading:
@@ -136,7 +155,7 @@ class Downloader:
                 self.downloading = True
         if complete:
             return destination, filename
-        logger.error("Error downloading file")
+        logger.error(f"Error downloading file. Requested url: '{url}'")
         return None, None
 
 

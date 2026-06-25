@@ -1175,10 +1175,10 @@ class Gateway():
 
                 elif optext == "MESSAGE_ACK":
                     # received when other client ACKs messages
-
                     self.msg_ack_buffer.append({
                         "message_id": data["message_id"],
                         "channel_id": data["channel_id"],
+                        "version": data["version"],
                     })
 
                 elif optext == "TYPING_START":

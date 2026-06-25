@@ -13,7 +13,7 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest] #, windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest]  #, windows-latest, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -104,6 +104,11 @@ jobs:
           sudo ln -sf /usr/bin/clang++-$MAJOR_VERSION /usr/bin/clang++
           sudo ln -sf /usr/bin/llvm-profdata-$MAJOR_VERSION /usr/bin/llvm-profdata
 
+      - name: Purge system BLAS/LAPACK to enforce lite build
+        run: |
+          sudo apt-get purge -y libopenblas-dev libopenblas0 libblas-dev liblapack-dev
+          sudo apt-get autoremove -y
+
       - name: Install LLVM and Clang (Windows/MacOS)
         uses: KyleMayes/install-llvm-action@v2
         if: ${{ matrix.clang && matrix.os != 'macos-15-intel' && matrix.platform != 'linux' }}
@@ -143,13 +148,13 @@ jobs:
             uv run build.py "${args[@]}"
 
       - name: Run build lite script
-        shell: bash
-        run: |
-            args=()
-            [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
-            [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
-            [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            uv run build.py --lite "${args[@]}"
+        # shell: bash
+        # run: |
+        #     args=()
+        #     [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+        #     [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
+        #     [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
+        #     uv run build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
@@ -166,7 +171,7 @@ jobs:
           cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             tar -czf "endcord-$version-${{ matrix.platform }}.tar.gz" endcord $extra
-            tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
+            # tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
           elif [[ "${{ matrix.platform }}" == "windows" ]]; then
             7z a "endcord-$version-${{ matrix.platform }}.zip" endcord.exe $extra
             7z a "endcord-lite-$version-${{ matrix.platform }}.zip" endcord-lite.exe $extra

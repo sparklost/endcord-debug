@@ -152,6 +152,7 @@ theme = {
     "tree_drop_down_voice": "○",
     "tree_dm_status": "●",
     "border_corners": "╭╰╮╯",
+    "activity_icons": "🎮︎📺︎♪📺︎🎮︎",
     "smart_chat_lines": True,
     "username_role_colors": True,
     "dynamic_name_len": True,

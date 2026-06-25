@@ -1,63 +1,25 @@
-commit
-build on gh
-comit and release extensions
-release 1.5.0
-send discord announccement
-close issues
-comment on nix endcord package pr
-
-Add subtitle line
-Add temporary tabs
-Add colors to status line
-Add colors to extra line
-Add click, double click and middle click on tabs
-Add colors for tree channels and servers
-Add mini member list
-Add auto-idle
-Add middle click on tree to open in new tab
-Add double click on thread in forum
-Add status and spacing to member list
-Add play_in_native command
-Add option to build with custom python
-Add %nick, %status_dot and %warn_state to status line
-Add about command
-Add colors to log viewer
-Fix terminal issues on macos
-Fix inline media removing mention background
-Fix inline media messing tree on startup and channel switch
-Fix media player crash with grayscale images
-Fix emoji messing member list
-Fix crash with spacebar/harmony
-Detect when terminal is focused
-Change option notification_in_active to notification_when_focused
-Remember tree open/closed in state
-Auto-select uploaded attachment
-Merge block and unblock commands into toggle_block
-Dont send notification from self messages
-Remove username from status line
-Remove %afk - merged into %warn_state
-Optimize media player (~10 times faster)
-Optimize search (~2 times faster)
-Remove qrcode dependency - now using custom implementation
-Remove urllib3 dependency - reducing RAM usage
-Remove protobuf dependency - reducing RAM usage
-Remove python_socks dependency - already using pysocks
-Make build script prefer clang
-Make build script also build pycryptodome and pynacl with custom flags
+Fix mouse controls on windows
+Disable inline media on windows
 Update screenshots
 Bump dependencies
-Update client properties
-Switch to source-available license
+
+Fix custom python build with clang on workflow
+Fix failing to build numpy without openblas
+Try building on arch image ???
+Fix flickering when scroll tree up/down
+
+release 1.5.0
+send discord announcement
+comment on nix endcord package pr
+
+Add custom environment management through build.py - remove uv dependency
+Add --norust option to build script
+Add --minimal option to build script (removes numpy orjson soundcard)
 
 Fix sent audio is delayed and low quality
 Fix receiver audio mixer
 Add transmmitter audio mixer
-
-Add custom python package management through build.py
-Add --norust option to build script
-Add --minimal option to build script (rempves numpy orjson soundcard)
-Remove ruff and uv
-
+Add code block language syntax
 Add inbox
 Fix RTP metrics
 Fix some emoji are drawn as text

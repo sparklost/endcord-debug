@@ -17,8 +17,8 @@ Endcord is a third-party feature rich Discord client, running entirely in termin
 It is built with Python (this [doesnt mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
 Official endcord will always stay **purely human project**.  
-Endcord is source-available licensed, and thus not open source, more [here](#source-available-license).  
-Any third party endcord forks may add features that can lead to account ban, contain outdated or even malicious code, cause instability, especially if they include LLM generated/modified code, so it is strongly recommended to avoid them. If you want to create fork that modifies the code, YOU ARE NOT ALLOWED TO.  
+Endcord is source-available licensed, and thus not open source, more details [here](#source-available-license). You are not allowed to create create public fork that modifies the code.  
+Any third party endcord forks may add features that can lead to account ban, contain outdated or even malicious code, cause instability, especially if they include LLM generated/modified code, so it is strongly recommended to avoid them.
 
 
 ## Features
@@ -553,12 +553,12 @@ If thats the case, custom build script must be made, guidelines and commands for
 After submitting a package to distributions package repository, open an issue here, so I can review it and add it to readme after it gets accepted.
 
 ### Source-available license
-Endcord is licensed under source-available license. This means it is **NOT OPEN SOURCE**. How this affects you:
+Endcord is licensed under source-available license. This means it is **NOT OPEN SOURCE**. How this affects you:  
 If you are a user, this **doesn't affect** the slightest how you are using endcord.  
 If you are a developer, you are **NOT ALLOWED TO PUBLICLY MODIFY THE CODE**.  
-If you are a package maintainer, license specifically allows it to distribute **binaries built from verbatim unmodified source code**.  
-Slightly longer and more detailed explanation is in the [license file](LICENSE).
-Why? Because this is one-person project, and this person is greedily taking all the fun of programming for themselves. And as bonus they ensures that this project stays 100% human made, forever.
+If you are a package maintainer, license specifically allows you to distribute **binaries built from unmodified source code**.  
+Slightly longer and more detailed explanation is available in the [license file](LICENSE).  
+Why? Because this is one-person project, and this person is greedily taking all the fun of programming for themselves. And as bonus they will ensure that this project stays 100% human made, forever.
 
 
 ## Planned features

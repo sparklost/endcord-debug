@@ -29,7 +29,7 @@ else:
     BACKSPACE = curses.KEY_BACKSPACE
 BUTTON4_PRESSED = getattr(curses, "BUTTON4_PRESSED", 0)
 BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0)
-ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
+ALT_SPACE = " "   # U+00A0 - non-breaking space
 match_word = re.compile(r"\w")
 match_split = re.compile(r"[^\w']")
 match_spaces = re.compile(r" {3,}")
@@ -1508,13 +1508,13 @@ class TUI():
                 # exception will happen when window is resized to smaller w dimensions
                 self.resize()
         if self.have_scrollbar:
-            self.draw_scrollbar()
+            self.draw_scrollbar_chat()
         if self.inline_media and refresh and inline:
             self.inline_media.draw_images()
         self.execute_extensions_methods("on_chat_draw", cache=True)
 
 
-    def draw_scrollbar(self):
+    def draw_scrollbar_chat(self):
         """Draw scrollbar at the right side of the chat"""
         if not self.have_scrollbar:
             return
@@ -1528,25 +1528,86 @@ class TUI():
             if total_lines <= h:
                 thumb_size = 0
                 thumb_pos = 0
+                thumb_pos_half = 0
             else:
                 thumb_size = max(2, h * h // total_lines)
                 max_pos = h - thumb_size
                 max_index = total_lines - h
-                thumb_pos = max(0, min(max_pos, max_pos - int(self.chat_index * max_pos / max_index)))
+                if self.scrollbar_char == "┃":
+                    max_pos_half = max_pos * 2   # double resolution
+                    thumb_pos_half = max(0, min(max_pos_half, max_pos_half - int(self.chat_index * max_pos_half / max_index)))
+                else:
+                    thumb_pos = max(0, min(max_pos, max_pos - int(self.chat_index * max_pos / max_index)))
 
             try:
                 # draw thumb and border
                 self.screen.vline(y, abs_x, curses.ACS_VLINE, h, curses.color_pair(self.default_color))
                 if thumb_size > 0:
-                    for rel_y in range(thumb_size):
-                        self.screen.addch(y + rel_y + thumb_pos, abs_x, self.scrollbar_char, curses.color_pair(self.default_color))
+                    if self.scrollbar_char == "┃":   # can be drawn at double resolution with this character
+                        start_row = thumb_pos_half // 2
+                        is_half_step = (thumb_pos_half % 2 != 0)
+                        loop_range = thumb_size + 1 if is_half_step else thumb_size
+                        for rel_y in range(loop_range):
+                            char = ("╽" if rel_y == 0 else "╿" if rel_y == loop_range - 1 else "┃") if is_half_step else "┃"
+                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(self.default_color))
+                    else:
+                        for rel_y in range(thumb_size):
+                            self.screen.addch(y + rel_y + thumb_pos, abs_x, self.scrollbar_char, curses.color_pair(self.default_color))
+
                 # draw corners
                 if self.win_subtitle_line:
                     self.screen.addstr(y - 1, abs_x, "┤", curses.color_pair(self.default_color))
                 else:
                     self.screen.addstr(y - 1, abs_x, self.corner_ur, curses.color_pair(self.default_color))
+
                 # it errors when drawing in bottom-right cell, but still draws it
                 self.screen.addstr(y + h, abs_x, self.corner_dr, curses.color_pair(self.default_color))
+
+            except curses.error:
+                pass
+            self.screen.noutrefresh()
+            self.need_update.set()
+
+
+    def draw_scrollbar_extra(self):
+        """Draw scrollbar at the right side of extra window"""
+        if not self.have_scrollbar or not self.win_extra_window:
+            return
+        with self.lock:
+            h, w = self.win_extra_window.getmaxyx()
+            y, x = self.win_extra_window.getbegyx()
+            h -= 1
+            y += 1
+            abs_x = x + w
+            total_lines = len(self.extra_window_body)
+            if total_lines <= h:
+                thumb_size = 0
+                thumb_pos = 0
+                thumb_pos_half = 0
+            else:
+                thumb_size = max(1, h * h // total_lines)
+                max_pos = h - thumb_size
+                max_index = total_lines - h
+                if self.scrollbar_char == "┃":
+                    max_pos_half = max_pos * 2
+                    thumb_pos_half = max(0, min(max_pos_half, int(self.extra_index * max_pos_half / max_index)))
+                else:
+                    thumb_pos = max(0, min(max_pos, int(self.extra_index * max_pos / max_index)))
+            try:
+                self.screen.vline(y, abs_x, curses.ACS_VLINE, h, curses.color_pair(self.default_color))
+                if thumb_size > 0:
+                    if self.scrollbar_char == "┃":
+                        start_row = thumb_pos_half // 2
+                        is_half_step = (thumb_pos_half % 2 != 0)
+                        loop_range = thumb_size + 1 if is_half_step else thumb_size
+                        for rel_y in range(loop_range):
+                            char = ("╽" if rel_y == 0 else "╿" if rel_y == loop_range - 1 else "┃") if is_half_step else "┃"
+                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(self.default_color))
+                    else:
+                        for rel_y in range(thumb_size):
+                            self.screen.addch(y + rel_y + thumb_pos, abs_x, self.scrollbar_char, curses.color_pair(self.default_color))
+                self.screen.addstr(y - 1, abs_x, self.corner_ur, curses.color_pair(self.default_color))
+                self.screen.addstr(y + h, abs_x, "┤", curses.color_pair(self.default_color))
             except curses.error:
                 pass
             self.screen.noutrefresh()
@@ -1809,7 +1870,7 @@ class TUI():
                 self.draw_member_list(self.member_list, self.member_list_format, force=True)
                 self.draw_chat(inline=False)
             if self.have_scrollbar:
-                self.draw_scrollbar()
+                self.draw_scrollbar_chat()
             if self.inline_media:   # gotta be outside lock
                 self.inline_media.draw_images()
 
@@ -1881,6 +1942,7 @@ class TUI():
                 while y < h:
                     self.win_extra_window.insstr(y, 0, "\n", curses.color_pair(1))
                     y += 1
+                self.draw_scrollbar_extra()
                 self.draw_chat(refresh=False)
                 self.win_extra_window.noutrefresh()
                 self.need_update.set()
@@ -1918,7 +1980,7 @@ class TUI():
                 self.draw_member_list(self.member_list, self.member_list_format, force=True)
                 self.draw_chat(inline=False)
             if self.have_scrollbar:
-                self.draw_scrollbar()
+                self.draw_scrollbar_chat()
             if self.inline_media:   # gotta be outside lock
                 self.inline_media.draw_images()
             self.execute_extensions_methods("on_extra_window_remove")
