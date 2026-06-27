@@ -999,6 +999,9 @@ if __name__ == "__main__":
             build_with_pyinstaller(args.onedir, args.nosoundcard, print_cmd=True)
         sys.exit(0)
 
+    if os.path.exists("build"):   # ensure clean build env
+        shutil.rmtree("build")
+
     if args.custom_python:
         ensure_custom_python(args.safe, clang, compile_deps)
 

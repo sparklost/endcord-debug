@@ -68,7 +68,8 @@ if [[ "$3" = "curses" ]]; then
         --with-versioned-syms \
         --with-xterm-kbs=del \
         --without-ada \
-        --without-debug
+        --without-debug \
+        --with-terminfo-dirs="/etc/terminfo:/lib/terminfo:/usr/share/terminfo"
     make -j"$(nproc)"
     make install
     cd ..
@@ -91,7 +92,7 @@ export PREFIX=$(realpath -m "$PREFIX")
 mkdir -p "$PREFIX"
 if [[ "$3" = "curses" ]]; then
     CFLAGS="${CFLAGS} -I$PREFIX/include/ncursesw -I$PREFIX/include"
-    LDFLAG="${LDFLAGS} -L$PREFIX/lib"
+    LDFLAGS="${LDFLAGS} -L$PREFIX/lib"
     export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
 fi
 CFLAGS="${CFLAGS} \
