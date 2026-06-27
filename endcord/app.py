@@ -156,7 +156,7 @@ class Endcord:
         self.notifications_pfp = config["notifications_pfp"]
         self.silence_threshold = config["call_silence_threshold"]
         self.font_ratio = config["media_font_aspect_ratio"]
-        self.inline_media = config["inline_media"] and support_media
+        self.inline_media = config["inline_media"] and support_media and sys.platform != "win32"
         self.placeholder_emoji = False   # for extensions
         self.placeholder_images = self.inline_media   # keeping this separated so extension can toggle it
 
@@ -1056,7 +1056,7 @@ class Endcord:
             self.update_chat(keep_selected=False, select_message_index=select_message_index, select_unread=True)
         else:
             self.tui.update_chat(self.chat, self.chat_format)
-        self.this_unread = select_message_index is not None
+        self.this_unread = 2 if select_message_index is not None else False   # 2 signals main loop to not remove unreads line
         self.set_channel_seen(   # right after update_chat so new_unreads is determined
             channel_id,
             self.get_chat_last_message_id(),
@@ -6497,7 +6497,7 @@ class Endcord:
             last_acked_unreads_line = channel.get("last_acked_unreads_line")
             last_message_id = channel["last_message_id"]
             if last_acked_unreads_line and (not last_message_id or int(last_acked_unreads_line) < int(last_message_id)):
-                last_seen_msg = channel["last_acked_unreads_line"]
+                last_seen_msg = last_acked_unreads_line
 
         self.chat, self.chat_format, self.chat_map = self.formatter.generate_chat(
             self.messages,
@@ -7192,6 +7192,29 @@ class Endcord:
         self.update_tree()
 
 
+    def remove_unread_line(self, recent=True, noui=False):
+        """Remove unread line from current chat and redraw message containing this line, optionally only if this message is outside chat buffer"""
+        channel_id = self.active_channel["channel_id"]
+        last_acked_unreads_line = self.read_state[channel_id].get("last_acked_unreads_line")
+        last_message = self.get_chat_last_message_id()
+        if not last_acked_unreads_line or last_acked_unreads_line == last_message:
+            return
+        if not recent and last_acked_unreads_line and int(last_acked_unreads_line) >= int(last_message):
+            return
+        self.read_state[channel_id]["last_acked_unreads_line"] = None
+        target_message = None
+        for message in self.messages:
+            if int(message["id"]) <= int(last_acked_unreads_line):
+                break
+            target_message = message["id"]
+        else:
+            target_message = self.messages[-1]["id"]
+        if noui:
+            self.update_chat_noui(change_id=target_message, change_type=3)
+        else:
+            self.update_chat(scroll=False, change_id=target_message, change_type=3)
+
+
     def send_ack(self, channel_id=None, message_id=None, manual=False):
         """Send ack, if throttled - add to queue, if queue is larger than 1, then send bulk ack"""
         # add to queue
@@ -7421,6 +7444,8 @@ class Endcord:
             change_amount = 1
             if my_message:
                 nonce = data.pop("nonce", None)
+                if self.read_state.get(channel_id):
+                    self.remove_unread_line(noui=True)
             if self.emoji_as_text:
                 data = formatter.demojize_message(data)
             self.messages.insert(0, data)
@@ -7456,9 +7481,6 @@ class Endcord:
                     if not self.slowmode_thread or not self.slowmode_thread.is_alive():
                         self.slowmode_thread = threading.Thread(target=self.wait_slowmode, daemon=True, args=())
                         self.slowmode_thread.start()
-                # remove unreads line
-                if self.read_state.get(channel_id):
-                    self.read_state[channel_id]["last_acked_unreads_line"] = None
             self.update_chat(change_amount=change_amount, scroll=False, change_id=data["id"], change_type=1)
             if update_status_line:
                 self.update_status_line()
@@ -8659,6 +8681,8 @@ class Endcord:
                     self.set_channel_seen(channel_id, new_message_ack["message_id"], ack=False, force=this_channel)
                     if this_channel:
                         self.update_status_line()
+                    else:
+                        self.update_status_line(status=False, title=False, tree=False)
                 else:
                     break
 
@@ -8767,10 +8791,12 @@ class Endcord:
             # remove unseen after scrolled to bottom on unseen channel
             if self.this_unread:
                 if text_index == 0 and self.get_chat_last_message_id() == self.last_message_id:
-                    self.this_unread = False
                     self.unread_shift = 0
                     self.unread_count = 0
                     self.set_channel_seen(self.active_channel["channel_id"], self.get_chat_last_message_id())
+                    if self.this_unread != 2:
+                        self.remove_unread_line(recent=False)
+                    self.this_unread = False
                     self.update_status_line()
 
             # send pending ack
@@ -8880,7 +8906,7 @@ class Endcord:
 
             # check for new member presences
             if self.get_members:
-                new_members, changed_guilds = self.gateway.get_activities()
+                new_members, changed_guilds, member_count, online_count = self.gateway.get_activities()
                 if changed_guilds:
                     self.members = new_members
                     last_index = 99
@@ -8900,6 +8926,8 @@ class Endcord:
                     if (self.active_channel["guild_id"] in changed_guilds and self.get_members and self.state["member_list"] and
                         self.screen.getmaxyx()[1] - self.config["tree_width"] - self.member_list_width - 2 >= 32):
                         self.update_member_list(last_index)
+                    member_list_title = f"Members: {formatter.format_kilo(online_count)}/{formatter.format_kilo(member_count)}"[:self.member_list_width - self.tui.bordered]
+                    self.tui.draw_member_list_title(member_list_title, color=self.colors[9])
 
             # check for subscribed member presences
             new_members, changed_guilds = self.gateway.get_subscribed_activities()

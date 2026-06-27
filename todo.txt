@@ -1,21 +1,17 @@
-Fix mouse controls on windows
-Disable inline media on windows
-Update screenshots
-Bump dependencies
+WIP:
+Switch to raw curses input mode
+Switch to latest curses version
+Change bindings to standard values
+Patch python 3.14 using python 3.16 curses module to enable 255+ colors
+Update tui.py to support 255+ colors
 
-Fix custom python build with clang on workflow
-Fix failing to build numpy without openblas
-Try building on arch image ???
-Fix flickering when scroll tree up/down
-
-release 1.5.0
-send discord announcement
-comment on nix endcord package pr
-
+RUST-FREE:
 Add custom environment management through build.py - remove uv dependency
-Add --norust option to build script
-Add --minimal option to build script (removes numpy orjson soundcard)
+Add --minimal option to build script (removes numpy orjson soundcard soundfile)
+Write custom optimized json parser in cython - remove orjson dependency
+Or Add --norust option to build script
 
+MISC:
 Fix sent audio is delayed and low quality
 Fix receiver audio mixer
 Add transmmitter audio mixer
@@ -31,7 +27,7 @@ Rewrite experimental mode in not-pygame
 Video, stage and stream calls
 Localization
 
-Extensions:
+EXTENSIONS:
 endcord-termux-rich
 endcord-undelete
 endcord-message-replace

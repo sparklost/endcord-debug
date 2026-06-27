@@ -29,7 +29,7 @@ else:
     BACKSPACE = curses.KEY_BACKSPACE
 BUTTON4_PRESSED = getattr(curses, "BUTTON4_PRESSED", 0)
 BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0)
-ALT_SPACE = " "   # U+00A0 - non-breaking space
+ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
 match_word = re.compile(r"\w")
 match_split = re.compile(r"[^\w']")
 match_spaces = re.compile(r" {3,}")
@@ -382,6 +382,7 @@ class TUI():
         self.extra_window_format = []
         self.member_list = []
         self.member_list_format = []
+        self.member_list_title_text = ""
         self.red_list = []
         self.extra_selected = -1
         self.extra_index = 0
@@ -1364,6 +1365,8 @@ class TUI():
 
     def draw_subtitle_line(self):
         """Draw subtitle line, of no text then remove it"""
+        if self.disable_drawing:
+            return
         if not self.subtitle_txt.strip(" ").strip("─"):
             if self.win_subtitle_line:
                 del self.win_subtitle_line
@@ -1429,6 +1432,24 @@ class TUI():
                 self.win_title_tree.insstr(0, 0, title_line + "\n", curses.color_pair(12) | self.attrib_map[12])
             self.win_title_tree.noutrefresh()
             self.need_update.set()
+
+
+    def draw_member_list_title(self, title_line, color=None, force=False):
+        """Draw title above member list"""
+        if self.disable_drawing:
+            return
+        if not self.win_member_list or self.member_list_width == 2 or not title_line or (not force and title_line == self.member_list_title_text):
+            return
+        self.member_list_title_text = title_line
+        y, x = self.win_member_list.getbegyx()
+        y -= 1
+        x += 1
+        parts = title_line.split(" ")
+        self.screen.addstr(y, x, parts[0], curses.color_pair(color if color else self.default_color))
+        if len(parts) > 1:
+            self.screen.addstr(y, x + len(parts[0]), " " + parts[1], curses.color_pair(self.default_color))
+        self.screen.noutrefresh()
+        self.need_update.set()
 
 
     def draw_input_line(self):
@@ -1565,6 +1586,7 @@ class TUI():
 
             except curses.error:
                 pass
+
             self.screen.noutrefresh()
             self.need_update.set()
 
@@ -2023,6 +2045,7 @@ class TUI():
                     self.win_member_list = self.screen.derwin(*member_list_hwyx)
                     if self.bordered:
                         self.draw_border(member_list_hwyx)
+                        self.draw_member_list_title(self.member_list_title_text, force=True)
                         if self.have_title:
                             title_line_hwyx = (1, w - (self.tree_width + 2) - bool(self.win_member_list) * (self.member_list_width + 1), 0, self.tree_width + 2)
                             self.win_title_line = self.screen.derwin(*title_line_hwyx)
@@ -3205,7 +3228,8 @@ class TUI():
             _, x, y, _, bstate = curses.getmouse()
         except curses.error:
             return None
-        while self.run:   # drain internal curses buffer for mouse events
+        while self.run and sys.platform != "win32":   # drain internal curses buffer for mouse events
+            # windows-curses doesnt error here, so this cant be used
             try:
                 _, x, y, _, bstate = curses.getmouse()
             except curses.error:

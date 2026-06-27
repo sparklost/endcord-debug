@@ -27,7 +27,7 @@ TREE_EMOJI_REPLACE = "▮"
 TIME_DIVS = [1, 60, 3600, 86400, 2678400, 31190400]
 TIME_UNITS = ["second", "minute", "hour", "day", "month", "year"]
 SPLIT_AFTER_TIME = 10 * 60
-ALT_SPACE = " "   # U+00A0 - non-breaking space
+ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
 MIN_TAB_LEN = 8
 
 ACTIVITY_VERBS = ("Playing", "Streaming", "Listening to", "Watching", "Competing in")
@@ -231,6 +231,17 @@ def find_timestamp(full_string, timestamp):
         return None
     end_index = start_index + len(timestamp) - 1
     return start_index, end_index
+
+
+def format_kilo(n, dec=1):
+    """Convert integer to string with K sufix"""
+    if n < 1000:
+        return str(n)
+    value = n / 1000
+    if n > 10000:
+        dec = 0
+    s = f"{value:.{dec}f}".rstrip("0").rstrip(".")
+    return f"{s}K"
 
 
 def move_by_indexes(indexes, *ranges_lists):
@@ -788,7 +799,7 @@ def replace_code_blocks(text, *ranges_lists):
 
 def replace_spoilers(line):
     """Replace spoiler: ||content|| with ACS_BOARD characters"""
-    for _ in range(10):   # lets have some limits
+    for _ in range(20):   # safety limit
         string_match = re.search(match_md_spoiler, line)
         if not string_match:
             break
@@ -852,7 +863,7 @@ def format_md_all(line, content_start, except_ranges):
     """
     line_format = []
     indexes = []
-    for _ in range(10):   # lets have some limits
+    for _ in range(20):   # safety limit
         line_content = line[content_start:]
         string_match = re.search(match_md_all, line_content)
         if not string_match:
@@ -875,7 +886,7 @@ def format_md_all(line, content_start, except_ranges):
             start_r = except_range[0]
             end_r = except_range[1]
             # if this match is inside excepted range
-            if (start > start_r and start < end_r) or (end > start_r and end < end_r):
+            if (start >= start_r and start <= end_r) or (end > start_r and end < end_r):
                 skip = True
                 break
         if skip:
@@ -1558,7 +1569,7 @@ class ChatGenerator:
         next_id = int(next_msg["id"]) if next_msg else -1
         if not self.have_unseen_messages_line and self.date_separator and last_seen_msg and (num == num_messages-1 or (next_id <= int(last_seen_msg))):
             if self.message_spacing:
-                chat.append(" " * max_length)
+                chat.append(" " if num % 2 else ALT_SPACE + " " * (max_length-1))
                 chat_format.append([color_base])
                 chat_map.append((None, None, None, None, None, None))
             # keep text always in center
@@ -1567,7 +1578,7 @@ class ChatGenerator:
             chat_map.append(None)
             self.have_unseen_messages_line = True
             if self.message_spacing:
-                chat.append(" " * max_length)
+                chat.append(" " if num % 2 else ALT_SPACE + " " * (max_length-1))
                 chat_format.append([color_base])
                 chat_map.append(None)
 
@@ -1575,7 +1586,7 @@ class ChatGenerator:
             # date separator
             if self.enable_separator and day_from_snowflake(message["id"]) != day_from_snowflake(next_msg["id"]):
                 if self.message_spacing:
-                    chat.append(" " * max_length)
+                    chat.append(" " if num % 2 else ALT_SPACE + " " * (max_length-1))
                     chat_format.append([color_base])
                     chat_map.append(None)
                 # if this message is 1 day older than next message (up - past message)
@@ -1588,14 +1599,14 @@ class ChatGenerator:
                 chat_format.append([self.color_separator])
                 chat_map.append(None)
                 if self.message_spacing:
-                    chat.append(" " * max_length)
+                    chat.append(" " if num % 2 else ALT_SPACE + " " * (max_length-1))
                     chat_format.append([color_base])
                     chat_map.append(None)
 
             # empty separator between messages not from same sender of after period of time and if message has reply or interaction
             elif message["referenced_message"] or message["interaction"] or (self.message_spacing and (message["user_id"] != next_msg["user_id"] or unix_from_snowflake(message["id"]) - unix_from_snowflake(next_msg["id"]) > SPLIT_AFTER_TIME)):
                 group = False
-                chat.append(" " * max_length)
+                chat.append(" " if num % 2 else ALT_SPACE + " " * (max_length-1))
                 chat_format.append([color_base])
                 chat_map.append(None)
             else:
@@ -1873,7 +1884,7 @@ class ChatGenerator:
             spoilers = [value for i, value in enumerate(spoilers) if i not in spoiled]   # exclude spoiled messages
 
         # find all markdown and correct format indexes
-        message_line, md_format, md_indexes = format_md_all(message_line, pre_content_len, chain(code_snippets, code_blocks, urls))
+        message_line, md_format, md_indexes = format_md_all(message_line, pre_content_len, code_snippets + code_blocks + urls)
         if md_indexes:
             move_by_indexes(
                 md_indexes,
@@ -1887,7 +1898,7 @@ class ChatGenerator:
                 timestamp_ranges,
                 embed_marker_ranges,
             )
-        message_line, escaped_indexes = replace_escaped_md(message_line, chain(code_snippets, code_blocks, urls))
+        message_line, escaped_indexes = replace_escaped_md(message_line, code_snippets + code_blocks + urls)
 
         # correct format indexes for removed markdown escape characters "\"
         if escaped_indexes:
@@ -3396,7 +3407,7 @@ def generate_member_list(member_list_raw, guild_roles, width, use_nick, status_s
                 activity_type = activities[0][0]
                 verb = ACTIVITY_VERBS[activity_type] if emoji_safe else activity_icons[activity_type]
                 activity_title = activities[0][1]
-                if fun and not emoji_safe and activity_type == 2 and "metal" in activity_title:
+                if fun and not emoji_safe and activity_type == 2 and "metal" in activity_title.lower():
                     verb = "🤘"
                 status_text = f"  {verb}{f"+{len(activities)-1}" if len(activities) > 1 else ""} {activity_title}"
                 member_list.append(normalize_string(status_text, width-1, emoji_safe=True) + filler)
@@ -3409,14 +3420,18 @@ def generate_member_list(member_list_raw, guild_roles, width, use_nick, status_s
 
         else:   # user group
             text = "Unknown group"
-            if member["group"] == "online":
-                text = "Online"
-            elif member["group"] == "offline":
-                text = "Offline"
             group_id = member["group"]
-            for role in guild_roles:
-                if role["id"] == group_id:
-                    text = role["name"]
+            count = member["count"]
+            if group_id in ("online", "offline"):
+                text = group_id.capitalize()
+            else:
+                for role in guild_roles:
+                    if role["id"] == group_id:
+                        text = role["name"]
+            if count:
+                count_text = f" ({count})"
+                this_format.append([color_low, None, len(text), len(text) + len(count_text)])
+                text += count_text
             if not first:
                 member_list.append(filler)
                 member_list_format.append(this_format)
@@ -3449,7 +3464,7 @@ def generate_message_notification(data, channels, roles, guild_name, my_data, co
     if data["content"]:
         body = replace_spoilers(data["content"])
         body, _ = replace_discord_emoji(body)
-        body, _ = replace_mentions(body, chain(data["mentions"], (my_data, )), global_name=use_global_name, use_nick=use_nick)
+        body, _ = replace_mentions(body, data["mentions"] + [my_data], global_name=use_global_name, use_nick=use_nick)
         body, _ = replace_roles(body, roles)
         body = replace_discord_url(body)
         body, _ = replace_channels(body, channels)

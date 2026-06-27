@@ -141,7 +141,7 @@ jobs:
           chmod +x ./tools/build_python.sh
           args=("${{ matrix.python-version }}")
           [[ "${{ matrix.clang }}" == "true" ]] && args+=("clang")
-          ./tools/build_python.sh "${args[@]}"
+          ./tools/build_python.sh "${args[@]}" curses v6_6_20251230
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

@@ -151,6 +151,8 @@ class Gateway():
         self.last_gateway_events_per_h = 0
         self.last_gateway_msg_per_h = 0
         self.gateway_ping_time = 0
+        self.member_count = 0
+        self.online_count = 0
         if self.bot:
             self.interactions_buffer = []
         threading.Thread(target=self.thread_guard, daemon=True, args=()).start()
@@ -1232,6 +1234,8 @@ class Gateway():
                 elif self.want_member_list and optext == "GUILD_MEMBER_LIST_UPDATE":
                     guild_id = data["guild_id"]
                     list_id = data["id"]
+                    self.member_count = data.get("member_count", 0)
+                    self.online_count = data.get("online_count", 0)
                     for guild_index, guild in enumerate(self.activities):
                         if guild[0] == guild_id:
                             break
@@ -1247,7 +1251,13 @@ class Gateway():
                             members_sync = []
                             for item in memlist["items"]:
                                 if "group" in item:
-                                    members_sync.append({"group": item["group"]["id"]})
+                                    group_id = item["group"]["id"]
+                                    group_count = 0
+                                    for group in data["groups"]:
+                                        if group["id"] == group_id:
+                                            group_count = group["count"]
+                                            break
+                                    members_sync.append({"group": group_id, "count": group_count})
                                 else:
                                     member_data = item["member"]
                                     custom_status = None
@@ -1288,9 +1298,14 @@ class Gateway():
                                 custom_status = None
                                 if list_id not in self.activities[guild_index][1]:
                                     self.activities[guild_index][1][list_id] = [0, []]   # [last_index, members]
-                                if "group" in memlist["item"]:
-                                    # group can only be inserted
-                                    self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": memlist["item"]["group"]["id"]})
+                                if "group" in memlist["item"]:   # group can only be inserted
+                                    group_id = memlist["item"]["group"]["id"]
+                                    group_count = 0
+                                    for group in data["groups"]:
+                                        if group["id"] == group_id:
+                                            group_count = group["count"]
+                                            break
+                                    self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": group_id, "count": group_count})
                                     if len(self.activities[guild_index][1][list_id][1]) > 100:
                                         self.activities[guild_index][1][list_id][1].pop(-1)
                                     self.activities_changed.append(guild_id)
@@ -2429,8 +2444,8 @@ class Gateway():
         if self.activities_changed:
             cache = self.activities_changed
             self.activities_changed = []
-            return self.activities, cache
-        return [], []
+            return self.activities, cache, self.member_count, self.online_count
+        return [], [], self.member_count, self.online_count
 
 
     def get_subscribed_activities(self):
