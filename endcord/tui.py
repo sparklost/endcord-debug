@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-from endcord import acs, peripherals, utils
+from endcord import acs, keybinding, peripherals, utils
 
 logger = logging.getLogger(__name__)
 uses_pgcurses = hasattr(curses, "PGCURSES")
@@ -22,11 +22,6 @@ ASSIST_TRIGGERS = ("#", "@", ":", ";")
 ALLOWED_BEFORE_ASSIST = (" ", "\n", "+")
 ALLOWED_BEFORE_ASSIST_EXTRA = (" ", "\n", "+", ":", "=")
 APP_COMMAND_ASSIST_TRIEGGER = "/"
-if sys.platform == "win32" or os.environ.get("REALTERM", "") == "xterm":   # envvar set in main.py
-    BACKSPACE = 8   # i cant believe this
-    # ctrl+backspace is 263 (curses.KEY_BACKSPACE)
-else:
-    BACKSPACE = curses.KEY_BACKSPACE
 BUTTON4_PRESSED = getattr(curses, "BUTTON4_PRESSED", 0)
 BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0)
 ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
@@ -106,41 +101,6 @@ def select_word(text, index):
     while end < len(text) - 1 and re.match(match_word, text[end + 1]):
         end += 1
     return start, end
-
-
-def get_key(screen):
-    """Reads a key from curses and returns int for ascii, special and ctrl+key, str for utf-8 wide chars"""
-    first = screen.getch()
-    if first == -1:
-        return -1
-
-    # ascii, control, special keys
-    if first < 0x80 or first > 0xFF:
-        return first
-
-    # utf-8 lead byte
-    buf = bytes([first])
-    if 0xC0 <= first <= 0xDF:
-        n_bytes = 2
-    elif 0xE0 <= first <= 0xEF:
-        n_bytes = 3
-    elif 0xF0 <= first <= 0xF7:
-        n_bytes = 4
-    else:
-        return first
-
-    # rest of utf-8 sequence
-    for _ in range(n_bytes - 1):
-        ch = screen.getch()
-        if ch == -1 or ch < 0x80 or ch > 0xBF:
-            return first
-        buf += bytes([ch])
-
-    # decode sequence
-    try:
-        return buf.decode("utf-8")
-    except UnicodeDecodeError:
-        return first
 
 
 def draw_formatted_line(window, y, x, text, text_format, default_color, attrib_map, lock):
@@ -241,6 +201,18 @@ class TUI():
         sys.stdout.write("\x1b[?2004h")   # enable bracketed paste mode
         sys.stdout.write("\x1b[?1004h")   # enable terminal focus change reporting
         sys.stdout.flush()
+        try:
+            self.backspace_code = 8 if (curses.erasechar() == 8 or "XTERM_VERSION" in os.environ or sys.platform == "win32") else 127
+        except Exception:
+            self.backspace_code = 127
+        self.fallback_keybinding_parser = config["fallback_keybinding_parser"]
+        if self.fallback_keybinding_parser or sys.platform == "win32":   # raw parser doesnt work well with windows
+            screen.keypad(True)
+            self.get_key = keybinding.get_key_fallback
+            self.backspace_code = 263 if self.backspace_code == 127 else 8
+        else:
+            screen.keypad(False)
+            self.get_key = keybinding.get_key
         screen.clear()
         self.last_free_id = 1   # last free color pair id
         self.color_pairs = {}
@@ -276,13 +248,14 @@ class TUI():
         self.tree_unread_inherit_color = config["color_tree_unseen"][0] == -2 and config["color_tree_unseen"][1] == -2
         self.role_color_start_id = self.last_free_id   # starting id for role colors
         self.keybindings = keybindings
-        self.switch_tab_modifier = self.keybindings["switch_tab_modifier"][0][:-4]
+        self.key_map = keybinding.build_key_map(keybindings)
+        self.switch_tab_modifier = keybindings["switch_tab_modifier"][0][:-3]
         self.command_bindings = command_bindings
         self.screen = screen
         self.extensions = []
 
         # load config
-        self.bordered = not(config["compact"])
+        self.bordered = not (config["compact"])
         self.have_title = bool(config["format_title_line_l"])
         self.have_title_tree = bool(config["format_title_tree"])
         vline = config["tree_drop_down_vline"][0]
@@ -321,14 +294,7 @@ class TUI():
             self.mouse_scroll = self.mouse_scroll_content
 
         # find all keybinding first-chain-parts
-        self.init_chainable()
-
-        # for faster keybinding lookup
-        self.KEYBINDINGS_SEND_MESSAGE = self.keybindings["send_message"]
-        self.KEYBINDINGS_CHAT_UP = self.keybindings["chat_up"]
-        self.KEYBINDINGS_CHAT_DOWN = self.keybindings["chat_down"]
-        self.KEYBINDINGS_INPUT_LEFT = self.keybindings["input_left"]
-        self.KEYBINDINGS_INPUT_RIGHT = self.keybindings["input_right"]
+        self.chainable = keybinding.find_chainable(keybindings, self.command_bindings)
 
         # initial values
         self.disable_drawing = False
@@ -424,46 +390,33 @@ class TUI():
         self.need_update.set()
 
 
-    def init_chainable(self):
-        """Find all first-parts of chained keybindings"""
-        self.chainable = []
-        for binding_group in self.keybindings.values():
-            for binding in binding_group:
-                if isinstance(binding, str):
-                    split_binding = binding.split("-")
-                    if len(split_binding) == 1:
-                        continue
-                    elif len(split_binding) > 2:
-                        logger.warn(f"Invalid keybinding: {binding}")
-                    self.chainable.append(split_binding[0])
-        for binding in self.command_bindings:   # here read key instead value
-            if isinstance(binding, str):
-                split_binding = binding.split("-")
-                if len(split_binding) == 1:
-                    continue
-                elif len(split_binding) > 2:
-                    logger.warn(f"Invalid keybinding: {binding}")
-                self.chainable.append(split_binding[0])
-
-
     def load_inline_media(self, inline_media):
         """Pass inline media drawer reference from app to tui"""
         self.inline_media = inline_media
 
 
     def load_extensions(self, extensions):
-        """Load already initialized extensions from app class"""
+        """Load already initialized extensions from app class and load chain parts for chainable bindings"""
         self.extensions = extensions
         self.extension_cache = []
-
-        # init bindings
         for extension in self.extensions:
             method = getattr(extension, "init_bindings", None)
-            if callable(method):
-                new_bindings = method(self.keybindings)
-                if isinstance(new_bindings, dict):
-                    self.keybindings.update(new_bindings)
-        self.init_chainable()
+            if not callable(method):
+                continue
+            new_bindings = method(self.keybindings)
+            if not isinstance(new_bindings, dict):
+                continue
+            for binding in new_bindings.values():
+                if not isinstance(binding, str):
+                    continue
+                split_binding = binding.split(" ")
+                if len(split_binding) == 1:
+                    continue
+                elif len(split_binding) > 2:
+                    logger.warn(f"Invalid keybinding: {binding}")
+                if split_binding[0] not in self.chainable:
+                    self.chainable.append(split_binding[0])
+        del self.keybindings   # not needed anymore
 
 
     def execute_extensions_methods(self, method_name, *args, cache=False):
@@ -672,11 +625,11 @@ class TUI():
         # redraw
         self.draw_border(win_prompt_input_line, top=False)
         self.draw_status_line()
-        self.draw_border(chat_hwyx, top=not(self.have_title), right=not(self.have_scrollbar))
+        self.draw_border(chat_hwyx, top=not (self.have_title), right=not (self.have_scrollbar))
         self.update_prompt(self.prompt)
         self.spellcheck()
         self.draw_input_line()
-        self.draw_border(tree_hwyx, top=not(self.have_title_tree) or self.tree_width < 10)
+        self.draw_border(tree_hwyx, top=not (self.have_title_tree) or self.tree_width < 10)
         self.draw_tree()
         if self.have_title:
             self.draw_title_line()
@@ -728,7 +681,7 @@ class TUI():
         self.win_chat = self.screen.derwin(*chat_hwyx)
         self.chat_hw = self.win_chat.getmaxyx()
         if self.bordered:
-            self.draw_border(chat_hwyx, top=not(self.have_title), right=not(self.have_scrollbar))
+            self.draw_border(chat_hwyx, top=not (self.have_title), right=not (self.have_scrollbar))
             self.screen.noutrefresh()
         return common_h
 
@@ -961,8 +914,6 @@ class TUI():
 
     def set_extra_height(self, value):
         """Set extra window height to number or +1/-1"""
-        if value < 3:
-            return
         h, _ = self.screen_hw
         if value == 1:
             self.extra_window_h += 1
@@ -1098,7 +1049,7 @@ class TUI():
 
     def allow_chat_selected_hide(self, allow):
         """Allow selected line in chat to be none, position -1"""
-        self.dont_hide_chat_selection = not(allow)
+        self.dont_hide_chat_selection = not (allow)
 
 
     def get_tree_index(self, position):
@@ -1841,7 +1792,7 @@ class TUI():
                              self.bordered or self.have_title,
                             w - self.member_list_width,
                         )
-                        self.draw_border(member_list_hwyx, top=not(self.have_title))
+                        self.draw_border(member_list_hwyx, top=not (self.have_title))
                     self.draw_member_list(self.member_list, self.member_list_format, force=True)
                     if self.bordered:
                         self.draw_status_line()
@@ -1886,7 +1837,7 @@ class TUI():
                          self.bordered or self.have_title,
                         w - self.member_list_width,
                     )
-                    self.draw_border(member_list_hwyx, top=not(self.have_title))
+                    self.draw_border(member_list_hwyx, top=not (self.have_title))
                 if self.bordered:
                     self.draw_status_line()
                 self.draw_member_list(self.member_list, self.member_list_format, force=True)
@@ -1995,7 +1946,7 @@ class TUI():
                          self.bordered or self.have_title,
                         w - self.member_list_width,
                     )
-                    self.draw_border(member_list_hwyx, top=not(self.have_title))
+                    self.draw_border(member_list_hwyx, top=not (self.have_title))
                 if self.bordered:
                     self.draw_status_line()
                 self.draw_extra_line(self.extra_line_text, self.extra_line_format)
@@ -2460,11 +2411,12 @@ class TUI():
 
     def common_keybindings(self, key, mouse=False, switch=False, command=False, forum=False, alt=False):
         """Handle keybinding events that can be executed by mouse events"""
-        if key in self.KEYBINDINGS_CHAT_UP or (self.swap_assist and self.win_extra_window and key in self.keybindings["extra_up"] and not alt and not command):
-            if command and key not in self.keybindings["extra_up"]:
+        # chat_up / extra_up
+        if key == 521 or (self.swap_assist and self.win_extra_window and key == 523 and not alt and not command):
+            if command and key != 523:
                 return 46
-            if self.swap_assist and self.win_extra_window and not mouse and key in self.KEYBINDINGS_CHAT_UP:
-                self.common_keybindings(self.keybindings["extra_up"][0], alt=True)
+            if self.swap_assist and self.win_extra_window and not mouse and key == 521:
+                self.common_keybindings(523, alt=True)
                 return None
             if self.chat_selected + 1 < len(self.chat_buffer):
                 top_line = self.chat_index + self.chat_hw[0] - 3
@@ -2472,18 +2424,20 @@ class TUI():
                     self.chat_index += 1   # move history down
                 self.set_selected(self.chat_selected + 1, scroll=False)   # move selection up
 
-        elif key in self.KEYBINDINGS_CHAT_DOWN or (self.swap_assist and self.win_extra_window and key in self.keybindings["extra_down"] and not alt and not command):
-            if command and key not in self.keybindings["extra_down"]:
+        # chat_down / extra_down
+        elif key == 522 or (self.swap_assist and self.win_extra_window and key == 524 and not alt and not command):
+            if command and key != 524:
                 return 47
-            if self.swap_assist and self.win_extra_window and not mouse and key in self.KEYBINDINGS_CHAT_DOWN:
-                self.common_keybindings(self.keybindings["extra_down"][0], alt=True)
+            if self.swap_assist and self.win_extra_window and not mouse and key == 522:
+                self.common_keybindings(524, alt=True)
                 return None
             if self.chat_selected >= self.dont_hide_chat_selection:   # if it is -1, selection is hidden
                 if self.chat_index and self.chat_selected <= self.chat_index + 2:   # +2 from status and input lines
                     self.chat_index -= 1   # move history up
                 self.set_selected(self.chat_selected - 1, scroll=False)   # move selection down
 
-        elif key in self.keybindings["tree_up"]:
+        # tree_up
+        elif key == 500:
             if self.tree_selected >= 0:
                 if self.tree_index and self.tree_selected <= self.tree_index + 2:
                     self.tree_index -= 1
@@ -2495,7 +2449,7 @@ class TUI():
                 self.tree_index = max(self.tree_selected - (self.tree_hw[0] - 1), 0)
                 self.draw_tree()
 
-        elif key in self.keybindings["tree_down"]:
+        elif key == 501:
             if self.tree_selected + 1 < self.tree_clean_len:
                 top_line = self.tree_index + self.tree_hw[0]
                 if top_line < self.tree_clean_len and self.tree_selected >= top_line - 3:
@@ -2507,7 +2461,8 @@ class TUI():
                 self.tree_index = 0
                 self.draw_tree()
 
-        elif key in self.keybindings["tree_select"]:
+        # tree_select
+        elif key == 502:
             # if selected tree entry is channel
             if 300 <= self.tree_format[self.tree_selected_abs] <= 399 and not mouse:
                 # stop wait_input and return so new prompt can be loaded
@@ -2536,7 +2491,8 @@ class TUI():
                 self.draw_tree()
             self.tree_format_changed = True
 
-        elif key in self.keybindings["extra_up"]:
+        # extra_up
+        elif key == 523:
             if self.extra_window_body and not mouse:
                 if self.extra_select:
                     if self.extra_selected > 0:
@@ -2561,7 +2517,8 @@ class TUI():
                     self.mlist_index -= 1
                     self.draw_member_list(self.member_list, self.member_list_format)
 
-        elif key in self.keybindings["extra_down"]:
+        # extra_down
+        elif key == 524:
             if self.extra_window_body and not mouse:
                 if self.extra_select:
                     if self.extra_selected + 1 < len(self.extra_window_body):
@@ -2584,9 +2541,6 @@ class TUI():
                         self.mlist_index += 1
                     self.mlist_selected += 1
                     self.draw_member_list(self.member_list, self.member_list_format)
-
-        elif key in self.keybindings["quit"]:
-            return 34
 
         # check extensions bindings
         else:
@@ -2645,118 +2599,23 @@ class TUI():
             if press:
                 key = press
             else:
-                key = get_key(self.screen)
+                key = self.get_key(self.screen, self.backspace_code)
             if key == -1:
                 continue
 
-            if self.mouse and key == curses.KEY_MOUSE:
+            if isinstance(key, tuple):
                 code = self.mouse_events(key)
                 if code:
                     return self.return_input_code(code)
                 continue
             w = self.input_hw[1]
 
-            if key == 27 and not press:   # ESCAPE
-                # terminal waits when Esc is pressed, but not when sending escape sequence
-                self.screen.nodelay(True)
-                key = get_key(self.screen)
-                if key == -1:
-                    # escape key
-                    self.screen.nodelay(False)
-                    if self.assist_start:
-                        self.assist_start = -1
-                    if self.vim_mode and self.insert_mode:
-                        self.insert_mode = False
-                        return self.return_input_code(26)
-                    return self.return_input_code(5)
-                # sequence (bracketed paste or ALT+KEY)
-                sequence = [27, key]
-                # -1 means no key is pressed, 126 is end of escape sequence
-                while key != -1:
-                    key = get_key(self.screen)
-                    sequence.append(key)
-                    if key == 126:
-                        break
-                    if key == 27:   # holding escape key
-                        sequence.append(-1)
-                        break
-                self.screen.nodelay(False)
-                # match sequences
-                if len(sequence) == 3 and sequence[2] == -1:   # ALT+KEY
-                    key = f"ALT+{sequence[1]}"
-                elif sequence == [27, 91, 50, 48, 48, 126]:
-                    self.bracket_paste = True
-                    self.misspelled = []
-                    continue
-                elif sequence == [27, 91, 50, 48, 49, 126]:
-                    self.bracket_paste = False
-                    self.spellcheck()
-                    self.draw_input_line()
-                    continue
-                elif sequence[-1] == -1 and sequence[-2] == 27:
-                    # holding escape key
-                    if self.assist_start:
-                        self.assist_start = -1
-                    if self.vim_mode and self.insert_mode:
-                        self.insert_mode = False
-                        return self.return_input_code(26)
-                    return self.return_input_code(5)
-
-            # handle chained keybindings
-            if str(key) in self.chainable and not self.keybinding_chain:
-                self.keybinding_chain = key
-                continue
-            if self.keybinding_chain:
-                key = f"{self.keybinding_chain}-{key}"
-
-            if key == 10 and self.bracket_paste:
-                # when pasting, dont return, but insert newline character
-                self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
-                self.input_index += 1
-                self.add_to_delta_store("\n")
-
-            elif key in self.KEYBINDINGS_SEND_MESSAGE:
-                if forum:
-                    self.input_index = 0
-                    self.input_line_index = 0
-                    self.cursor_pos = 0
-                    self.draw_input_line()
-                self.cursor_on = True
-                self.input_select_start = None
-                return self.return_input_code(0)
-
-            if isinstance(key, str):
-                if len(key) > 1 and key.startswith(self.switch_tab_modifier):   # switching tab with Binding+Num
-                    try:
-                        num = int(key[-2:])
-                        if 49 <= num <= 57:
-                            self.pressed_num_key = num - 48
-                            return self.return_input_code(42)
-                    except ValueError:
-                        pass
-                elif not self.keybinding_chain:   # unicode letters
-                    if self.input_select_start is not None:
-                        self.delete_selection()
-                        self.input_select_start = None
-                    self.input_buffer = self.input_buffer[:self.input_index] + key + self.input_buffer[self.input_index:]
-                    self.input_index += 1
-                    self.typing = int(time.time())
-                    if self.enable_autocomplete:
-                        selected_completion = 0
-                    self.add_to_delta_store(key)
-                    self.show_cursor()
-                    if self.assist and not self.bracket_paste:
-                        if key in ASSIST_TRIGGERS:
-                            self.assist_start = self.input_index
-
-            if self.keybinding_chain:   # consume chain
-                self.keybinding_chain = None
-
-            if isinstance(key, int) and 32 <= key <= 126 and self.insert_mode:   # all regular characters
+            # regular characters
+            if len(key) == 1 and self.insert_mode:
                 if self.input_select_start is not None:
                     self.delete_selection()
                     self.input_select_start = None
-                self.input_buffer = self.input_buffer[:self.input_index] + chr(key) + self.input_buffer[self.input_index:]
+                self.input_buffer = self.input_buffer[:self.input_index] + key + self.input_buffer[self.input_index:]
                 if self.fun == 2:
                     with self.fun_lock:
                         self.red_list.append(self.input_index)
@@ -2764,23 +2623,78 @@ class TUI():
                 self.typing = int(time.time())
                 if self.enable_autocomplete:
                     selected_completion = 0
-                self.add_to_delta_store(chr(key))
+                self.add_to_delta_store(key)
                 self.show_cursor()
                 if self.assist and not self.bracket_paste:
-                    if chr(key) in ASSIST_TRIGGERS:
+                    if key in ASSIST_TRIGGERS:
                         self.assist_start = self.input_index
                 if not self.bracket_paste:
                     self.spellcheck()
+                self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+                self.cursor_pos = max(self.cursor_pos, 0)
+                self.cursor_pos = min(w - 1, self.cursor_pos)
+                self.draw_input_line()
+                continue
 
-            elif not self.insert_mode and not self.switch_tab_modifier and isinstance(key, int) and 49 <= key <= 57:
-                # switch tab key in normal mode in vim mode
+            # switching tab with Binding+Num
+            if key.startswith(self.switch_tab_modifier):
+                try:
+                    self.pressed_num_key = int(key[-1:])
+                    return self.return_input_code(42)
+                except ValueError:
+                    pass
+
+            # switch tab key in normal mode in vim mode
+            elif not self.insert_mode and not self.switch_tab_modifier and key.isdigit():
                 self.pressed_num_key = key - 48
                 return self.return_input_code(42)
 
-            elif (code := self.common_keybindings(key, command=command, forum=forum)):
-                return self.return_input_code(code)
+            if key in self.chainable and not self.keybinding_chain:
+                self.keybinding_chain = key
+                continue
+            if self.keybinding_chain:
+                key = f"{self.keybinding_chain} {"SPC" if key == " " else key}"
+                self.keybinding_chain = None
 
-            elif key == BACKSPACE or key == 127:
+            key = self.key_map.get(key, key)
+
+            # special keys
+            if key == keybinding.KEY_ESCAPE:
+                self.screen.nodelay(False)
+                if self.assist_start:
+                    self.assist_start = -1
+                if self.vim_mode and self.insert_mode:
+                    self.insert_mode = False
+                    return self.return_input_code(26)
+                return self.return_input_code(5)
+
+            if key == keybinding.KEY_PASTE_START:
+                self.bracket_paste = True
+                self.misspelled = []
+                continue
+            elif key == keybinding.KEY_PASTE_END:
+                self.bracket_paste = False
+                self.spellcheck()
+                self.draw_input_line()
+                continue
+
+            elif key == keybinding.KEY_ENTER and self.bracket_paste:
+                # when pasting, dont return, but insert newline character
+                self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
+                self.input_index += 1
+                self.add_to_delta_store("\n")
+
+            elif key == keybinding.KEY_RESIZE:
+                self.resize()
+                _, w = self.input_hw
+            elif key == keybinding.KEY_FOCUS_IN:
+                self.focused = True
+                return self.return_input_code(2000)
+            elif key == keybinding.KEY_FOCUS_OUT:
+                self.focused = False
+                return self.return_input_code(2001)
+
+            elif key == keybinding.KEY_BACKSPACE:
                 if self.input_select_start is not None:
                     self.delete_selection()
                     self.input_select_start = None
@@ -2794,7 +2708,7 @@ class TUI():
                     self.show_cursor()
                 self.spellcheck()
 
-            elif key == curses.KEY_DC:   # DEL
+            elif key == keybinding.KEY_DEL:   # DEL
                 if self.input_select_start is not None:
                     self.delete_selection()
                     self.input_select_start = None
@@ -2805,7 +2719,57 @@ class TUI():
                     self.show_cursor()
                 self.spellcheck()
 
-            elif key in self.KEYBINDINGS_INPUT_LEFT:
+            elif key == keybinding.KEY_HOME:
+                self.input_index = 0
+                self.input_line_index = 0
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == keybinding.KEY_END:
+                self.input_index = len(self.input_buffer)
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == keybinding.KEY_TAB:
+                if self.enable_autocomplete:
+                    if self.input_buffer and self.input_index == len(self.input_buffer):
+                        completions = utils.complete_path(self.input_buffer, separator=False)
+                        if completions:
+                            path = completions[selected_completion]
+                            self.input_buffer = path
+                            self.input_index = len(path)
+                            self.show_cursor()
+                            selected_completion += 1
+                            if selected_completion > len(completions) - 1:
+                                selected_completion = 0
+                else:   # regular text
+                    if self.input_select_start is not None:
+                        self.delete_selection()
+                        self.input_select_start = None
+                    tab_str = " " * self.tab_spaces
+                    self.input_buffer = self.input_buffer[:self.input_index] + tab_str + self.input_buffer[self.input_index:]
+                    self.input_index += self.tab_spaces
+                    self.typing = int(time.time())
+                    self.add_to_delta_store(tab_str)
+                    self.show_cursor()
+                    self.spellcheck()
+
+            elif (code := self.common_keybindings(key, command=command, forum=forum)):
+                return self.return_input_code(code)
+
+            # keys from config with custom actions
+
+            elif key == 520:   # send_message
+                if forum:
+                    self.input_index = 0
+                    self.input_line_index = 0
+                    self.cursor_pos = 0
+                    self.draw_input_line()
+                self.cursor_on = True
+                self.input_select_start = None
+                return self.return_input_code(0)
+
+            elif key == 504:   # input_left
                 if self.input_index > 0:
                     # if index hits left screen edge, but there is more text to left, move line right
                     if self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index) == 0:
@@ -2816,7 +2780,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key in self.KEYBINDINGS_INPUT_RIGHT:
+            elif key == 505:   # input_right
                 if self.input_index < len(self.input_buffer):
                     # if index hits right screen edge, but there is more text to right, move line right
                     if self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) == w:
@@ -2827,18 +2791,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key == curses.KEY_HOME:
-                self.input_index = 0
-                self.input_line_index = 0
-                self.input_select_start = None
-                self.spellcheck()
-
-            elif key == curses.KEY_END:
-                self.input_index = len(self.input_buffer)
-                self.input_select_start = None
-                self.spellcheck()
-
-            elif key in self.keybindings["delete_word"]:
+            elif key == 518:   # delete_word
                 word = ""
                 for word_part in resplit(self.input_buffer[:self.input_index])[::-1]:
                     if word_part == "":
@@ -2861,7 +2814,7 @@ class TUI():
                         self.add_to_delta_store("BACKSPACE", char)
                     self.spellcheck()
 
-            elif key in self.keybindings["delete_word_forward"]:
+            elif key == 519:   # delete_word_forward
                 word = ""
                 for word_part in resplit(self.input_buffer[self.input_index:]):
                     if word_part == "":
@@ -2882,7 +2835,7 @@ class TUI():
                         self.add_to_delta_store("DELETE", char)
                     self.spellcheck()
 
-            elif key in self.keybindings["word_left"]:
+            elif key == 506:   # word_left
                 left_len = 0
                 for word in resplit(self.input_buffer[:self.input_index])[::-1]:
                     if word == "":
@@ -2899,7 +2852,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key in self.keybindings["word_right"]:
+            elif key == 507:   # word_right
                 left_len = 0
                 for word in resplit(self.input_buffer[self.input_index:]):
                     if word == "":
@@ -2916,7 +2869,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key in self.keybindings["select_word_left"]:
+            elif key == 510:   # select_word_left
                 if self.input_select_start is None:
                     self.input_select_end = self.input_select_start = self.input_index
                 left_len = 0
@@ -2937,7 +2890,7 @@ class TUI():
                     self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
                 self.spellcheck()
 
-            elif key in self.keybindings["select_word_right"]:
+            elif key == 511:   # select_word_right
                 if self.input_select_start is None:
                     self.input_select_end = self.input_select_start = self.input_index
                 left_len = 0
@@ -2958,7 +2911,7 @@ class TUI():
                     self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
                 self.spellcheck()
 
-            elif key in self.keybindings["undo"]:
+            elif key == 513:   # undo
                 self.add_to_delta_store("UNDO")
                 if self.undo_index is None:
                     self.undo_index = len(self.delta_store) - 1
@@ -2984,7 +2937,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key in self.keybindings["redo"]:
+            elif key == 514:   # redo
                 self.add_to_delta_store("REDO")
                 if self.undo_index is not None and self.undo_index < len(self.delta_store):
                     self.undo_index += 1
@@ -3002,7 +2955,7 @@ class TUI():
                 self.input_select_start = None
                 self.spellcheck()
 
-            elif key in self.keybindings["select_left"]:
+            elif key == 508:   # select_left
                 if self.input_select_start is None:
                     self.input_select_start = self.input_index
                 if self.input_index > 0:
@@ -3013,7 +2966,7 @@ class TUI():
                         self.input_index -= 1
                 self.input_select_end = self.input_index
 
-            elif key in self.keybindings["select_right"]:
+            elif key == 509:   # select_right
                 if self.input_select_start is None:
                     self.input_select_start = self.input_index
                 if self.input_index < len(self.input_buffer):
@@ -3024,17 +2977,17 @@ class TUI():
                         self.input_index += 1
                 self.input_select_end = self.input_index
 
-            elif key in self.keybindings["select_all"]:
+            elif key == 515:   # select_all
                 self.input_select_start = 0
                 self.input_select_end = len(self.input_buffer)
 
-            elif key in self.keybindings["copy"]:
+            elif key == 516:   # copy
                 if self.input_select_start is not None:
                     self.store_input_selected()
                     return self.return_input_code(20)
                 return self.return_input_code(12)
 
-            elif self.input_select_start is not None and key in self.keybindings["cut"]:
+            elif key == 517 and self.input_select_start is not None:   # cut
                 self.delete_selection()
                 self.input_select_start = None
                 self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
@@ -3043,34 +2996,13 @@ class TUI():
                 self.draw_input_line()
                 return self.return_input_code(20)
 
-            elif key in self.keybindings["paste"]:
-                return self.return_input_code(23)
+            elif key == 512:   # insert_newline
+                self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
+                self.input_index += 1
+                self.show_cursor()
+                self.spellcheck()
 
-            elif key == 9:   # TAB - same as CTRL+I
-                if self.enable_autocomplete:
-                    if self.input_buffer and self.input_index == len(self.input_buffer):
-                        completions = utils.complete_path(self.input_buffer, separator=False)
-                        if completions:
-                            path = completions[selected_completion]
-                            self.input_buffer = path
-                            self.input_index = len(path)
-                            self.show_cursor()
-                            selected_completion += 1
-                            if selected_completion > len(completions) - 1:
-                                selected_completion = 0
-                else:   # regular text
-                    if self.input_select_start is not None:
-                        self.delete_selection()
-                        self.input_select_start = None
-                    tab_str = " " * self.tab_spaces
-                    self.input_buffer = self.input_buffer[:self.input_index] + tab_str + self.input_buffer[self.input_index:]
-                    self.input_index += self.tab_spaces
-                    self.typing = int(time.time())
-                    self.add_to_delta_store(tab_str)
-                    self.show_cursor()
-                    self.spellcheck()
-
-            elif key in self.keybindings["tree_collapse_threads"]:
+            elif key == 503:   # tree_collapse_threads
                 if (self.tree_format[self.tree_selected_abs] % 10):
                     self.tree_format[self.tree_selected_abs] -= 1
                 else:
@@ -3078,136 +3010,43 @@ class TUI():
                 self.draw_tree()
                 self.tree_format_changed = True
 
-            elif key in self.keybindings["attach_prev"]:
-                return self.return_input_code(14)
-
-            elif key in self.keybindings["attach_next"]:
-                return self.return_input_code(15)
-
-            elif key in self.keybindings["insert_newline"]:
-                self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
-                self.input_index += 1
-                self.show_cursor()
-                self.spellcheck()
-
-            elif key in self.keybindings["reply"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(1)
-
-            elif key in self.keybindings["edit"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(2)
-
-            elif key in self.keybindings["delete"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(3)
-
-            elif key in self.keybindings["toggle_ping"] and not forum:
-                return self.return_input_code(6)
-
-            elif key in self.keybindings["scroll_bottom"]:
-                return self.return_input_code(7)
-
-            elif key in self.keybindings["go_replied"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(8)
-
-            elif key in self.keybindings["download"] and self.chat_selected != -1:
-                return self.return_input_code(9)
-
-            elif key in self.keybindings["browser"] and self.chat_selected != -1:
-                return self.return_input_code(10)
-
-            elif key in self.keybindings["cancel"]:
-                return self.return_input_code(11)
-
-            elif key in self.keybindings["upload"] and not forum:
+            elif key == 13 and not forum:   # upload
                 self.enable_autocomplete = True
                 self.misspelled = []
                 return self.return_input_code(13)
 
-            elif key in self.keybindings["view_media"] and self.chat_selected != -1:
-                return self.return_input_code(17)
-
-            elif key in self.keybindings["spoil"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(18)
-
-            elif key in self.keybindings["tree_join_thread"]:
-                return self.return_input_code(21)
-
-            elif key in self.keybindings["preview_upload"]:
-                return self.return_input_code(22)
-
-            elif key in self.keybindings["profile_info"] and self.chat_selected != -1 and not forum:
+            elif key == 24 and self.chat_selected != -1 and not forum:   # profile_info
                 self.extra_index = 0
                 self.extra_selected = -1
                 return self.return_input_code(24)
 
-            elif key in self.keybindings["channel_info"] and self.tree_selected > 0:
+            elif key == 25 and self.tree_selected > 0:   # channel_info
                 self.extra_index = 0
                 self.extra_selected = -1
                 return self.return_input_code(25)
 
-            elif key in self.keybindings["extra_select"]:
-                return self.return_input_code(27)
-
-            elif key in self.keybindings["search"] and not forum:
+            elif key == 29 and not forum:   # search
                 self.extra_index = 0
                 self.extra_selected = -1
                 return self.return_input_code(29)
 
-            elif key in self.keybindings["copy_channel_link"] and self.tree_selected > 0 and not forum:
-                return self.return_input_code(30)
-
-            elif key in self.keybindings["copy_message_link"] and self.chat_selected != -1 and not forum:
-                return self.return_input_code(31)
-
-            elif key in self.keybindings["cycle_status"]:
-                return self.return_input_code(33)
-
-            elif key in self.keybindings["toggle_member_list"]:
-                return self.return_input_code(35)
-
-            elif key in self.keybindings["add_reaction"] and not forum:
-                return self.return_input_code(36)
-
-            elif key in self.keybindings["command_palette"]:
-                return self.return_input_code(38)
-
-            elif key in self.keybindings["toggle_tree"]:
-                return self.return_input_code(32)
-
-            elif key in self.keybindings["show_reactions"] and not forum:
-                return self.return_input_code(37)
-
-            elif key in self.keybindings["toggle_tab"]:
-                return self.return_input_code(41)
-
-            elif key in self.keybindings["show_pinned"] and not forum:
-                return self.return_input_code(43)
-
-            elif key in self.keybindings["search_gif"] and not forum:
-                return self.return_input_code(44)
-
-            elif key in self.keybindings["open_external_editor"] and not forum:
-                return self.return_input_code(45)
-
-            elif self.vim_mode and key in self.keybindings.get("insert_mode", ()):
+            elif self.vim_mode and key == 525:   # insert_mode for vim mode
                 self.insert_mode = True
                 return self.return_input_code(28)
 
-            # terminal reserved keys: CTRL+ C, I, J, M, Q, S, Z
+            # keys that only return a value to app.py
+            elif isinstance(key, int):
+                if forum and key in (1, 2, 3, 6, 8, 18, 30, 31, 36, 37, 43, 44, 45):
+                    pass
+                elif self.tree_selected == -1 and key in (1, 2, 3, 8, 9, 10, 17, 18, 30, 31):
+                    pass
+                else:
+                    return self.return_input_code(key)
 
-            elif key in self.command_bindings:
+            if key in self.command_bindings:
                 return self.return_input_code((50, self.command_bindings.get(key)))
 
-            elif key == curses.KEY_RESIZE:
-                self.resize()
-                _, w = self.input_hw
-
-            elif key == 590:   # terminal focus in
-                self.focused = True
-                return self.return_input_code(2000)
-
-            elif key == 591:   # terminal focus out
-                self.focused = False
-                return self.return_input_code(2001)
+            # terminal reserved keys: CTRL+ C, I, J, M, Q, S, Z
 
             # keep index inside screen
             self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
@@ -3222,19 +3061,16 @@ class TUI():
 
     def mouse_events(self, key):
         """Handle mouse events on terminal screen"""
-        if key != curses.KEY_MOUSE:
-            return None
-        try:
-            _, x, y, _, bstate = curses.getmouse()
-        except curses.error:
-            return None
-        while self.run and sys.platform != "win32":   # drain internal curses buffer for mouse events
-            # windows-curses doesnt error here, so this cant be used
-            try:
-                _, x, y, _, bstate = curses.getmouse()
-            except curses.error:
-                break
-        if bstate & curses.BUTTON1_PRESSED:
+        y, x, key_type, pressed = key
+        if self.fallback_keybinding_parser:
+            while self.run and sys.platform != "win32":   # drain internal curses buffer for mouse events
+                # windows-curses doesnt error here, so this cant be used
+                try:
+                    _, x, y, _, bstate = curses.getmouse()
+                    key_type, pressed = keybinding.decode_bstate_flag(bstate)
+                except curses.error:
+                    break
+        if pressed and key_type == 0:   # LEFT CLICK
             chat_y, chat_x = self.win_chat.getbegyx()
             if self.have_scrollbar and x == chat_x + self.chat_hw[1] and y > chat_y and y < chat_y + self.chat_hw[0]:
                 self.drag_scrollbar()
@@ -3245,11 +3081,11 @@ class TUI():
                 return self.mouse_double_click(x, y)
             self.first_click = new_click
             return self.mouse_single_click(x, y)
-        if bstate & BUTTON4_PRESSED:
+        if pressed and key_type == 64:   # SCROLL UP
             self.mouse_scroll(x, y, True)
-        elif bstate & BUTTON5_PRESSED:
+        elif pressed and key_type == 65:   # SCROLL DOWN
             self.mouse_scroll(x, y, False)
-        elif bstate & curses.BUTTON2_PRESSED:
+        elif pressed and key_type == 1:   # MIDDLE CLICK
             return self.mouse_middle_click(x, y)
         return None
 
@@ -3280,7 +3116,7 @@ class TUI():
             x, y = self.mouse_rel_pos(x, y, self.win_tree)
             self.tree_selected = self.tree_index + y
             self.draw_tree()
-            return self.common_keybindings(self.keybindings["tree_select"][0], mouse=True)
+            return self.common_keybindings(502, mouse=True)
 
         if self.mouse_in_window(x, y, self.win_chat):
             x, y = self.mouse_rel_pos(x, y, self.win_chat)
@@ -3330,7 +3166,7 @@ class TUI():
     def mouse_double_click(self, x, y):
         """Handle mouse double click events"""
         if self.tree_width >= 10 and self.mouse_in_window(x, y, self.win_tree):
-            return self.common_keybindings(self.keybindings["tree_select"][0], switch=True)
+            return self.common_keybindings(502, switch=True)
 
         if self.mouse_in_window(x, y, self.win_chat):
             self.mouse_rel_x = self.mouse_rel_pos(x, y, self.win_chat)[0]
@@ -3374,27 +3210,27 @@ class TUI():
         """Handle mouse scroll events, by scrolling selection"""
         if self.mouse_in_window(x, y, self.win_tree):
             if up:
-                self.common_keybindings(self.keybindings["tree_up"][0])
+                self.common_keybindings(500)
             else:
-                self.common_keybindings(self.keybindings["tree_down"][0])
+                self.common_keybindings(501)
 
         elif self.mouse_in_window(x, y, self.win_chat):
             if up:
-                self.common_keybindings(self.KEYBINDINGS_CHAT_UP[0])
+                self.common_keybindings(521)
             else:
-                self.common_keybindings(self.KEYBINDINGS_CHAT_DOWN[0])
+                self.common_keybindings(522)
 
         elif self.win_extra_window and self.mouse_in_window(x, y, self.win_extra_window):
             if up:
-                self.common_keybindings(self.keybindings["extra_up"][0])
+                self.common_keybindings(523)
             else:
-                self.common_keybindings(self.keybindings["extra_down"][0])
+                self.common_keybindings(524)
 
         elif self.win_member_list and self.mouse_in_window(x, y, self.win_member_list):
             if up:
-                self.common_keybindings(self.keybindings["extra_up"][0], mouse=True)
+                self.common_keybindings(523, mouse=True)
             else:
-                self.common_keybindings(self.keybindings["extra_down"][0], mouse=True)
+                self.common_keybindings(524, mouse=True)
 
 
     def mouse_scroll_content(self, x, y, up):
@@ -3448,15 +3284,15 @@ class TUI():
         first = True
         try:
             while self.run:
-                key = self.screen.getch()
-                if key != curses.KEY_MOUSE:
+                key = self.get_key(self.screen)
+                if not isinstance(key, tuple):
                     continue
-                _, _, y, _, bstate = curses.getmouse()
+                y, x, key_type, pressed = key
                 if y != prev_y:
                     h = self.screen_hw[0] - 2 - 2*self.bordered - y
                     self.set_extra_height(h)
                     prev_y = y
-                if bstate & curses.BUTTON1_RELEASED or (bstate & curses.BUTTON1_PRESSED and not first):
+                if (not pressed and key_type == 0) or (pressed and key_type == 0 and not first):
                     break
                 first = False
         except curses.error:
@@ -3480,10 +3316,10 @@ class TUI():
         y_in_thumb = None
         try:
             while self.run:
-                key = self.screen.getch()
-                if key != curses.KEY_MOUSE:
+                key = self.get_key(self.screen)
+                if not isinstance(key, tuple):
                     continue
-                _, _, y, _, bstate = curses.getmouse()
+                y, x, key_type, pressed = key
                 if first:
                     rel_y = y - self.win_chat.getbegyx()[0]
                     y_in_thumb, on_thumb = self.calculate_y_in_thumb(rel_y)
@@ -3495,7 +3331,7 @@ class TUI():
                         rel_y = y - self.win_chat.getbegyx()[0]
                         self.move_scrollbar(rel_y, y_in_thumb)
                     prev_y = y
-                if bstate & curses.BUTTON1_RELEASED or (bstate & curses.BUTTON1_PRESSED and not first):
+                if (not pressed and key_type == 0) or (pressed and key_type == 0 and not first):
                     break
                 first = False
             if y is not None and first_y == y and not on_thumb:

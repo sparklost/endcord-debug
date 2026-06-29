@@ -613,7 +613,6 @@ class Discord():
             self.get_settings_proto(num)
         self.protos[num-1].update(data)
         if num == 1:
-            logger.info(data)
             encoded = base64.b64encode(protobuf.serialize_message(data, protobuf_schemata.USER_SETTINGS)).decode("utf-8")
         elif num == 2:
             return False   # unsupported
@@ -1916,7 +1915,6 @@ class Discord():
 
         message_data = None
         url = f"/emojis/{emoji_id}.{img_type}"
-        logger.info(url)
         if size:
             url = url + f"?size={size}"
         header = {

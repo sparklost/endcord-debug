@@ -264,7 +264,7 @@ class Endcord:
             headers=None,
             proxy=config["proxy"],
             user_agent=self.user_agent,
-         )
+        )
         self.tui = tui.TUI(self.screen, self.config, keybindings, command_bindings, draw_tree, draw_member_list)
         if self.fun:
             today = (time.localtime().tm_mon, time.localtime().tm_mday)

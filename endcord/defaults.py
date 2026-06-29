@@ -66,6 +66,7 @@ settings = {
     "assist": True,
     "assist_swap_binding": True,
     "assist_skip_app_command": False,
+    "fallback_keybinding_parser": False,
     "assist_limit": 50,
     "assist_score_cutoff": 15,
     "limit_command_history": 50,
@@ -210,177 +211,169 @@ theme = {
 
 keybindings = {
     # tree
-    "tree_up": 575,   # Ctrl+Up
-    "tree_down": 534,   # Ctrl+Down
-    "tree_select": 0,   # Ctrl+Space
-    "tree_collapse_threads": "ALT+104",   # Alt+H
-    "tree_join_thread": "ALT+106",   # Alt+J
-    "channel_info": "ALT+105",   # Alt+I
-    "copy_channel_link": "ALT+85",   # Alt+Shift+U
+    "tree_up": ("C-UP", 500),
+    "tree_down": ("C-DOWN", 501),
+    "tree_select": ("C-SPACE", 502),
+    "tree_collapse_threads": ("M-h", 503),
+    "tree_join_thread": ("M-j", 21),
+    "channel_info": ("M-i", 25),
+    "copy_channel_link": ("M-u", 30),
     # input line
-    "input_left": 260,   # Left
-    "input_right": 261,   # Right
-    "word_left": 554,   # Ctrl+Left
-    "word_right": 569,   # Ctrl+Right
-    "select_left": 393,   # Shift+Left
-    "select_right": 402,   # Shift+Right
-    "select_word_left": 555,   # Ctrl+Shift+Left
-    "select_word_right": 570,   # Ctrl+Shift+Right
-    "insert_newline": 14,   # Ctrl+N
-    "undo": "ALT+122",   # Alt+Z
-    "redo": "ALT+90",   # Alt+Shift+Z
-    "select_all": "ALT+97",   # Alt+A
-    "copy": "ALT+99",   # Alt+C
-    "cut": "ALT+120",   # Alt+X
-    "paste": 22,   # Ctrl+V
-    "delete_word": 8,   # Ctrl+Backspace/Ctrl+H
-    "delete_word_forward": 528,   # Ctrl+Del
+    "input_left": ("LEFT", 504),
+    "input_right": ("RIGHT", 505),
+    "word_left": ("C-LEFT", 506),
+    "word_right": ("C-RIGHT", 507),
+    "select_left": ("SHIFT+LEFT", 508),
+    "select_right": ("SHIFT+RIGHT", 509),
+    "select_word_left": ("C-SHIFT+LEFT", 510),
+    "select_word_right": ("C-SHIFT+RIGHT", 511),
+    "insert_newline": ("C-n", 512),
+    "undo": ("M-z", 513),
+    "redo": ("M-S-z", 514),
+    "select_all": ("M-a", 515),
+    "copy": ("M-a", 516),
+    "cut": ("M-x", 517),
+    "paste": ("C-v", 23),
+    "delete_word": ("C-BACKSPACE", 518),
+    "delete_word_forward": ("C-DEL", 519),
     # chat
-    "send_message": 10,   # Enter
-    "chat_up": 259,   # Up
-    "chat_down": 258,   # Down
-    "reply": 18,   # Ctrl+R
-    "edit": 5,   # Ctrl+E
-    "delete": 4,   # Ctrl+D
-    "toggle_ping": 16,   # Ctrl+P
-    "scroll_bottom": 2,   # Ctrl+B
-    "go_replied": 7,   # Ctrl+G
-    "download": 12,   # Ctrl+L
-    "upload": 21,   # Ctrl+U
-    "browser": 15,   # Ctrl+O
-    "view_media": 23,   # Ctrl+W
-    "spoil": "ALT+115",   # Alt+S
-    "search": 6,   # Ctrl+F
-    "search_gif": "ALT+102",   # Alt+F
-    "profile_info": "ALT+112",   # Alt+P
-    "copy_message_link": "ALT+117",   # Alt+U
-    "add_reaction": "ALT+114",   # Alt+R
-    "show_reactions": "ALT+119",   # Alt+W
-    "show_pinned": "ALT+110",   # Alt+N
+    "send_message": ("ENTER", 520),
+    "chat_up": ("UP", 521),
+    "chat_down": ("DOWN", 522),
+    "reply":  ("C-r", 1),
+    "edit": ("C-e", 2),
+    "delete": ("C-d", 3),
+    "toggle_ping": ("C-p", 6),
+    "scroll_bottom": ("C-b", 7),
+    "go_replied": ("C-g", 8),
+    "download": ("C-l", 9),
+    "upload": ("C-u", 13),
+    "browser": ("C-o", 10),
+    "view_media": ("C-w", 17),
+    "spoil": ("M-s", 18),
+    "search": ("C-f", 29),
+    "search_gif": ("M-f", 44),
+    "profile_info": ("M-p", 24),
+    "copy_message_link": ("M-u", 31),
+    "add_reaction": ("M-r", 36),
+    "show_reactions": ("M-w", 37),
+    "show_pinned": ("M-n", 43),
     # extra line
-    "attach_prev": "ALT+44",   # Alt+<
-    "attach_next": "ALT+46",   # Alt+>
+    "attach_prev": ("M-,", 14),
+    "attach_next": ("M-.", 15),
     # extra window
-    "extra_up": 573,   # Alt+Up
-    "extra_down": 532,   # Alt+Down
-    "extra_select": "ALT+10",   # Alt+Enter
-    "preview_upload": "ALT+118",   # Alt+V
+    "extra_up": ("M-UP", 523),
+    "extra_down": ("M-DOWN", 524),
+    "extra_select": ("M-ENTER", 27),
+    "preview_upload": ("M-v", 22),
     # media
-    "media_pause": 32,   # Space
-    "media_replay": 122,   # Z
-    "media_seek_forward": 261,   # Right
-    "media_seek_backward": 260,   # Left
-    "media_volume_up": 259,   # Up
-    "media_volume_down": 258,   # Down
+    "media_pause": ("SPC", None),
+    "media_replay": ("z", None),
+    "media_seek_forward": ("RIGHT", None),
+    "media_seek_backward": ("LEFT", None),
+    "media_volume_up": ("UP", None),
+    "media_volume_down": ("DOWN", None),
     # other
-    "command_palette": 31,   # Ctrl+/
-    "cancel": 24,   # Ctrl+X
-    "cycle_status": "ALT+100",   # Alt+D
-    "toggle_member_list": "ALT+109",   # Alt+M
-    "toggle_tree": "ALT+116",   # Alt+T
-    "toggle_tab": 20,   # Ctrl+T
-    "switch_tab_modifier": "ALT+NUM",   # Alt+Num
-    "open_external_editor": "ALT+101",   # Alt+E
-    "quit": None,   # already bound to Ctrl+C
+    "command_palette": ("C-/", 38),
+    "cancel": ("C-x", 11),
+    "cycle_status": ("M-d", 33),
+    "toggle_member_list": ("M-m", 35),
+    "toggle_tree": ("M-t", 32),
+    "toggle_tab": ("M-t", 41),
+    "switch_tab_modifier": ("M-NUM", None),
+    "open_external_editor": ("M-e", 45),
+    "quit": (None, 34),   # already bound to Ctrl+C
 }
 
 
 command_bindings = {
-    "552": "switch_tab prev",
-    "567": "switch_tab next",
-    "11": "command_palette; type 'goto '",
-    "336": "tree_select server; collapse_all_except selected",
-    "337": "tree_select server prev; collapse_all_except selected",
-    "25-259": "resize_popup_window +1",
-    "25-258": "resize_popup_window -1",
+    "M-LEFT": "switch_tab prev",
+    "M-RIGHT": "switch_tab next",
+    "C-k": "command_palette; type 'goto '",
+    "S-UP": "tree_select server prev; collapse_all_except selected",
+    "S-DOWN": "tree_select server; collapse_all_except selected",
+    "C-y UP": "resize_popup_window +1",
+    "C-y DOWN": "resize_popup_window -1",
 }
 
 
 vim_mode_bindings = {
     # special
-    "insert_mode": "i",
+    "insert_mode": ("i", 525),
     # tree
-    "tree_up": "K",
-    "tree_down": "J",
-    "tree_select": " ",
-    "tree_collapse_threads": "W",
-    "tree_join_thread": "O",
-    "channel_info": "I",
-    "copy_channel_link": "C",
+    "tree_up": ("K", 500),
+    "tree_down": ("J", 501),
+    "tree_select": (" ", 502),
+    "tree_collapse_threads": ("W", 503),
+    "tree_join_thread": ("O", 21),
+    "channel_info": ("I", 25),
+    "copy_channel_link": ("C", 30),
     # input line
-    "input_left": "h",
-    "input_right": "l",
-    "word_left": "b",
-    "word_right": "w",
-    "select_left": 8,   # Ctrl+H
-    "select_right": 12,   # Ctrl+L
-    "insert_newline": 14,   # Ctrl+N
-    "undo": "u",
-    "redo": 18,   # Ctrl+R
-    "select_word_left": "H",
-    "select_word_right": "L",
-    "select_all": "a",
-    "copy": "y",
-    "cut": "Y",
-    "paste": "p",   # Ctrl+V
-    "delete_word": "X",
+    "input_left": ("h", 504),
+    "input_right": ("l", 505),
+    "word_left": ("b", 506),
+    "word_right": ("w", 507),
+    "select_left": ("C-h", 508),
+    "select_right": ("C-l", 509),
+    "select_word_left": ("H", 510),
+    "select_word_right": ("L", 511),
+    "insert_newline": ("C-n", 512),
+    "undo": ("u", 513),
+    "redo": ("C-r", 514),
+    "select_all": ("a", 515),
+    "copy": ("y", 516),
+    "cut": ("Y", 517),
+    "paste": ("p", 23),
+    "delete_word": ("X", 518),
     # chat
-    "send_message": 10,   # Enter
-    "chat_up": "k",
-    "chat_down": "j",
-    "reply": "r",
-    "edit": "e",
-    "delete": "d",
-    "toggle_ping": "P",
-    "scroll_bottom": "B",
-    "go_replied": "g",
-    "download": "D",
-    "upload": "U",
-    "browser": "o",
-    "view_media": "v",
-    "spoil": "S",
-    "search": "f",
-    "search_gif": "F",
-    "profile_info": "c",
-    "copy_message_link": "M",
-    "add_reaction": "R",
-    "show_reactions": "A",
-    "show_pinned": "n",
+    "send_message": ("ENTER", 520),
+    "chat_up": ("k", 521),
+    "chat_down": ("j", 522),
+    "reply": ("r", 1),
+    "edit": ("e", 2),
+    "delete": ("d", 3),
+    "toggle_ping": ("P", 6),
+    "scroll_bottom": ("B", 7),
+    "go_replied": ("g", 8),
+    "download": ("D", 9),
+    "upload": ("U", 13),
+    "browser": ("o", 10),
+    "view_media": ("v", 17),
+    "spoil": (18),
+    "search": ("f", 29),
+    "search_gif": ("F", 44),
+    "profile_info": ("c", 24),
+    "copy_message_link": ("M", 31),
+    "add_reaction": ("R", 36),
+    "show_reactions": ("A", 37),
+    "show_pinned": ("n", 43),
     # extra line
-    "attach_prev": "<",
-    "attach_next": ">",
+    "attach_prev": ("<", 14),
+    "attach_next": (">", 15),
     # extra window
-    "extra_up": ",",
-    "extra_down": ".",
-    "extra_select": "q",
-    "preview_upload": "V",
+    "extra_up": (",", 523),
+    "extra_down": (".", 524),
+    "extra_select": ("q", 27),
+    "preview_upload": ("V", 22),
     # other
-    "command_palette": ":",
-    "cancel": "x",
-    "cycle_status": "s",
-    "toggle_member_list": "m",
-    "toggle_tree": "t",
-    "toggle_tab": "T",
-    "switch_tab_modifier": "NUM",
-    "open_external_editor": "E",
-    "quit": "Q",
+    "command_palette": (":", 38),
+    "cancel": ("x", 11),
+    "cycle_status": ("s", 33),
+    "toggle_member_list": ("m", 35),
+    "toggle_tree": ("t", 32),
+    "toggle_tab": ("T", 41),
+    "switch_tab_modifier": ("NUM", None),
+    "open_external_editor": ("E", 45),
+    "quit": ("Q", 34),
 }
 
 windows_override_keybindings = {
-    "command_palette": 28,   # Ctrl+\
-    "tree_up": 480,   # Ctrl+Up
-    "tree_down": 481,   # Ctrl+Down
-    "tree_select": 1,   # Ctrl+A
-    "word_left": 443,   # Ctrl+Left
-    "word_right": 444,   # Ctrl+Right
-    "view_media": "ALT+121",   # Alt+Y
+    "tree_select": ("C-a", 502),
 }
 
 
 macos_override_keybindings = {
-    "tree_up": 337,   # Shift+Up
-    "tree_down": 336,   # Shift+Down
-    "browser": "ALT+111",   # Alt+O
+    "browser": ("M-o", 10),
 }
 
 

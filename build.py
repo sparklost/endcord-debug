@@ -18,7 +18,7 @@ PYTHON_MAX_MINOR = 14
 PYTHON_FREETHREADED = 14
 PYTHON_LAST_SAFE = 13
 PYTHON_PATCH = 6
-CURSES_TAG = "v6_6_20251230"
+CURSES_TAG = "v6_6_20260627"
 
 CUSTOM_CFLAGS = [
     "-DNDEBUG",
@@ -868,6 +868,7 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd
         *add_data,
         *options,
         "--static-libpython=yes" if static_python else "",
+        "--no-deployment-flag=self-execution",   # -c and -m flags are safely handled by argparser
         "--no-prefer-source-code",
         "--remove-output",
         "--output-dir=dist",

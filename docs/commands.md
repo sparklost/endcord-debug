@@ -189,12 +189,3 @@ Special commands available only for command-bindings (macros).
     Sleep for specified numbr of seconds. If some macro fails to execute, adding `sleep 0.1` between the two comands may help.
 - `type [text]`  
     "Type" specifid text at cursor position in input line in current context.
-
-
-## Default command-bindings (macros)
-- `Ctrl+K` - `"11" = "command_palette; type 'goto '"`  
-    Open command palette and type `goto `.
-- `Shift+Down` - `"336" = "tree_select server; collapse_all_except selected"`  
-    Select next server in tree and collapse all other servers except it.
-- `Shift+Up` - `"337" = "tree_select server prev; collapse_all_except selected"`  
-    Select previous server in tree and collapse all other servers except it.

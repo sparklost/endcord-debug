@@ -114,11 +114,9 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
 
 ## Adding a binding
 1. Add method `init_bindings` to extension class, it takes 1 argumet: `keybindings` - a dict: {keybinding_name: value}
-    - First try to load binding from `keybindings` which follows format given in #settings, it should have default value.
-    - Store those values in the class, they will be accessed by `on_binding`
-    - It must return a dict containing only this extensions bindings, with format: {keybinding_name: value}
+    - This is important only if adding chainged bindings.
 2. Add method named `on_binding` to extension class, it takes 3 arguments: `key`, `is_command` (bool), `is_forum` (bool)
-    - `key` will be same thing as printed in keybinding resolver. `is_forum` means that currently command is being typed. `is_forum` means that forum is currently opened.
+    - `key` will be same thing as printed in keybinding resolver. `is_command` means that currently command is being typed. `is_forum` means that forum is currently opened.
     - Test if `key` is same as specific keybinding that was defined in `init_bindings`.
     - `on_binding` must return value that represents the action code. This action code is matched in `on_wait_input`. It is recommended to use action codes above 1000 to avoid any collisions with default ones, and other extensions.
     - If no key is matched, return `None`

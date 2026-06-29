@@ -297,8 +297,7 @@ But there is also setting in config to open media in external app (cross-system,
 
 ### Experimental windowed mode
 This mode entirely replaces curses with pygame-ce GUI library. This means Endcord runs in its own window, not in terminal, but UI remains terminal-like.  
-Tray icon will also be enabled, so closing window will only minimize it to tray.  
-Keybinding remain the same, but all codes are like on Linux, so old keybinding codes may not work on Windows.  
+Tray icon will also be enabled, so closing window will only minimize it to tray.    
 If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.  
 Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All meda will be opened in native player.  
 Building with nuitka on python >=3.13 will create executable that segfaults! Building with pyinstaller is not recommended because it generates huge binary.  
@@ -506,7 +505,8 @@ See [keybinding](#keybinding) for instructions on how to add multiple keybinding
 ### If some keybindings still don't work
 Its probably terminal emulator sending different key codes than those in default settings. Check this by running endcord with `-k` or `--keybinding` to start keybinding resolver.  
 Then press key combination and see printed code. Put this code in settings to use it.  
-This mostly happens with `Ctrl+Arrow` and `Alt+Arrow` combinations, on some non-standard terminal emulators like kitty or cmder.
+This mostly happens with `Ctrl+Arrow` and `Alt+Arrow` combinations, on some non-standard terminal emulators like kitty or cmder.  
+As a last resort try setting `fallback_keybinding_parser = True` in config.  
 
 ### Running in tty
 If there are no colors in Linux tty (but there should be), endcord can run inside [fbterm](https://salsa.debian.org/debian/fbterm).  

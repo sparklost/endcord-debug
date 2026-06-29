@@ -65,13 +65,13 @@ def main(args):
         defaults.keybindings.update(defaults.windows_override_keybindings)
     elif sys.platform == "darwin":
         defaults.keybindings.update(defaults.macos_override_keybindings)
-    keybindings = config.load_config(
+    keybindings = config.load_keybindings(
         config_path,
         defaults.keybindings,
         section="keybindings",
         gen_config=gen_config,
     )
-    command_bindings = config.load_config(
+    command_bindings = config.load_keybindings(
         config_path,
         defaults.command_bindings,
         section="command_bindings",
@@ -79,17 +79,13 @@ def main(args):
         merge=True,
     )
     if config_data["vim_mode"]:
-        vim_keybindings = config.load_config(
+        vim_keybindings = config.load_keybindings(
             config_path,
             defaults.vim_mode_bindings,
             section="vim_mode_bindings",
             gen_config=gen_config,
-            merge=True,
         )
         keybindings = config.merge_keybindings(keybindings, vim_keybindings, command_bindings)
-    if not uses_pgcurses:
-        keybindings = config.convert_keybindings(keybindings)
-        command_bindings = config.convert_keybindings_cmd(command_bindings)
 
     keybindings = config.normalize_keybindings(keybindings)
 
@@ -110,7 +106,7 @@ def main(args):
         from endcord import keybinding
         if uses_pgcurses:
             curses.enable_tray = False
-        keybinding.picker(keybindings, command_bindings)
+        keybinding.picker(keybindings, command_bindings, config_data["fallback_keybinding_parser"])
         sys.exit(0)
     elif args.media:
         if not (

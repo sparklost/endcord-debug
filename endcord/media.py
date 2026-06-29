@@ -246,7 +246,11 @@ class TerminalMedia():
         self.default_color = config["color_default"][0]   # all 255 colors already init in order
         self.yt_dlp_path = config["yt_dlp_path"]
         self.yt_dlp_format = config["yt_dlp_format"]
-        self.keybindings = keybindings
+        self.keybindings = {}
+        for key, value in keybindings.items():
+            if not key.startswith("media_"):
+                continue
+            self.keybindings[key] = value[0] if isinstance(value[0], str) else value[0][0]
         if self.default_color == -1:
             self.default_color = 0
         self.external = external

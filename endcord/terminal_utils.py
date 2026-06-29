@@ -27,25 +27,26 @@ else:
     OLD_TERM = termios.tcgetattr(STDIN_FD)
 
 
-KEY_CODES = {   # from curses for consistency
-    b"\x1b[A": 259,   # UP
-    b"\x1b[B": 258,   # DOWN
-    b"\x1b[D": 260,   # LEFT
-    b"\x1b[C": 261,   # RIGHT
-    b"\x1b[H": 262,   # HOME
-    b"\x1b[F": 360,   # END
-    b"\x1b[5~": 339,  # PG_UP
-    b"\x1b[6~": 338,  # PG_DOWN
-    b"\x1b[3~": 330,  # DELETE
-    b"\x1b[2~": 331,  # INSERT
+KEY_CODES = {
+    b"\x1b[A": "UP",
+    b"\x1b[B": "DOWN",
+    b"\x1b[D": "LEFT",
+    b"\x1b[C": "RIGHT",
+    b"\x1b[H": "HOME",
+    b"\x1b[F": "END",
+    b"\x1b[3~": "DELETE",
+    b" ": "SPC",
+    b"\t": "TAB",
+    b"\r": "ENTER",
+    b"\n": "ENTER",
 }
 
 KEY_CODES_WIN = {
-    b"H": 259,  # UP
-    b"P": 258,  # DOWN
-    b"M": 261,  # RIGHT
-    b"K": 260,  # LEFT
-    b"S": 330,  # DELETE
+    b"H": "UP",
+    b"P": "DOWN",
+    b"M": "RIGHT",
+    b"K": "LEFT",
+    b"S": "DELETE",
 }
 
 width = 0
@@ -138,16 +139,25 @@ def read_key():
     """Blocking read key, return key code like curses.getch(), alt sequences are not handled"""
     fd = sys.stdin.fileno()
 
-    # wait for first byteZ
+    # wait for first byte
     first = os.read(fd, 1)
+    if not first:
+        return None
+    return repr(first)
 
     # backspace
     if first == b"\x7f":
-        return 263
+        return "BACKSPACE"
 
-    # single code
+    # standard characters
     if first != b"\x1b":
-        return KEY_CODES.get(first, ord(first))
+        key = KEY_CODES.get(first)
+        if key:
+            return key
+        try:
+            return first.decode("utf-8")
+        except UnicodeDecodeError:
+            return first
 
     # escape sequences
     seq = first
@@ -172,7 +182,10 @@ def read_key():
         else:
             break
 
-    return 27
+    if seq == b"\x1b":
+        return "ESC"
+
+    return repr(seq)
 
 
 def read_key_win():
@@ -182,16 +195,16 @@ def read_key_win():
 
         # backspace
         if ch == b"\x08":
-            return 8
+            return "BACKSPACE"
 
         # escape
         if ch == b"\x1b":
-            return 27
+            return "ESC"
 
         # escape sequences
         if ch in (b"\x00", b"\xe0"):
             ch2 = msvcrt.getch()
-            return KEY_CODES_WIN.get(ch2, ord(ch2))
+            return KEY_CODES_WIN.get(ch2, ch2.decode())
 
         return ord(ch)
 

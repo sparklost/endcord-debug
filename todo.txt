@@ -1,10 +1,3 @@
-WIP:
-Switch to raw curses input mode
-Switch to latest curses version
-Change bindings to standard values
-Patch python 3.14 using python 3.16 curses module to enable 255+ colors
-Update tui.py to support 255+ colors
-
 RUST-FREE:
 Add custom environment management through build.py - remove uv dependency
 Add --minimal option to build script (removes numpy orjson soundcard soundfile)
@@ -12,6 +5,8 @@ Write custom optimized json parser in cython - remove orjson dependency
 Or Add --norust option to build script
 
 MISC:
+Patch python 3.14 using python 3.16 curses module to enable 255+ colors
+Update tui.py to support 255+ colors
 Fix sent audio is delayed and low quality
 Fix receiver audio mixer
 Add transmmitter audio mixer

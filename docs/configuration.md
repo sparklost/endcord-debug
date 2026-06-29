@@ -144,8 +144,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `remember_collapsed_channels = False`  
     Wether to persist collapsed state for forums and channels with threads.
 - `assist_skip_app_command = False`  
-    Skip assist for app_name when typing app command. Instead, show all app commands and insert app_name with
-  selected command.
+    Skip assist for app_name when typing app command. Instead, show all app commands and insert app_name with selected command.
+- `fallback_keybinding_parser = False`  
+    Use fallback keybinding resolver. Some keybindings may not work, but should be more stable on exotic terminals. On windows, this is forced ON.
 - `assist_limit = 50`  
     Maximum number of results when showing assist.
 - `assist_score_cutoff = 15`  
