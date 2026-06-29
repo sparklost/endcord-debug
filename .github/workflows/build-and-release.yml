@@ -183,7 +183,7 @@ jobs:
           cp ../README.md ../LICENSE .
           cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
-            # tar -czf "endcord-$version-${{ matrix.platform }}.tar.gz" endcord $extra
+            tar -czf "endcord-$version-${{ matrix.platform }}.tar.gz" endcord $extra
             tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
           elif [[ "${{ matrix.platform }}" == "windows" ]]; then
             7z a "endcord-$version-${{ matrix.platform }}.zip" endcord.exe $extra
