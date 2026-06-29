@@ -13,7 +13,7 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest]   # windows-latest, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -21,24 +21,24 @@ jobs:
             nuitka: true
             clang: true
             clang-version: 22.1.3
-          - os: windows-latest
-            platform: windows
-            python-version: 3.14
-            nuitka: true
-            clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
-            clang-version: 21.1.8
-          - os: macos-15
-            platform: macos
-            python-version: 3.14
-            nuitka: false
-            clang: true
-            clang-version: 21.1.8
-          - os: macos-15-intel
-            platform: macos
-            python-version: 3.14
-            nuitka: false
-            clang: true
-            clang-version: 21.1.8
+          # - os: windows-latest
+          #   platform: windows
+          #   python-version: 3.14
+          #   nuitka: true
+          #   clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+          #   clang-version: 21.1.8
+          # - os: macos-15
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
+          # - os: macos-15-intel
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
