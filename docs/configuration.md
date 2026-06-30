@@ -16,10 +16,11 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Number of messages kept in chat buffer. Initial buffer is 50 messages and is expanded in scroll direction. Limit: 50-1000. Larger value will cause longer chat updates.  
 - `limit_channel_cache = 10`  
     How many previous channel chats are kept in cache. For each channel `download_msg` number of messages are kept.  Set to `0` to disable caching.  
-    Tabbed channels are counted as "pinned" cached channels.
-    Larger limit_channel_cache value will cause more RAM and CPU usage.
+    Tabbed channels are counted as "pinned" cached channels.  
+    Larger limit_channel_cache value will cause more RAM and CPU usage.a
 - `download_msg = 25`  
-    Number of messages downloaded in chunks for updating chat. Discord default is 25. Limit: 20-100. Larger values will cause longer waiting time when switching channel and loading chat chunks.
+    Number of messages downloaded in chunks for updating chat. Discord default is 25. Limit: 20-100.  
+    Larger values will cause longer waiting time when switching channel and loading chat chunks.
 - `convert_timezone = True`  
     Use local time. If set to False, will show UTC time.
 - `send_typing = True`  
@@ -28,17 +29,20 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Allow sending desktop notifications when user is pinged/mentioned.  
     Set to `2` to disable notification but keep sound, only `custom_notification_sound` will be used.
 - `idle_timeout = 10`  
-    After how many **minutes** to automatically switch to idle status. Set to `None` or `0` to disable. Note: this only detects when window is **not focused**.
+    After how many **minutes** to automatically switch to idle status. Set to `None` or `0` to disable.  
+    Note: this only detects when window is **not focused**.
 - `notification_when_focused = False`  
     Wether to receive desktop notifications when terminal is not focused.
 - `remove_previous_notification = True`  
-    Remove previous desktop notification thats coming from same DM/Channel.  
+    Remove previous desktop notification that's coming from same DM/Channel.
 - `ack_throttling = 5`  
     Delay in seconds between each ack send. Minimum is 3s. The larger it is, the longer will `[N+ unreads]` stay in status line.
 - `member_list = True`  
-    Whether to download member activities. Disable for lower CPU, RAM and network usage. If disabled, member list will be empty and there will be no presences in profile view screen.
+    Whether to download member activities. Disable for lower CPU, RAM and network usage.  
+    If disabled, member list will be empty and there will be no presences in profile view screen.
 - `member_list_auto_open = False`  
-    Automatically opem member list on startup and on channel switch to different guild, if enough space. Will disable persisting member list state between sessions.  
+    Automatically open member list on startup and on channel switch to different guild, if enough space.  
+    Will disable persisting member list state between sessions.
 - `use_nick_when_avail = True`  
     Replace global_name with nick when it is available.
 - `remember_state = True`  
@@ -52,7 +56,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `cache_typed = True`  
     Save unsent message when switching channel, and load it when re-opening that channel.
 - `show_pending_messages = True`  
-    Show pending messages in chat with `color_chat_pending` until they are sent. Disable to save some CPU usage when sending messages.  
+    Show pending messages in chat with `color_chat_pending` until they are sent. Disable to save some CPU usage when sending messages.
 - `assist = True`  
     Assist when typing @username, @role, #channel, :emoji:, ;sticker;
  - `assist_swap_binding = True`  
@@ -67,7 +71,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     What to do with blocked/ignored messages:  
     0 - No blocking  
     1 - Mask blocked messages  
-    2 - Hide blocked messages  
+    2 - Hide blocked messages
 - `hide_spam = True`  
     Whether to hide or show spam DM request channels in DM list.
 - `keep_deleted = False`  
@@ -87,7 +91,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `mouse_scroll_selection = False`  
     Scroll selection instead content, disables mouse_scroll_sensitivity.  
 - `draw_scrollbar = True`  
-    Wether to draw scrollbar at the right side of the chat.
+    Whether to draw scrollbar at the right side of the chat.
 - `screen_update_delay = 0.01`  
     Delay in seconds before screen is updated. Limited to min 0.01.  
     Too low value will cause visual "glitches". Increasing value will add latency between performed action and visual feedback.
@@ -99,7 +103,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     1 - gif UHD  
     2 - mp4 Video  
 - `trim_embed_url_size = 40`  
-    Length to which to trim embed url, appended with `...`. Set to `None` to diable. Minimum is 20.
+    Length to which to trim embed url, appended with `...`. Set to `None` to disable. Minimum is 20.
 - `aspell_mode = "normal"`  
     [Aspell](http://aspell.net/) filter mode.  
     Available options: `ultra` / `fast` / `normal` / `slow` / `bad-spellers`  
@@ -115,7 +119,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Maximum framerate when playing videos.
 - `media_font_aspect_ratio = None`  
     Font height/width ratio is automatically queried from terminal. But it may fail, in that case default `2.25` value is used.  
-    If pictures appear wider or narower change this to value = `char_w / char_h`, eg. `18 / 8 = 2.25`.
+    If pictures appear wider or narrower change this to value = `char_w / char_h`, eg. `18 / 8 = 2.25`.
 - `inline_media = False`  
     Draw inline images in chat. Requires media support (not endcord-lite). Currently does nothing.
 - `inline_media_height = 14`  
@@ -169,7 +173,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `notifications_pfp = True`  
     Whether to include profile pictures in notifications.   
     If enabled will slightly delay notification if picture is being downloaded. Pictures are cached in system default cache dir.  
-    Set to number to change maximum picture resolution, eg. `notifications_pfp = 128` will always download image with resolution 128x128 or worse.  
+    Set to number to change maximum picture resolution, eg. `notifications_pfp = 128` will always download image with resolution 128x128 or worse.
 - `linux_notification_sound = "message"`  
     Sound played when notification is displayed. Linux only. Set to `None` to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension.
 - `custom_notification_sound = None`  
@@ -205,21 +209,23 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     0 - Do not check  
     1 - Show popup if there are updates  
     2 - Show popup and send desktop notification  
-    3 - Only check endcord, and don't send desktop notification
+    3 - Only check endcord, and don't send desktop notification  
     4 - Only check endcord, and send desktop notification
 - `check_update_interval = 1`  
     How often to check for endcord and extensions updates, in days.
 -  `client_properties = "default"`  
-    Client properties are used by discord in spam detection system. They contain various system information like operating system and browser user agent. There are 2 options available: `"default"` and `"anonymous"`.  
+    Client properties are used by discord in spam detection system.  
+    They contain various system information like operating system and browser user agent. Available options:
     - `"default"` - Approximately what official desktop client sends. Includes: OS version, architecture, Linux window manager, locale.  
     - `"anonymous"` - Approximately what official web client sends. But there is higher risk to trigger spam heuristics.  
 - `custom_user_agent = None`  
     Custom [user agent string](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/User-Agent) for `client_properties`.  
     Default user agent is Firefox for `"anonymous"` and discord desktop client for `default` client properties.  
     User agent should not be changed unless the [default ones](https://github.com/sparklost/endcord/blob/main/endcord/client_properties.py) are very outdated.  
-    Setting wrong user agent can make you more suspicious to discord spam filter! Make sure user agent string matches your OS.  
+    Setting wrong user agent can make you more suspicious to discord spam filter! Make sure user agent string matches your OS.
 - `send_x_super_properties = True`  
-    Enable sending X-Super-Properties header containing system information. May reduce risk suspicion of client. Disabling this may solve message sending issues ("reurned error code 400" in log).  
+    Enable sending X-Super-Properties header containing system information. May reduce risk suspicion of client.  
+    Disabling this may solve message sending issues ("reurned error code 400" in log).  
 - `proxy = None`  
     Proxy URL to use, it must be this format: `protocol://host:port`, example: `socks5://localhost:1080`.  
     Supported proxy protocols: `http`, `socks5`.  
@@ -341,20 +347,21 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `border_corners = "╭╰╮╯"`  
     Characters used to draw corners in bordered mode.
 - `activity_icons = "🎮︎📺︎♪📺︎🎮︎"`  
-    Characters used to indicate rich presence activiry in member list.  
+    Characters used to indicate rich presence activity in member list.  
     Order of characters: Playing, Streaming, Listening, Watching, Competing.
 - `smart_chat_lines = True`  
     Wether to extend lines in chat, left of reactions, in grouped messages only. Will use `tree_drop_down_intersect` and `tree_drop_down_vline`.
 - `username_role_colors = True`  
     Allow `%username` and `%global_name` to have color of primary role.
 - `dynamic_name_len = True`  
-    Use dynamic name length for usernames and global_names in `format_message` and `format_reply` only. Overrides `limit_username` option and name length is limited to `chat_width - 15`.  
-    If this is ON, `color_format_message` still works same as with dynamic_name_len OFF, and it will internally correct for dynamic name difference.  
+    Use dynamic name length for usernames and global_names in `format_message` and `format_reply` only.  
+    Overrides `limit_username` option and name length is limited to `chat_width - 15`.  
+    If this is ON, `color_format_message` still works same as with `dynamic_name_len = False`, and it will internally correct for dynamic name difference.  
     Eg.: if color format has red character set to be at index 20, and `limit_username = 10`, `format_message = "abcd %username1234X67` but dynamic name is ON, then red character will always be 5 characters after `%username`. because `20 - length("abcd ") - 10 = 5`.
 - `media_use_blocks = True`  
-    Whether to use "block" characters (`▀`) for drawing media instead traditional characters from media_ascii_palette.  
+    Whether to use "block" characters (`▀`) for drawing media instead traditional characters from `media_ascii_palette`.  
     This will result in clearer picture with pixel-like characters, vertical resolution will be doubled.  
-    media_ascii_palette and media_saturation have no effect when this is ON.  
+    `media_ascii_palette` and media_saturation have no effect when this is ON.
 - `media_truecolor = True`  
     Use truecolor for media rendering. Works only for `media_use_blocks`.
 - `media_ascii_palette = "  ..',;:c*loexk#O0XNW"`  
@@ -459,7 +466,7 @@ Every next list has additional `start` and `end`- indexes on a line where color 
 - `%username` - of message author
 - `%global_name` - of message author
 - `%timestamp` - formatted with `format_timestamp`
-- `%edited` - replaced with `edited_string`  
+- `%edited` - replaced with `edited_string`
 - `%app` - replaced with `app_string` if this message is sent by app or webhook
 Note: everything after `%content` may be pushed to newline.
 

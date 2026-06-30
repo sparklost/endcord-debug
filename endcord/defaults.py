@@ -339,7 +339,7 @@ vim_mode_bindings = {
     "upload": ("U", 13),
     "browser": ("o", 10),
     "view_media": ("v", 17),
-    "spoil": (18),
+    "spoil": ("S", 18),
     "search": ("f", 29),
     "search_gif": ("F", 44),
     "profile_info": ("c", 24),

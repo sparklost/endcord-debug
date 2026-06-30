@@ -831,7 +831,10 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd
         exclude_imports.append("--nofollow-import-to=soundcard")
         package_data.remove("--include-package-data=soundcard")
     if full:
-        hidden_imports += ["--include-module=av.sidedata.encparams"]
+        hidden_imports += [
+            "--include-module=av.sidedata.encparams",
+            "--include-module=av.utils",
+        ]
 
     # platform-specific
     if sys.platform == "linux":

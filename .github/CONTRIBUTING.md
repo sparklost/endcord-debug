@@ -1,10 +1,10 @@
 ## **NOT OPEN SOURCE**
-Endcord is licensed under source-available license. This means it is **NOT OPEN SOURCE**. How this affects you:
+Endcord is licensed under source-available license. This means it is **NOT OPEN SOURCE**. How this affects you:  
 If you are a user, this **doesn't affect** the slightest how you are using endcord.  
 If you are a developer, you are **NOT ALLOWED TO PUBLICLY MODIFY THE CODE**.  
 If you are a package maintainer, license specifically allows it to distribute **binaries built from verbatim unmodified source code**.  
-Slightly longer and more detailed explanation is in the [license file](LICENSE).
-Why? Because this is one-person project, and this person is greedily taking all the fun of programming for themselves. And as bonus they ensures that this project stays 100% human made, forever.
+Slightly longer and more detailed explanation is in the [license file](LICENSE).  
+Why? Because this is one-person project, and this person is greedily taking all the fun of programming for themselves. And as bonus they ensures that this project stays 100% human made, forever.  
 
 ### The only ways you can contribute
 - Open an issue containing bug report or feature request
@@ -30,7 +30,7 @@ Why? Because this is one-person project, and this person is greedily taking all 
 
 
 ## Architecture
-Endcord is developed in "Modular composition and component-based architecture using singleton services with a central orchestrator".
+Endcord is developed in "Modular composition and component-based architecture using singleton services with a central orchestrator".  
 Explanation:
 - Modular component-based - program is split into independent modules (classes in separate files), each responsible for a specific thing.
 - Composition - main app class contains and uses instances of other classes instead of inheriting from them.
@@ -39,7 +39,7 @@ Explanation:
 
 
 ## Build protobuf
-DEPRECATED - Custom protobuf implementation is used
+DEPRECATED - Custom protobuf implementation is used.
 ```bash
 sudo pacman -Syu protobuf
 protoc -I tools --python_out=endcord user_settings.proto
@@ -198,7 +198,7 @@ user/flags - missing
 /user_guild_settings/entries/channel_overrides/collapsed - missing  
 
 - `TYPING_START`:
-/member/user/global_name - missing  
+/member/user/global_name - missing
 
 - `GUILD_MEMBER_LIST_UPDATE`:
 /items/member/user/global_name - missing  
@@ -209,39 +209,39 @@ user/flags - missing
 /emoji/id - missing when its standard emoji  
 
 - `MESSAGE_REACTION_REMOVE`:
-/emoji/id - missing when its standard emoji  
+/emoji/id - missing when its standard emoji
 
 - `GUILD_MEMBERS_CHUNK`:
-/members/user/global_name - missing  
+/members/user/global_name - missing
 
 - `PRESENCE_UPDATE`:
 /status - missing
 
 - Misc:
 Spacebar is still using old `user_settings` instead new protobuf settings.  
-Gateway returns error code 4000 if event "update presence" (opcode 3) is sent.  
+Gateway returns error code 4000 if event "update presence" (opcode 3) is sent.
 
 
 ## Build steps for package maintainers
 1. Download and build custom python with recent ncurses (optional)
-- Clang is optional everywhere, but it's recommended as it provides better binary.  
-- The entire process is done by `tools/build_python.sh`. to run it: `bash tools/build_python.sh 3.14.5 clang curses v6_6_20251230`.
+- Clang is optional everywhere, but it's recommended as it provides better binary.
+- The entire process is done by `tools/build_python.sh`. to run it: `bash tools/build_python.sh 3.14.5 clang curses v6_6_20260627` (you can read curses tag from build.py, its near the top).
 - Python will be installed in `./.cpython/bin/python3.14`.
 - Once finished just configure venv to use `./.cpython/bin/python3.14`
 
-2. Setup dependencies  
+2. Setup dependencies
 - Linux system build dependencies when using nuitka (recommended): `clang` (or gcc), `patchelf` (DO NOT use v0.18.x).
-- Any python virtual environment manager can be used that can read dependencies from `pyproject.toml`, here `uv` is used by default.  
-- Only python versions 3.12-3.14 can currently build binaries.  
+- Any python virtual environment manager can be used that can read dependencies from `pyproject.toml`, here `uv` is used by default.
+- Only python versions 3.12-3.14 can currently build binaries.
 - `uv sync --all-groups` - full endcord  
-    Will install all dependencies from pyproject.toml under `dependencies`, `build`, and `media`.  
+    Will install all dependencies from pyproject.toml under `dependencies`, `build`, and `media`.
 - `uv sync --group build` - endcord-lite  
-    Will install all dependencies from pyproject.toml under `dependencies` and `build`.  
+    Will install all dependencies from pyproject.toml under `dependencies` and `build`.
 
-3. Check if numpy without openblas is already installed, if returns 1 then its not, so download and build numpy  
-- Numpy build can be skipped if its impossible, but binary will be few MB larger.  
-- If building with pyinstaller skip numpy build.  
-- This command will print `1` if openblas is found in numpy, and then it has to be built locally.  
+3. Check if numpy without openblas is already installed, if returns 1 then its not, so download and build numpy
+- Numpy build can be skipped if its impossible, but binary will be few MB larger.
+- If building with pyinstaller skip numpy build.
+- This command will print `1` if openblas is found in numpy, and then it has to be built locally.
 ```bash
 uv run python -c "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))"
 ```
@@ -257,7 +257,7 @@ uv pip install pip
 uv pip uninstall pip
 ```
 
-5. Build cython extensions  
+5. Build cython extensions
 - Skip this step only if final binary gives error `Dynamic module does not define module export function`.
 - Compiler args are set in the setup.py, so no need to set them as env vars.
 ```bash
@@ -271,6 +271,6 @@ uv run python setup.py build_ext --inplace
 - run `compress_emoji()` from build.py - will make `emoji.json` smaller.
 
 7. Get and run build command
-- Build commands can be obtained by running `python build.py --print-cmd`, adding other arguments will change the printed command.  
-- The script will also append to `CFLAGS` and `LDFLAGS` env variables, which depend on compielr used. Same compiler args are used for all compilations except custom python build (the bash script will set them).
-- Recommended: `python build.py --print-cmd --nuitka`.  
+- Build commands can be obtained by running `python build.py --print-cmd`, adding other arguments will change the printed command.
+- The script will also append to `CFLAGS` and `LDFLAGS` environment variables, which depend on compiler used. Same compiler args are used for all compilations except custom python build (the bash script will set them).
+- Recommended: `python build.py --print-cmd --nuitka`.

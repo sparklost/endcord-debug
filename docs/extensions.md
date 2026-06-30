@@ -26,7 +26,7 @@ Extensions are loaded in alphanumeric order, and in some cases it can matter bec
 
 ### Settings
 Extensions can access settings loaded from main settings - `config.ini` in config directory.  
-Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name. Extension name should be same as repo name, use underscore instead dash, and remove prepended "endcord".
+Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name. Extension name should be same as repo name, use underscore instead dash, and remove prepended "endcord".  
 Settings can be accessed in extension as `app.settings` in extensions `__init__`, it is a dict so do `app.settings.get("ext_extension_name_setting_name", "default_value")`.  
 
 ### Forced build-time disable
@@ -144,7 +144,7 @@ self.app.execute_command(command_type, command_args, command_text, chat_sel, tre
 ## Modifying existing code
 Existing code in endcord `app` class can be modified, by replacing `app` class methods with custom methods.  
 But be warned: replacing method like this will also replace any updates made to it in new endcord version, so extension muss be updated accordingly.  
-To do this:  
+To do this:
 1. Define a custom named method in extension class.
 2. Copy code from that method in endcord app class to this extension method.
 3. Replace all `self`s with `self.app` (or whatever you named it in `__init__`)
@@ -158,7 +158,7 @@ Look for `__init__` in `app` class in `./endcord/app.py` to see what is ran befo
 
 
 ## Available libraries
-Run `uv tree` to see only libraries included in endcord-lite builds, and `uv tree --group media` to see libraries included in full endcord build (this list doesnt show stdlib libraries, but they should all be available).  
+Run `uv tree` to see only libraries included in endcord-lite builds, and `uv tree --group media` to see libraries included in full endcord build (this list doesn't show stdlib libraries, but most of them should be available, see tools/build_python.sh, look for `*disabled*`, these stdlib modules are **not** included).  
 It is possible to add entire library to extension directory, which can be imported by extension, but this may be unstable cross-platform.  
 More stable way of adding a library is by using `setup.py` script that will install specific libraries. This script is run when extension is installed.  
 See [Example dependency installer](#example-dependency-installer), it is enough to only change `LIBRARIES` tuple.  

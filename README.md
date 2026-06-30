@@ -14,7 +14,7 @@
 </div>
 
 Endcord is a third-party feature rich Discord client, running entirely in terminal.  
-It is built with Python (this [doesnt mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
+It is built with Python (this [doesn't mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
 Official endcord will always stay **purely human project**.  
 Endcord is source-available licensed, and thus not open source, more details [here](#source-available-license). You are not allowed to create create public fork that modifies the code.  
@@ -46,7 +46,7 @@ Any third party endcord forks may add features that can lead to account ban, con
     - Show channels with mention as red with number of mentions
     - Collapse categories and servers
     - DMs in separate drop-down, show DM status
-    - Forums, imageborads and channel threads
+    - Forums, imageborads and threadsthread channels 
     - Folders with custom naming
 - Show reactions, replied message, forwarded message
 - Show embeds, attachment types and links, code blocks
@@ -126,7 +126,7 @@ Manager can be re-opened using `--manager` flag.
 - Token as an argument: `endcord -t [YOUR_TOKEN]`, but note that it might get saved in your terminal history file  
 Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then youll have to use token method.  
 If you want to verify what is happening with credentials, look in profile_manager.py and auth.py.  
-**Do not share your token!**    
+**Do not share your token!**  
 
 ### Configuring keybindings
 Go to [keybindings](docs/keybindings.md#configuring-keybindings).
@@ -189,8 +189,8 @@ Popup window is drawn for viewing:
 - User profile info - from selected message (`Alt+P`)
 - Channel/server info - from selected tree channel (`Alt+I`)
 - Summaries for currently open channel (`Alt+S`), `Alt+Enter` will jump to first message in chat on that summary topic.
-- Search and search results (`Ctrl+F`), `Alt+Enter` or enter with no typed text will jump to selected message.  
-- Pinned messages (`Alt+N`),  `Alt+Enter` or enter with no typed text will jump to selected message.  
+- Search and search results (`Ctrl+F`), `Alt+Enter` or enter with no typed text will jump to selected message.
+- Pinned messages (`Alt+N`),  `Alt+Enter` or enter with no typed text will jump to selected message.
 `Alt+Enter` in member list will show user profile of the selected member.  
 
 ### Assist with mention, role, channel, emoji, sticker
@@ -243,7 +243,7 @@ Features other than full regex support:
 - Full regex support
 - Append `/g` to repeat for all matches
 - Append `/i` to enable case-insensitive search
-- `&` in the replacement portion represents the entire matched pattern from the search portion.
+- `&` in the replacement portion represents the entire matched pattern from the search portion
 - `\NUMBER` in the replacement portion represents capture groups in the search portion
 
 # Tabs
@@ -297,9 +297,9 @@ But there is also setting in config to open media in external app (cross-system,
 
 ### Experimental windowed mode
 This mode entirely replaces curses with pygame-ce GUI library. This means Endcord runs in its own window, not in terminal, but UI remains terminal-like.  
-Tray icon will also be enabled, so closing window will only minimize it to tray.    
+Tray icon will also be enabled, so closing window will only minimize it to tray.  
 If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.  
-Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All meda will be opened in native player.  
+Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All media will be opened in native player.  
 Building with nuitka on python >=3.13 will create executable that segfaults! Building with pyinstaller is not recommended because it generates huge binary.  
 You can toggle experimental mode by running: `python build.py --experimental`.  
 Then run endcord from source: `uv run main.py`.  
@@ -307,12 +307,11 @@ After first run in experimental mode, extra config will be generated in endcord 
 
 ### Custom hosts
 Connecting to other discord-like instance can be configured in `config.ini` by setting `custom_host = ` to preferred host domain. Set to `None` to use default host (`discord.com`) or use `--custom-host=` command argument.  
-Ebut endcord may crash at any time. Further, each host may have different spam filters, so **use at your own risk** still applies.  
-Wether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the rish of a crash.  If endcord crashes its hosts fault. Do not report bugs related to this.
+But endcord may crash at any time. Further, each host may have different spam filters, so **use at your own risk** still applies.  
+Wether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the risk of a crash. If endcord crashes - its hosts fault. Do not report bugs related to this.
 
 ### Termux
-Endcord does work under termux, but some keybindings don't (`Ctrl/Alt+Space`). It is recommended to rebind them in endcord config or use endcord in desktop environment (like `openbox`) in a terminal emulator with xterm256-colors (like `alacritty`) and with Termux:X11 app.  
-Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pycryptodome`.
+Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pycryptodome`.  
 To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
 Notifications will work as ling as endcord is running, so it might be necessary for termux to "Acquire wakelock".  
 
@@ -324,8 +323,8 @@ To prevent extension injection (malware can modify endcord config and inject ext
 ## Installing
 ### Linux
 - Pre-built binaries (built with nuitka using clang) are available in releases  
-    Binaries are built on Ubuntu-like distro. **Locally built binaries can be smaller, thus starts faster**.
-- Arch Linux (AUR):
+    Binaries are built on Ubuntu-like distro with `--custom-python --nuitka --clang` build script options, meaning they are maximally optimized.
+- Arch Linux (AUR) (OFFICIAL):
     - `yay -S endcord` - full version with media support, larger executable
     - `yay -S endcord-lite` - lite version without voice calls and media support
     - `-git` versions will build from source, with latest changes
@@ -337,7 +336,8 @@ To prevent extension injection (malware can modify endcord config and inject ext
 - Install script (installs binary from latest release or updates existing):
     - `bash -c "$(curl -fsSL https://raw.githubusercontent.com/sparklost/endcord/main/tools/install.sh)"`
     - Append ` -- --lite` to install lite instead
-    - Append ` -- --uninstall` to uninstall
+    - Append ` -- --uninstall` to uninstall  
+Note: official means installations from these sources are coming from endcord developer and will always be up-to-date.
 
 Optional dependencies:
 - `xclip` - Clipboard support on X11
@@ -359,7 +359,7 @@ Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https:
 WezTerm proved to introduce the least drawing issues.  
 Cmder settings: "Mouse" > check "Send mouse events to console" and "Mark/Copy" > uncheck "Intelligent mode", and set "Main console font" and "Alternative font" to same monospace font.  
 Emoji are known to work only with WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
-Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.   
+Optional dependency for spellchecking: [aspell](https://github.com/adamyg/aspell-win32). It is expected to be installed in `C:\Program Files (x86)\`. Alongside with base aspell, dictionary must be installed, even en_US.  
 
 ### macOS
 - Pre-built binaries (built with pyinstaller and clang) are available in releases
@@ -394,7 +394,7 @@ To toggle [experimental windowed mode](#experimental-windowed-mode) run: `python
 1. Clone this repository: `git clone https://github.com/sparklost/endcord.git`
 2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 3. `cd endcord`
-4. run build script: `python build.py`  
+4. run build script: `python build.py`
 
 ### Windows
 1. Install [Python](https://www.python.org/) 3.12 or later
@@ -426,17 +426,23 @@ Nuitka requirements:
 - on Windows: [Visual Studio 2022](https://www.visualstudio.com/en-us/downloads/download-visual-studio-vs.aspx) or mingw (will be downloaded by nuitka)
 - on macOS install XCode via Apple Store
 
+### Building custom Python
+When using `--custom-python` build script argument, build script will first download more recent ncurses version and build it.  
+Then download latest supported python version and build it linked to this ncurses library, using custom compiler arguments, some extension modules will be disabled, to reduce final binary size.  
+Everything will be compiled with clang if `--clang` flag is used.  
+Finally nuitka will bundle this custom built Python version in the resulting binary.  
+Built endcord binary will be few MB smaller and run a little faster.  
+
 ### Free-threaded Python
 Endcord does work with free-threaded python (3.14 only), and it significantly improves media player performance with large video resolutions, by allowing decoding, video and sound playing to be run in separate CPU threads, completely removing crackling sound when playing on high "terminal resolution".  
 This comes at the cost of much larger binary, increased CPU and RAM usage.  
 Currently nuitka [doesn't support free-threaded mode](<https://github.com/Nuitka/Nuitka/issues/3062>) yet. Pyinstaller (without `--nutka` flag) does build it successfully.  
-To make it use freethreaded python run `python build.py` (not `uv`!) with `--freethreaded` arument.  
+To make it use freethreaded python run `python build.py` (not `uv`!) with `--freethreaded` argument.  
 
-### Building without orjson
-If you want to build without `orjson` (uses rust), run `uv remove orjson` for the first time, before running anything else.  
+### Building without rust
+If you want to build without any rust dependencies, just run `uv remove orjson` for the first time, before running anything else.  
 This will make it fallback to standard json (more CPU usage by game detection).  
 Optionally it can use `ujson`, run `uv add ujson` to install it.  
-Then force build.py to skip auto-python setup: `uv run -p 3.13 build.py`, and add other preferred arguments after build.py.  
 
 
 ## FAQ
@@ -452,7 +458,7 @@ Then force build.py to skip auto-python setup: `uv run -p 3.13 build.py`, and ad
 ### To further decrease probability of getting banned
 Endcord does its best to avoid causing any suspicious activity, so using it as-is is pretty much enough.
 - Do not use endcord to perform any out-of-ordinary actions (i.e. self-bots). Third party clients can sometimes trip anti-spam heuristic algorithm for catching self-bots.
-- Do not use endcord at the same time with the client from which you copied token from, it might be suspicios to have 2 clients using same token at the same time.
+- Do not use endcord at the same time with the client from which you copied token from, it might be suspicious to have 2 clients using same token at the same time.
 - Do not use same token across different third party clients.
 - Do not use `--token` flag, endcord automatically refreshes token stored with profile manager, so there is no need to update it manually.
 - `anonymous` mode in `client_properties` setting might be more risky than `default` mode.
@@ -471,7 +477,7 @@ All channel and server names, topics, descriptions are replaced. All channel and
 Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound, not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka).  
 All CPU-critical components are implemented in Cython with minimal python calls, resulting in near-C speeds.  
 Python was chosen because it enables rapid development.  
-Additionally if built with nuitka, custom Python is compiled from source (preferrably with clang) with custom compiler flags for performance.
+Additionally if built with nuitka, custom Python is compiled from source (preferably with clang) with custom compiler flags for performance.
 
 ### Running multiple endcord instances
 To run multiple endcord instances at the same time, while keeping them completely separated, run endcord with `ENDCORD_APP_NAME` environment variable set to something else. This will change "endcord" everywhere: in config and cache paths, notifications, keyring...
@@ -492,7 +498,7 @@ The client will refuse to send message in newly-created DM channels. This measur
 In config, disable `send_x_super_properties`. These properties may be used in spam detection so disable them only if necessary, and report the issue.
 
 ### Higher voice call quality
-To increase quality of the sound sent from this device, set `ENDCORD_VOICE_OPUS_MODE=audio` enviroment variable. (options: `audio`, `voip`, `lowdelay`). This will make it encode opus with 96KB/s instead default 64KB/s (variable bitrate), but use more bandwidth.
+To increase quality of the sound sent from this device, set `ENDCORD_VOICE_OPUS_MODE=audio` environment variable. (options: `audio`, `voip`, `lowdelay`). This will make it encode opus with 96KB/s instead default 64KB/s (variable bitrate), but use more bandwidth.
 
 ### No notification sound
 Custom notification sound can be set in config: `custom_notification_sound = /path/to/file.mp3`.
@@ -532,7 +538,7 @@ Endcord default theme uses non-standard characters to display som TUI elements, 
 If that happens, use [legacy theme](themes/legacy.ini). It is used by default on windows.  
 
 ### Virus scanners are flagging endcord binaries as malware
-These are false positives. Binaries are built using nuitka, the problem is that its regularly used by other people to distribute malware. So some AVs flag all Nuitka-built binaries as malware. [Ref](https://nuitka.net/user-documentation/common-issue-solutions.html#windows-virus-scanners).  
+These are false positives. Binaries are built using nuitka, the problem is that its regularly used by other people to distribute malware. So some AVs flag all nuitka-built binaries as malware. [Ref](https://nuitka.net/user-documentation/common-issue-solutions.html#windows-virus-scanners).  
 Its the same with all other python freezing tools, like pyinstaller, cx-freeze...  
 So to run endcord, either allow it in anti-virus/windows-defender or run it from source.  
 

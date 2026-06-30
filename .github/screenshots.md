@@ -17,7 +17,7 @@
 <img src="./screenshots/02.png" alt="Client command assist above input line:" width="800">
 <br><br>
 <b>Emoji assist while typing:<br>
-<img src="./screenshots/03.png" alt="Emoji assist while typing (wuth favorite emojis):" width="800">
+<img src="./screenshots/03.png" alt="Emoji assist while typing (with favorite emojis):" width="800">
 <br><br>
 <b>Message search:</b><br>
 <img src="./screenshots/04.png" alt="Message search" width="800">

@@ -13,7 +13,7 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest]   # windows-latest, macos-15, macos-15-intel]
+        os: [ubuntu-latest] #, windows-latest, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -160,14 +160,14 @@ jobs:
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
             uv run build.py "${args[@]}"
 
-      - name: Run build lite script
-        shell: bash
-        run: |
-            args=()
-            [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
-            [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
-            [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            uv run build.py --lite "${args[@]}"
+      # - name: Run build lite script
+      #   shell: bash
+      #   run: |
+      #       args=()
+      #       [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+      #       [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
+      #       [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
+      #       uv run build.py --lite "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
@@ -184,7 +184,7 @@ jobs:
           cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             tar -czf "endcord-$version-${{ matrix.platform }}.tar.gz" endcord $extra
-            tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
+            # tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
           elif [[ "${{ matrix.platform }}" == "windows" ]]; then
             7z a "endcord-$version-${{ matrix.platform }}.zip" endcord.exe $extra
             7z a "endcord-lite-$version-${{ matrix.platform }}.zip" endcord-lite.exe $extra

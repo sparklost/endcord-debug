@@ -5,7 +5,7 @@
     View profile picture of user from currently selected message or specified user.
 - `react` / `react [reaction]`  
     Prompt to type reaction or send provided reaction to selected message.
-- `status` / `status [value]`,    
+- `status` / `status [value]`  
     Cycle statuses, or set it by specifying its type name or index.  
     Values: 1 - "online", 2 - "idle", 3 - "dnd", 4 - "invisible".
 - `open_link` / `open_link [num]`  
@@ -186,6 +186,6 @@
 ## Commands that can be used only in command-bindings
 Special commands available only for command-bindings (macros).
 - `sleep [seconds]`  
-    Sleep for specified numbr of seconds. If some macro fails to execute, adding `sleep 0.1` between the two comands may help.
+    Sleep for specified numbr of seconds. If some macro fails to execute, adding `sleep 0.1` between the two commands may help.
 - `type [text]`  
     "Type" specifid text at cursor position in input line in current context.

@@ -222,6 +222,8 @@ def decode_bstate_flag(flag_value):
     total_shift = flag_value.bit_length() - 1
     key_type = total_shift // 5
     pressed = (total_shift % 5) == 1
+    if key_type >= 3:
+        key_type += 61
     return (key_type, pressed)
 
 
