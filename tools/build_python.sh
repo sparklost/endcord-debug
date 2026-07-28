@@ -29,7 +29,7 @@ if [[ "$3" = "curses" ]]; then
     else
         CURSES_TAG=$(git ls-remote --tags --refs https://github.com/ThomasDickey/ncurses-snapshots.git | awk -F/ '{print $3}' | sort -V | tail -n1)
     fi
-    echo "Building curses ${CURSES_TAG}"
+    echo "Building ncurses ${CURSES_TAG}"
     wget -nc "https://github.com/ThomasDickey/ncurses-snapshots/archive/refs/tags/${CURSES_TAG}.tar.gz" -O "ncurses-${CURSES_TAG}.tar.gz" || true
     tar xf "ncurses-${CURSES_TAG}.tar.gz"
     cd ncurses-snapshots-*
@@ -58,6 +58,9 @@ if [[ "$3" = "curses" ]]; then
         -ffat-lto-objects"
     export CFLAGS LDFLAGS
 
+    export TERMINFO="$PREFIX/share/terminfo"
+    mkdir -p "$TERMINFO"
+    export TERMINFO_DIRS="$PREFIX/share/terminfo:/etc/terminfo:/lib/terminfo:/usr/share/terminfo"
     ./configure \
         --prefix="$PREFIX" \
         --enable-pc-files \
@@ -69,7 +72,7 @@ if [[ "$3" = "curses" ]]; then
         --with-xterm-kbs=del \
         --without-ada \
         --without-debug \
-        --with-terminfo-dirs="/etc/terminfo:/lib/terminfo:/usr/share/terminfo"
+        --with-terminfo-dirs="$TERMINFO_DIRS"
     make -j"$(nproc)"
     make install
     cd ..

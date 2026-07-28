@@ -20,7 +20,7 @@ def get_tenor_gif(url, header=None, proxy=None):
         return
     parsed = urllib.parse.urlsplit(url)
     try:
-        connection = peripherals.get_connection(parsed.netloc, 443, proxy=proxy)
+        connection = peripherals.get_connection(parsed.netloc, proxy=proxy)
         if header:
             connection.request("GET", parsed.path, headers=header)
         else:
@@ -39,20 +39,6 @@ def get_tenor_gif(url, header=None, proxy=None):
     return None
 
 
-def convert_tenor_gif_type(url, content_type):
-    """
-    Convert tenor video link between types:
-    0 - gif HD
-    1 - gif UHD
-    2 - mp4 Video
-    """
-    if content_type == 1:
-        return url.replace("AAAPo/", "AAAAC/")[:-3] + "gif"
-    if content_type == 2:
-        return url
-    return url.replace("AAAPo/", "AAAAd/")[:-3] + "gif"
-
-
 def extract_file_name(headers, url_path):
     """Extract file name from Content-Disposition header, fallback to extracting from url + extension from Content-Type"""
     content_disposition = headers.get("Content-Disposition")
@@ -65,7 +51,7 @@ def extract_file_name(headers, url_path):
                     _, encoded_filename = value.split("''", 1)
                     return urllib.parse.unquote(encoded_filename)
         for part in parts:
-            if part.startswith("filename="):
+            if part.strip().startswith("filename="):
                 return part.strip().split("=", 1)[1].strip('"\'')
 
     filename = os.path.basename(url_path) or "downloaded_file"
@@ -95,10 +81,11 @@ class Downloader:
 
 
     def download(self, url, file_id=None, headers=None):
-        """Thread that downloads file and stores it in temp folder"""
+        """Thread that downloads file and stores it in save_dir"""
         if url.lower().split("/")[0] == "http":
-            logger.warning("REJECTING HTTP-ONLY DOWNLOAD - HIGH SECURITY RISK")
-            return None, None
+            error = "Rejecting http download"
+            logger.warning(f"{error} - HIGH SECURITY RISK")
+            return None, error
         os.makedirs(self.save_dir, exist_ok=True)
         self.active += 1
         self.downloading = True
@@ -106,6 +93,7 @@ class Downloader:
         connection = None
         current_url = url
         redirects = 0
+        destination = None
         if not headers:
             headers = self.headers
 
@@ -124,14 +112,22 @@ class Downloader:
                 if response.status in (301, 302, 303, 307, 308):
                     redirect_url = response.getheader("Location")
                     if not redirect_url:
-                        logger.error("Redirect without lcation")
-                        break
+                        logger.error("Redirect without location")
+                        return None, "Redirect without location"
                     current_url = urllib.parse.urljoin(current_url, redirect_url)
                     redirects += 1
                     connection.close()
                     continue
-                else:
+                elif response.status in (200, 206):
                     break
+                else:
+                    error = f"HTTP Error {response.status}"
+                    logger.error(f"{error} for URL: '{current_url}'")
+                    return None, error
+            else:
+                error = "Exceeded maximum redirect limit"
+                logger.error(f"{error} (5) for URL: '{url}'")
+                return None, error
 
             filename = extract_file_name(response.headers, url_object.path)
             unique_filename = f"{file_id}_{filename}" if file_id else filename
@@ -145,18 +141,24 @@ class Downloader:
                         break
                     out.write(data)
 
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Error downloading file:")
         finally:
             if connection:
                 connection.close()
+            if not complete and destination and os.path.exists(destination):
+                try:
+                    os.remove(destination)
+                except OSError:
+                    pass
             self.active -= 1
             if self.active == 0:
                 self.downloading = True
         if complete:
             return destination, filename
-        logger.error(f"Error downloading file. Requested url: '{url}'")
-        return None, None
+        error = "Download incomplete or failed"
+        logger.error(f"{error} for URL: '{url}'")
+        return None, error
 
 
     def cancel(self):

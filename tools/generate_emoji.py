@@ -16,7 +16,7 @@ HEADER = f"""# {UTC_DATE}
 """
 SKIP_VARIATIONS = False
 APP_NAME = "endcord"
-VERSION = "1.5.0"
+VERSION = "1.5.3"
 HTTP_HEADER = {
     "User-Agent": APP_NAME + "/" + VERSION,   # required by github
     "Accept": "application/vnd.github+json",
@@ -49,7 +49,7 @@ def http_get_with_redirect(host, path, header=None):
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader("Location")
             if not location:
-                print("Error: Redirect without lcation")
+                print("Error: Redirect without location")
                 return ""
             redirects += 1
             conn.close()

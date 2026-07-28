@@ -23,8 +23,6 @@ except ImportError:
     except ImportError:
         import json
 
-import socks
-
 from endcord import peripherals, protobuf, protobuf_schemata, utils
 from endcord.message import prepare_messages
 
@@ -35,6 +33,7 @@ DISCORD_EPOCH = 1420070400
 MAX_CONNECTION_POOL = 10
 MAX_CONNECTION_AGE = 55 * 30  # discord closes keepalive connection after ?? min
 CONNECTION_TIMEOUT = 2   # default value
+RETRY_DELAY = 0.3
 SEARCH_PARAMS = ("content", "channel_id", "author_id", "mentions", "has", "max_id", "min_id", "pinned", "offset")
 SEARCH_HAS_OPTS = ("link", "embed", "poll", "file", "video", "image", "sound", "sticker", "forward")
 PING_OPTIONS = ["all", "mentions", "nothing", "default"]   # must be list
@@ -71,18 +70,6 @@ def log_api_error(data, status, function_name):
     if error_message:
         text += f" - {error_message}"
     logger.warning(text)
-
-
-def get_sticker_url(sticker):
-    """Generate sticker download url from its type and id, lottie stickers will return None"""
-    sticker_type = sticker["format_type"]
-    if sticker_type == 1:   # png - downloaded as webp
-        return f"https://{DYN_DISCORD_CDN_HOST}/stickers/{sticker["id"]}.webp"
-    if sticker_type == 2:   # apng
-        return f"https://{DYN_DISCORD_CDN_HOST}/stickers/{sticker["id"]}.png"
-    if sticker_type == 4:   # gif
-        return f"https://{DYN_DISCORD_CDN_HOST}/stickers/{sticker["id"]}.gif"
-    return None   # lottie
 
 
 def generate_nonce():
@@ -124,9 +111,11 @@ class Discord():
                 self.host = host_obj.path
             host_netloc = self.host.lstrip("api.")
             self.cdn_host = f"cdn.{host_netloc}"
+            self.dyn_cdn_host = self.cdn_host
         else:
             self.host = DISCORD_HOST
             self.cdn_host = DISCORD_CDN_HOST
+            self.dyn_cdn_host = DYN_DISCORD_CDN_HOST
         logger.debug(f"Endpoints: API={self.host}, CDN={self.cdn_host}")
         self.token = token
         self.header = {
@@ -146,7 +135,7 @@ class Discord():
             self.header.pop("User-Agent", None)
             self.header.pop("X-Super-Properties", None)
         self.user_agent = user_agent
-        self.proxy = urllib.parse.urlsplit(proxy)
+        self.proxy = proxy
 
         self.connection = None
         self.connection_time = 0
@@ -171,8 +160,20 @@ class Discord():
         self.attachment_id = 1
 
 
+    def get_sticker_url(self, sticker):
+        """Generate sticker download url from its type and id, lottie stickers will return None"""
+        sticker_type = sticker["format_type"]
+        if sticker_type == 1:   # png - downloaded as webp
+            return f"https://{self.dyn_cdn_host}/stickers/{sticker["id"]}.webp"
+        if sticker_type == 2:   # apng
+            return f"https://{self.dyn_cdn_host}/stickers/{sticker["id"]}.png"
+        if sticker_type == 4:   # gif
+            return f"https://{self.dyn_cdn_host}/stickers/{sticker["id"]}.gif"
+        return None   # lottie
+
+
     def check_expired_attachment_url(self, url):
-        """Check if provided url is attachment and return its querys"""
+        """Check if provided url is attachment and return its queries"""
         parsed_url = urllib.parse.urlsplit(url)
         if self.cdn_host in parsed_url.netloc or (self.cdn_host == DISCORD_CDN_HOST and DYN_DISCORD_CDN_HOST in parsed_url.netloc):
             return dict(urllib.parse.parse_qsl(parsed_url.query))
@@ -197,23 +198,29 @@ class Discord():
         else:
             ssl_context = ssl.create_default_context()
         ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-
-        if self.proxy.scheme:
-            if self.proxy.scheme.lower() == "http":
-                connection = http.client.HTTPSConnection(self.proxy.hostname, self.proxy.port, timeout=timeout, context=ssl_context)
+        if not self.proxy:
+            return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+        try:
+            if self.proxy.startswith("http://") or self.proxy.startswith("http://"):
+                proxy = urllib.parse.urlsplit(self.proxy)
+                if self.proxy.startswith("http://"):
+                    connection = http.client.HTTPConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
+                else:
+                    connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
                 connection.set_tunnel(host, port=port)
-            elif "socks" in self.proxy.scheme.lower():
-                proxy_sock = socks.socksocket()
-                proxy_sock.set_proxy(socks.SOCKS5, self.proxy.hostname, self.proxy.port)
-                proxy_sock.settimeout(timeout)
-                proxy_sock.connect((host, port))
-                proxy_sock = ssl_context.wrap_socket(proxy_sock, server_hostname=host)
-                # proxy_sock.do_handshake()   # seems like its not needed
+            elif self.proxy.startswith("socks5://"):
+                from python_socks.sync import Proxy
+                proxy = Proxy.from_url(self.proxy)
+                raw_sock = proxy.connect(dest_host=host, dest_port=port, timeout=10)
+                ssl_context = ssl.create_default_context()
+                proxy_sock = ssl_context.wrap_socket(raw_sock, server_hostname=host)
                 connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)   # extra time for tor
                 connection.sock = proxy_sock
             else:
+                logger.warn(f"Invalid proxy: {self.proxy}")
                 connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
-        else:
+        except Exception as e:
+            logger.warn(f"Error connecting to proxy {self.proxy}: {e}")
             connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
         return connection
 
@@ -475,7 +482,7 @@ class Discord():
         return []
 
 
-    def get_messages(self, channel_id, num=50, before=None, after=None, around=None):
+    def get_messages(self, channel_id, num=50, before=None, after=None, around=None, avatars=False):
         """Get specified number of messages, optionally number before and after message ID"""
         message_data = None
         url = f"/api/v9/channels/{channel_id}/messages?limit={num}"
@@ -493,7 +500,7 @@ class Discord():
             # debug_chat
             # from endcord import debug
             # debug.save_json(data, "messages.json", False)
-            return prepare_messages(data)
+            return prepare_messages(data, avatars=avatars)
         log_api_error(data, status, "get_messages")
         return []
 
@@ -586,11 +593,13 @@ class Discord():
         """
         if self.protos[num-1]:
             return self.protos[num-1]
+        if self.bot and num == 2:
+            return {}
         message_data = None
         url = f"/api/v9/users/@me/settings-proto/{num}"
         data, status = self.request("GET", url, message_data, self.header)
         if not status:
-            return None
+            return {}
         if status == 200:
             data = json.loads(data)["settings"]
             if num == 1:
@@ -601,7 +610,7 @@ class Discord():
                 return {}
             return self.protos[num-1]
         log_api_error(data, status, "get_settings_proto")
-        return False
+        return {}
 
 
     def patch_settings_proto(self, num, data):
@@ -1518,7 +1527,8 @@ class Discord():
                 if (upload_url, connection) in self.uploading:
                     self.uploading.remove((upload_url, connection))
             except (socket.gaierror, TimeoutError):
-                connection.close()
+                if connection:
+                    connection.close()
                 return False
             except OSError:   # canceled upload
                 return None
@@ -1782,7 +1792,8 @@ class Discord():
             connection.request("GET", url, message_data, {"User-Agent": self.header["User-Agent"]})
             response = connection.getresponse()
         except (socket.gaierror, TimeoutError):
-            connection.close()
+            if connection:
+                connection.close()
             return self.ranked_voice_regions
         if response.status == 200:
             data = json.loads(response.read())
@@ -1814,7 +1825,8 @@ class Discord():
             connection.request("GET", url, message_data, header)
             response = connection.getresponse()
         except (socket.gaierror, TimeoutError):
-            connection.close()
+            if connection:
+                connection.close()
             return None, etag
         json_array_objects = utils.json_array_objects   # to skip name lookup
         if response.status == 200:
@@ -1863,18 +1875,23 @@ class Discord():
         return self.total_requests, ping_time
 
 
-    def get_pfp(self, user_id, avatar_id, size=None, img_type="webp", save_path=None, keepalive=False):
+    def get_pfp(self, user_id, avatar_id, size=None, img_type="webp", save_path=None, keepalive=False, retry=True):
         """Download pfp for specified user"""
+        if not avatar_id:
+            avatar_id = (int(user_id) >> 22) % 6
         if size is not None:
             size = min(max(size, 16), 4096)
         if not save_path:
             save_path = peripherals.temp_path
-        destination = os.path.join(os.path.expanduser(save_path), f"{avatar_id}.{img_type}")
+        destination = os.path.join(os.path.expanduser(save_path), f"{avatar_id}.{img_type if avatar_id else "png"}")
         if os.path.exists(destination):
             return destination
 
         message_data = None
-        url = f"/avatars/{user_id}/{avatar_id}.{img_type}?size={size}"
+        if isinstance(avatar_id, str):
+            url = f"/avatars/{user_id}/{avatar_id}.{img_type}?size={size}"
+        else:
+            url = f"/embed/avatars/{avatar_id}.png"
         header = {
             "Origin": f"https://{self.host}",
             "Sec-Fetch-Mode": "no-cors",
@@ -1890,14 +1907,31 @@ class Discord():
                 connection.request("GET", url, message_data, header)
                 response = connection.getresponse()
             except (socket.gaierror, TimeoutError):
-                connection.close()
+                if connection:
+                    connection.close()
                 return None
+        if not response:
+            if retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_pfp(user_id, avatar_id, size, img_type, save_path, keepalive, False)
+            return None
 
         if response.status == 200:
-            with open(destination, "wb") as f:
-                f.write(response.read())
+            try:
+                with open(destination, "wb") as f:
+                    f.write(response.read())
+            except Exception:
+                if os.path.exists(destination):
+                    os.remove(destination)
+                destination = None
+            if destination and os.path.exists(destination) and os.path.getsize(destination) == 0:
+                os.remove(destination)
+                destination = None
             if not keepalive:
                 connection.close()
+            if not destination and retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_pfp(user_id, avatar_id, size, img_type, save_path, keepalive, False)
             return destination
         log_api_error(response.read(), response.status, "get_pfp")
         if not keepalive:
@@ -1905,7 +1939,7 @@ class Discord():
         return False
 
 
-    def get_emoji(self, emoji_id, size=None, img_type="webp", cache=peripherals.temp_path, keepalive=False):
+    def get_emoji(self, emoji_id, size=None, img_type="webp", cache=peripherals.temp_path, keepalive=False, retry=True):
         """Download image for specified custom emoji"""
         destination = os.path.join(os.path.expanduser(cache), f"{emoji_id}.{img_type}")
         if not os.path.exists(os.path.dirname(destination)):
@@ -1934,12 +1968,28 @@ class Discord():
             except (BrokenPipeError, ConnectionResetError, http.client.RemoteDisconnected, TimeoutError):
                 connection.close()
                 return None
+        if not response:
+            if retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_emoji(emoji_id, size, img_type, cache, keepalive, False)
+            return None
 
         if response.status == 200:
-            with open(destination, "wb") as f:
-                f.write(response.read())
+            try:
+                with open(destination, "wb") as f:
+                    f.write(response.read())
+            except Exception:
+                if os.path.exists(destination):
+                    os.remove(destination)
+                destination = None
+            if destination and os.path.exists(destination) and os.path.getsize(destination) == 0:
+                os.remove(destination)
+                destination = None
             if not keepalive:
                 connection.close()
+            if not destination and retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_emoji(emoji_id, size, img_type, cache, keepalive, False)
             return destination
         log_api_error(response.read(), response.status, "get_emoji")
         if not keepalive:
@@ -1947,7 +1997,7 @@ class Discord():
         return False
 
 
-    def get_file(self, url, save_path, file_name=None, cache=False, keepalive=False):
+    def get_file(self, url, save_path, file_name=None, cache=False, keepalive=False, retry=True):
         """Download file from discord with proper header"""
         save_path = os.path.expanduser(save_path)
         if not os.path.exists(save_path):
@@ -1973,18 +2023,32 @@ class Discord():
                 logger.error("get_file" + f" error: {e}")
                 return None
             response = connection.getresponse()
-
         if not response:
+            if retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_file(url, save_path, file_name, cache, keepalive, False)
             return None
+
         if response.status == 200:
             extension = response.getheader("Content-Type").split("/")[-1].replace("jpeg", "jpg")
             destination = os.path.join(save_path, file_name)
             if os.path.splitext(destination)[-1] == "":
                 destination = destination + "." + extension
-            with open(destination, mode="wb") as file:
-                file.write(response.read())
+            try:
+                with open(destination, mode="wb") as file:
+                    file.write(response.read())
+            except Exception:   # failsafe
+                if os.path.exists(destination):
+                    os.remove(destination)
+                destination = None
+            if destination and os.path.exists(destination) and os.path.getsize(destination) == 0:
+                os.remove(destination)
+                destination = None
             if not keepalive:
                 connection.close()
+            if not destination and retry:
+                time.sleep(RETRY_DELAY)
+                return self.get_file(url, save_path, file_name, cache, keepalive, False)
             return destination
         log_api_error(response.read(), response.status, "get_file")
         if not keepalive:
@@ -2033,7 +2097,7 @@ class Discord():
     def bot_register_command(self, command, guild_id=None, is_json=False):
         """
         Register command for this bot. This endpoint works ONLY FOR BOTS.
-        command object coresponds to this structure:
+        command object corresponds to this structure:
         https://docs.discord.com/developers/interactions/application-commands#application-command-object
         To obtain role ids for specific guild, run "dump_roles" endcord command while inside desired guild.
         """

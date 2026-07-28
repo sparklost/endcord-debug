@@ -42,17 +42,17 @@ from endcord import (
     utils,
 )
 from endcord.assist_data import ABOUT, COMMAND_ASSISTS, SEARCH_HELP_TEXT
+from endcord.message import GIF_PROVIDERS
 
-support_media = (
-    importlib.util.find_spec("av") is not None and
-    importlib.util.find_spec("PIL") is not None
-)
+support_image = importlib.util.find_spec("PIL") is not None
+support_media = support_image and importlib.util.find_spec("av") is not None
 support_call = (
+    support_media and
     importlib.util.find_spec("dave") is not None and
     importlib.util.find_spec("nacl") is not None
 )
 cythonized = importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.search")
-uses_pgcurses = tui.uses_pgcurses
+uses_gtkcurses = tui.uses_gtkcurses
 logger = logging.getLogger(__name__)
 recorder = peripherals.Recorder()
 
@@ -134,7 +134,7 @@ class Endcord:
         self.username_role_colors = config["username_role_colors"]
         self.save_summaries = config["save_summaries"]
         self.fun = config["easter_eggs"]
-        self.tenor_gif_type = config["tenor_gif_type"]
+        self.gif_download_type = config["gif_download_type"]
         self.get_members = config["member_list"]
         self.member_list_auto_open = config["member_list_auto_open"]
         self.member_list_width = config["member_list_width"]
@@ -154,11 +154,12 @@ class Endcord:
         self.game_detection_download_delay = config["game_detection_download_delay"]
         self.vim_mode = config["vim_mode"]
         self.notifications_pfp = config["notifications_pfp"]
-        self.silence_threshold = config["call_silence_threshold"]
         self.font_ratio = config["media_font_aspect_ratio"]
-        self.inline_media = config["inline_media"] and support_media and sys.platform != "win32"
+        self.inline_media = config["inline_media"] and importlib.util.find_spec("PIL") is not None and sys.platform != "win32" and not uses_gtkcurses
         self.placeholder_emoji = False   # for extensions
         self.placeholder_images = self.inline_media   # keeping this separated so extension can toggle it
+        self.premium_override_commands = []   # for extensions
+        self.keep_avatars = False   # for extensions
 
         if not self.font_ratio:
             self.font_w, self.font_h = terminal_utils.get_font_size()
@@ -173,15 +174,13 @@ class Endcord:
         self.downloads_path = os.path.expanduser(downloads_path)
         if self.notification_path:
             self.notification_path = os.path.expanduser(self.notification_path)
-        if not support_media:
-            config["native_media_player"] = True
         self.colors = color.extract_colors(config)
         self.colors_formatted = color.extract_colors_formatted(config)
         self.default_msg_color = self.colors_formatted[0][0][:]
         self.default_msg_alt_color = self.colors[1]
 
         # write build info to log
-        logger.info(f"Build info:\n  {utils.get_build_info(cythonized, uses_pgcurses, support_media, support_call)}")
+        logger.info(f"Build info:\n  {utils.get_build_info(cythonized, uses_gtkcurses, support_image, support_media, support_call)}")
 
         # variables
         self.run = False
@@ -207,6 +206,7 @@ class Endcord:
         self.input_store = []
         self.running_tasks = []
         self.cached_downloads = []
+        self.deleted_cache = []
         self.last_summary_save = time.time() - SUMMARY_SAVE_INTERVAL - 1
         self.new_version = None
 
@@ -224,7 +224,8 @@ class Endcord:
         if config["client_properties"].lower() == "anonymous":
             client_prop = client_properties.get_anonymous_properties()
         else:
-            client_prop = client_properties.get_default_properties()
+            android = config["client_properties"].lower() == "android"
+            client_prop = client_properties.get_default_properties(android)
         if config["custom_user_agent"]:
             client_prop = client_properties.add_user_agent(client_prop, config["custom_user_agent"])
         client_prop_gateway = client_properties.add_for_gateway(client_prop)
@@ -275,8 +276,14 @@ class Endcord:
             global MSG_MIN
             MSG_MIN = 0
         utils.load_emoji()
+        color_code = self.colors[6]
         self.colors = self.tui.init_colors(self.colors)
         self.colors_formatted = self.tui.init_colors_formatted(self.colors_formatted, self.default_msg_alt_color)
+        if config["syntax_highlight"] and (shutil.which("source-highlight") or shutil.which("pygmentize")):
+            token_colors = [color.parse_color(x) for x in config["syntax_token_colors"]]
+            self.colors_code = self.tui.init_colors_code(token_colors, color_code)
+        else:
+            self.colors_code = None
         self.tui.update_chat(self.chat, [[[self.colors[0]]]] * len(self.chat))
         self.tui.update_status_line(" CONNECTING")
         self.my_id = None   # will be taken from gateway in main()
@@ -288,6 +295,7 @@ class Endcord:
             self.config,
             self.colors,
             self.colors_formatted,
+            self.colors_code,
             self.my_id,
             self.placeholder_emoji,
             self.placeholder_images,
@@ -311,7 +319,6 @@ class Endcord:
         self.tab_string_map = []
         self.uncollapsed_threads = []
         self.my_roles = []
-        self.deleted_cache = []
         self.extra_window_open = False
         self.extra_indexes = []
         self.extra_body = []
@@ -348,7 +355,7 @@ class Endcord:
         try:
             signal.signal(signal.SIGINT, self.sigint_handler)
         except ValueError:
-            pass   # error when ran in pgcurses
+            pass   # error when ran in gtkcurses
 
         # init extensions
         if config["extensions"] and ENABLE_EXTENSIONS:
@@ -364,7 +371,7 @@ class Endcord:
 
 
     def exit(self, fast=True, force=True):
-        """End current session allowing main thread to return to main.py, if not fast wait for all running threds to stop"""
+        """End current session allowing main thread to return to main.py, if not fast wait for all running threads to stop"""
         try:
             if not force:
                 self.update_extra_line("Stopping all threads...", timed=False)
@@ -405,7 +412,7 @@ class Endcord:
             if force:
                 sys.exit(0)
         except Exception:   # failsafe
-            sys.exit()
+            sys.exit(0)
 
 
     def load_extensions(self, version):
@@ -540,7 +547,7 @@ class Endcord:
 
 
     def profiling_auto_exit(self):
-        """Thread that waits then exits cleanly, so profiler (vprof) can process data"""
+        """Thread that waits then exits cleanly, so profiler can process data"""
         time.sleep(20)
         self.exit()
 
@@ -766,6 +773,7 @@ class Endcord:
         self.gateway.subscribe(
             self.active_channel["channel_id"],
             self.active_channel["guild_id"],
+            thread=(self.current_channel.get("type") in (11, 12)),
         )
         self.session_id = self.gateway.session_id
 
@@ -860,7 +868,7 @@ class Endcord:
         self.active_channel["guild_id"] = guild_id
         self.active_channel["guild_name"] = this_guild["name"] if this_guild else None
         self.active_channel["channel_id"] = channel_id
-        self.active_channel["channel_name"] = self.current_channel["name"]
+        self.active_channel["channel_name"] = self.current_channel.get("name", "Unknown")
 
         # run extensions
         self.execute_extensions_methods("on_switch_channel_start")
@@ -953,7 +961,7 @@ class Endcord:
         self.unread_count = 0
         self.got_commands = False
         self.selected_attachment = 0
-        self.gateway.subscribe(channel_id, guild_id)
+        self.gateway.subscribe(channel_id, guild_id, thread=(self.current_channel.get("type") in (11, 12)))
         self.tui.reset_chat_scrolled_top()
         self.gateway.set_subscribed_channels([x[0] for x in self.channel_cache] + [channel_id])
         if self.recording:
@@ -987,17 +995,25 @@ class Endcord:
         # select guild member list and subscribed
         if guild_id:
             if self.get_members:
+                member_count, online_count = 0, 0
                 for guild in self.members:
                     if guild[0] == guild_id:
-                        if "everyone" in guild[1]:
-                            self.member_list = guild[1]["everyone"][1]
-                        elif guild[1]:
-                            self.member_list = next(iter(guild[1].values()))[1]   # fix_member_list_selection
+                        member_count, online_count = guild[2], guild[3]
+                        if self.current_channel.get("type") in (11, 12):
+                            self.member_list = guild[1].get(self.active_channel["channel_id"], [0, []])[1]
+                            break
+                        permission_overwrites = self.current_channel.get("permission_overwrites", [])
+                        member_list_id = perms.compute_member_list_id(permission_overwrites)
+                        if member_list_id and member_list_id in guild[1]:
+                            self.member_list = guild[1][member_list_id][1]
                         else:
                             self.member_list = []
                         break
                 else:
                     self.member_list = []
+                member_list_title = f"Members: {formatter.format_kilo(online_count)}/{formatter.format_kilo(member_count)}"[:self.member_list_width - self.tui.bordered]
+                self.tui.draw_member_list_title(member_list_title, color=self.colors[9])
+
             for guild in self.subscribed_members:
                 if guild["guild_id"] == guild_id:
                     self.current_subscribed_members = guild["members"]
@@ -1007,7 +1023,6 @@ class Endcord:
 
         # manage roles
         if guild_id:   # for guilds only
-            # 255_curses_bug - make it run on init only
             self.all_roles = self.tui.init_role_colors(
                 self.all_roles,
                 self.default_msg_color[1],
@@ -1044,6 +1059,8 @@ class Endcord:
         self.execute_extensions_methods("on_switch_channel_end")
 
         # update UI
+        if self.tui.inline_media:   # new images will take time to download so clear everything
+            self.tui.inline_media.clear_images(force=True)
         if not guild_id:   # no member list in dms
             self.tui.remove_member_list()
         elif self.get_members:
@@ -1060,7 +1077,7 @@ class Endcord:
         self.set_channel_seen(   # right after update_chat so new_unreads is determined
             channel_id,
             self.get_chat_last_message_id(),
-            ack=not(self.tui.get_chat_selected()[1]),   # ack only if its not scrolled up
+            ack=not (self.tui.get_chat_selected()[1]),   # ack only if its not scrolled up
             force_remove_notify=True,
         )
         self.close_extra_window()
@@ -1326,6 +1343,8 @@ class Endcord:
 
     def add_to_store(self, channel_id, text):
         """Adds entry to input line store"""
+        if not text or text == "\n":
+            return
         if self.cache_typed:
             for num, channel in enumerate(self.input_store):
                 if channel["id"] == channel_id:
@@ -1337,11 +1356,12 @@ class Endcord:
                     "id": channel_id,
                     "content": text,
                     "index": self.tui.input_index,
+                    "reply": self.replying if self.replying["id"] else None,
                 })
 
 
     def insert_into_input_store(self, text):
-        """Insert toext at cursor position for current channel input store"""
+        """Insert text at cursor position for current channel input store"""
         for num, channel in enumerate(self.input_store):
             if channel["id"] == self.active_channel["channel_id"]:
                 input_text = self.input_store[num]["content"]
@@ -1352,6 +1372,8 @@ class Endcord:
 
     def add_to_command_history(self, command):
         """Add command to command history and limit its size"""
+        if command.startswith("gif https://"):
+            command = "gif"
         if not self.command_history or self.command_history[-1] != command:
             self.command_history.append(command)
             if len(self.command_history) > self.limit_command_history:
@@ -1432,6 +1454,8 @@ class Endcord:
                 break
         else:
             return False, False
+        if self.preloaded:
+            return False, tabbed
         if self.channel_cache[num][2]:
             cached = self.channel_cache[num]
         else:
@@ -1463,8 +1487,12 @@ class Endcord:
     def toggle_tab(self, channel_id, guild_id, add_tab=False):
         """Toggle tabbed state of currently active channel"""
         channel = None
-        if guild_id and guild_id in self.guilds:
-            channel = self.guilds[guild_id]["channels"].get(channel_id)
+        for guild in self.guilds:
+            if guild["guild_id"] == guild_id:
+                for channel in guild["channels"]:
+                    if channel["id"] == channel_id:
+                        break
+                break
         if channel and channel["type"] in (15, 16):   # skip forums
             return
 
@@ -1489,7 +1517,7 @@ class Endcord:
                     self.channel_cache[num][2] = add_tab   # pin/unpin
                     self.channel_cache[num][3] = False
                     if add_tab:
-                        # move to after curernt idx
+                        # move to after current idx
                         for current_idx, channel_i in enumerate(self.channel_cache):
                             if channel_i[0] == active_channel_id:
                                 break
@@ -1606,6 +1634,7 @@ class Endcord:
                 init_text = self.restore_input_text[0]
                 self.stop_extra_window()
                 input_text, chat_sel, tree_sel, action = self.tui.wait_input(self.prompt, init_text=init_text, reset=False, keep_cursor=True, forum=self.forum, press=forced_binding)
+                self.restore_input_text = (input_text, "standard")
                 ephemeral = True   # stop loop
             elif self.restore_input_text[1] == "prompt":
                 prompt_text = self.restore_input_text[0]
@@ -1647,8 +1676,12 @@ class Endcord:
                     active_channel_id = self.active_channel["channel_id"]
                     for num, channel in enumerate(self.input_store):
                         if channel["id"] == active_channel_id:
-                            restore_text = self.input_store[num]["content"]
-                            input_index = self.input_store.pop(num)["index"]
+                            data = self.input_store.pop(num)
+                            restore_text = data["content"]
+                            if data["reply"]:
+                                self.replying = data["reply"]
+                                self.update_status_line()
+                            input_index = data["index"]
                             break
                 if restore_text:
                     self.tui.update_prompt(self.prompt)
@@ -2203,9 +2236,10 @@ class Endcord:
             # switch tab
             elif action == 42:
                 pressed_num_key = self.tui.pressed_num_key
-                self.add_to_store(self.active_channel["channel_id"], input_text)
                 if pressed_num_key:
                     self.switch_tab(pressed_num_key - 1)
+                    self.add_to_store(self.active_channel["channel_id"], input_text)
+                    self.restore_input_text = (None, None)
 
             # show pinned
             elif action == 43:
@@ -2260,6 +2294,7 @@ class Endcord:
                 if self.command_history:
                     if self.command_history_index > 0:
                         self.command_history_index -= 1
+                    self.tui.misspelled = []
                     self.restore_input_text = (self.command_history[self.command_history_index], "command")
                 else:
                     self.restore_input_text = (input_text, "command")
@@ -2269,10 +2304,12 @@ class Endcord:
                     if self.command_history_index < history_len:
                         self.command_history_index += 1
                     else:
+                        self.tui.misspelled = []
                         self.restore_input_text = (self.command_history_stored_current, "command")
                         self.command_history_stored_current = None
                         self.command_history_index += 1
                         continue
+                    self.tui.misspelled = []
                     self.restore_input_text = (self.command_history[self.command_history_index], "command")
                 else:
                     self.restore_input_text = (input_text, "command")
@@ -2352,7 +2389,7 @@ class Endcord:
                                 if item[0] <= mouse_x < item[1] + item[0]:
                                     clicked_type = 10
                                     clicked_id = item[2]
-                            if ranges[1]:   # spoiler (owerwries all previous)
+                            if ranges[1]:   # spoiler (overwrites all previous)
                                 for num, item in enumerate(ranges[1]):
                                     if item[0] <= mouse_x < item[1]:
                                         clicked_type = 6
@@ -2441,7 +2478,7 @@ class Endcord:
                 self.restore_input_text = (input_text, "standard")
                 if self.extra_line == self.permanent_extra_line and not self.extra_window_open:
                     if self.in_call:
-                        mouse_x = self.tui.get_x_line_clicked() + (not(self.tui.bordered)) * 2
+                        mouse_x = self.tui.get_x_line_clicked() + (not (self.tui.bordered)) * 2
                         len_extra_line = len(self.extra_line) + 1
                         if len_extra_line - 15 < mouse_x <= len_extra_line - 9:   # CLICK ON OUTPUT VOL
                             if self.state["volume_out"]:
@@ -2466,7 +2503,7 @@ class Endcord:
                         elif len_extra_line - 7 < mouse_x <= len_extra_line:   # LEAVE
                             self.leave_call()
                     elif self.most_recent_incoming_call or self.active_channel["channel_id"] in self.incoming_calls:
-                        mouse_x = self.tui.get_x_line_clicked() + (not(self.tui.bordered))*2
+                        mouse_x = self.tui.get_x_line_clicked() + (not (self.tui.bordered))*2
                         len_extra_line = len(self.extra_line) + 1
                         if len_extra_line - 18 < mouse_x <= len_extra_line - 9:   # ACCEPT
                             if not self.in_call:
@@ -2527,9 +2564,8 @@ class Endcord:
                         else:
                             success = self.switch_tab(tab[2])
                         if success:
+                            self.add_to_store(active_channel_id, input_text)
                             self.restore_input_text = (None, None)
-                            if input_text and input_text != "\n":
-                                self.add_to_store(active_channel_id, input_text)
                         break
 
             # double click on subtitle line
@@ -2610,11 +2646,11 @@ class Endcord:
 
             # terminal focus out/in
             elif action == 2001:
-                self.restore_input_text = (input_text, "standard")
+                self.restore_input_text = (input_text, "command" if self.command else "standard extra")   # prevents closing extra window
                 if self.idle_timeout and self.my_status["status"] == "online":
                     threading.Thread(target=self.idle_timer, daemon=True).start()
             elif action == 2000:
-                self.restore_input_text = (input_text, "standard")
+                self.restore_input_text = (input_text, "command" if self.command else "standard extra")
                 if not self.idle_timeout:
                     continue
                 if self.my_status["afk"] == 2:
@@ -2626,7 +2662,11 @@ class Endcord:
             elif isinstance(action, tuple):
                 if action[0] == 50:
                     self.restore_input_text = (input_text, "standard")
-                    for command in parser.split_command_binding(action[1]):
+                    commands = list(parser.split_command_binding(action[1]))
+                    while commands:
+                        command = commands.pop(0)
+                        if command == "end":
+                            continue
                         if command.startswith("sleep "):
                             try:
                                 time.sleep(float(command[6:]))
@@ -2640,6 +2680,30 @@ class Endcord:
                                 if self.restore_input_text[1] == "standard":
                                     self.tui.set_input_index(self.tui.input_index + len(text))
                                 continue
+                        elif command.startswith("repeat "):
+                            try:
+                                parts = command[7:].strip().split(" ", 1)
+                                count = int(parts[0])
+                                if len(parts) > 1:   # single repeat like "repeat 3 some_command"
+                                    commands = [parts[1]] * count + commands
+                                    continue
+                                depth = 1
+                                end_idx = -1
+                                for idx, cmd in enumerate(commands):   # repeat until "end"
+                                    # like "repeat 3; sleep 0.5; some_command; end; other_command"
+                                    if cmd.startswith("repeat "):
+                                        depth += 1
+                                    elif cmd == "end":
+                                        depth -= 1
+                                        if depth == 0:
+                                            end_idx = idx
+                                            break
+                                if end_idx != -1:
+                                    block = commands[:end_idx]
+                                    commands = (block * count) + commands[end_idx + 1:]
+                                    continue
+                            except (ValueError, IndexError):
+                                pass
                         cmd_type, cmd_args = parser.command_string(command)
                         chat_sel, _ = self.tui.get_chat_selected()
                         tree_sel = self.tui.get_tree_selected()
@@ -2648,6 +2712,10 @@ class Endcord:
                             binding = self.keybindings.get(command)
                             if binding and binding[0]:
                                 self.wait_input(forced_binding=binding[0])
+                            elif command.startswith("*") and command[1:]:
+                                binding = True
+                                self.wait_input(forced_binding=command[1:])
+                                time.sleep(0.01)   # so cursor doesnt appear at the end off line
                         if not binding:
                             self.execute_command(cmd_type, cmd_args, action[1], chat_sel, tree_sel, reset=False)
                         self.check_tree_format()
@@ -2864,10 +2932,10 @@ class Endcord:
                     self.restore_input_text = (input_text, "standard")
                     slowmode_time = self.slowmode_times[self.active_channel["channel_id"]]
                     self.update_extra_line(f"Slowmode is enabled, will be able to send message in {slowmode_time} s", color=19)
-                    # dont allow sending messagee until it expires
+                    # dont allow sending message until it expires
 
                 elif not self.disable_sending and not self.forum:
-                    # check for substituition
+                    # check for substitution
                     if input_text.startswith("s/"):
                         self.substitute_in_last_message(input_text)
                         continue
@@ -2906,6 +2974,7 @@ class Endcord:
                         discord_emoji = input_text.startswith("+:<")
                         self.build_reaction(text_to_send[1 + discord_emoji:], msg_index=msg_index)
                         continue
+                    text_to_send = self.execute_extensions_methods("on_message_send", text_to_send, cache=True)[0]
                     if len(text_to_send) > self.limit_msg_len:
                         self.update_extra_line(f"Can't send a message: text is too long ({self.limit_msg_len - len(text_to_send)})", color=19)
                         self.restore_input_text = (input_text, "standard")
@@ -2972,6 +3041,7 @@ class Endcord:
                             self.update_extra_line("Attachments are still uploading", color=self.colors[9])
                             continue
                     nonce = discord.generate_nonce()
+                    self.execute_extensions_methods("on_message_send", "", cache=True)
                     self.put_to_message_sender(self.discord.send_message,
                         active_channel_id,
                         "",
@@ -3055,7 +3125,7 @@ class Endcord:
 
 
     def execute_command(self, cmd_type, cmd_args, cmd_text, chat_sel, tree_sel, reset=True):
-        """Execute custom command"""
+        """Execute client command"""
         logger.debug(f"Executing command, type: {cmd_type}, args: {cmd_args}")
         if reset:
             self.restore_input_text = (None, None)
@@ -3083,7 +3153,7 @@ class Endcord:
                 self.update_extra_line("Restart needed for changes to take effect", color=self.colors[9])
                 self.config = config.update_config(self.config, key, value)
             else:
-                self.update_extra_line("Unknow settings key", color=self.colors[9])
+                self.update_extra_line("Unknown settings key", color=self.colors[9])
 
         elif cmd_type == 2:   # BOTTOM
             self.go_bottom()
@@ -3111,7 +3181,7 @@ class Endcord:
                         selected_urls.append(urls[num])
                 if not selected_urls:
                     selected_urls = self.get_stuff_from_selected_line(chat_sel, 5)
-                if len(selected_urls) == 1 or select_num:
+                if selected_urls and (len(selected_urls) == 1 or select_num):
                     select_num = max(min(select_num-1, len(selected_urls)-1), 0)
                     self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(
                         selected_urls[select_num],
@@ -3150,7 +3220,7 @@ class Endcord:
                     selected_urls.append(urls[num])
                 if not selected_urls:
                     selected_urls = self.get_stuff_from_selected_line(chat_sel, 5)
-                if len(selected_urls) == 1 or select_num:
+                if selected_urls and (len(selected_urls) == 1 or select_num):
                     select_num = max(min(select_num-1, len(selected_urls)-1), 0)
                     selected_url = self.refresh_attachment_url(selected_urls[select_num])
                     if cmd_type == 5:
@@ -3187,7 +3257,7 @@ class Endcord:
                         selected_urls.append(urls[num])
             else:
                 selected_urls = embeds
-            if len(selected_urls) == 1 or select_num:
+            if selected_urls and (len(selected_urls) == 1 or select_num):
                 select_num = max(min(select_num-1, len(selected_urls)-1), 0)
                 open_type = 2 if cmd_type == 85 else True
                 self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(selected_urls[select_num], False, open_type)))
@@ -3366,6 +3436,9 @@ class Endcord:
                     message_id = None
                 channel_id, _, guild_id, _, parent_hint = self.find_parents_from_id(object_id)
                 if channel_id:
+                    if not reset:   # means its from command bindings
+                        self.add_to_store(self.active_channel["channel_id"], self.restore_input_text[0])
+                        self.restore_input_text = (None, None)
                     self.switch_channel(channel_id, guild_id, parent_hint=parent_hint)
                     if message_id:
                         self.go_to_message(message_id)
@@ -3474,6 +3547,9 @@ class Endcord:
                     self.open_guild(0, select=True, open_only=True)
                     self.tui.tree_select(self.tree_pos_from_id(object_id))
                     time.sleep(0.1)   # sometimes dms list gets collapsed if no delay
+                if not reset:   # means its from command bindings
+                    self.add_to_store(self.active_channel["channel_id"], self.restore_input_text[0])
+                    self.restore_input_text = (None, None)
                 self.switch_channel(channel_id, guild_id, parent_hint=parent_hint)
                 if tp:
                     self.update_extra_line("You're inside building. There is food here.", color=self.colors[9])
@@ -3485,7 +3561,7 @@ class Endcord:
                 if msg_index is None:
                     return
                 user_id = self.messages[msg_index]["user_id"]
-            avatar_id = None
+            avatar_id = self.messages[msg_index].get("avatar")
             if user_id == self.my_id:
                 avatar_id = self.my_user_data["extra"]["avatar"]
             if not avatar_id:
@@ -3495,17 +3571,15 @@ class Endcord:
                         break
             if not avatar_id:
                 avatar_id = self.discord.get_user(user_id, extra=True)["extra"]["avatar"]
-            if avatar_id:
-                if self.config["native_media_player"]:
-                    avatar_path = self.discord.get_pfp(user_id, avatar_id)
-                else:
-                    avatar_path = self.discord.get_pfp(user_id, avatar_id, size=128)
-                if avatar_path is None:
-                    self.gateway.set_offline()
-                    self.update_extra_line("Network error", color=20)
-                elif avatar_path:
-                    self.media_thread = threading.Thread(target=self.open_media, daemon=True, args=(avatar_path, ))
-                    self.media_thread.start()
+            if self.config["native_media_player"]:
+                avatar_path = self.discord.get_pfp(user_id, avatar_id)
+            else:
+                avatar_path = self.discord.get_pfp(user_id, avatar_id, size=128)
+            if avatar_path is None:
+                self.update_extra_line("CDN connection error", color=20)
+            elif avatar_path:
+                self.media_thread = threading.Thread(target=self.open_media, daemon=True, args=(avatar_path, ))
+                self.media_thread.start()
 
         elif cmd_type == 27:   # CHECK_STANDING
             standing, violations = self.discord.get_my_standing()
@@ -3561,6 +3635,9 @@ class Endcord:
 
         elif cmd_type == 31:   # SWITCH_TAB
             # if its number its already converted to index (num-1)
+            if not reset:   # means its from command bindings
+                self.add_to_store(self.active_channel["channel_id"], self.restore_input_text[0])
+                self.restore_input_text = (None, None)
             self.switch_tab(cmd_args.get("num", 0))
 
         elif cmd_type == 32:   # MARK_AS_READ:
@@ -3762,7 +3839,7 @@ class Endcord:
         elif cmd_type == 41:   # GIF
             search_text = cmd_args.get("search_text", None)
             search_text = search_text.strip()
-            if search_text.startswith("https://tenor.com/"):
+            if search_text[8:].startswith("tenor.com/") or search_text[8:].startswith("klipy.com/"):
                 self.insert_into_input_store(search_text)
             elif not self.search:
                 reset = False
@@ -3976,9 +4053,13 @@ class Endcord:
             if self.tree_metadata[tree_sel]["type"] == 2:
                 channel_id = self.tree_metadata[tree_sel]["id"]
                 guild_id = self.find_parents_from_tree(tree_sel)[0]
-                self.switch_channel(channel_id, guild_id, voice=False)
             elif self.in_call and self.in_call["guild_id"]:
-                self.switch_channel(self.in_call["channel_id"], self.in_call["guild_id"], voice=False)
+                channel_id = self.in_call["channel_id"]
+                guild_id = self.in_call["guild_id"]
+            if not reset:   # means its from command bindings
+                self.add_to_store(self.active_channel["channel_id"], self.restore_input_text[0])
+                self.restore_input_text = (None, None)
+            self.switch_channel(channel_id, guild_id, voice=False)
 
         elif cmd_type == 57:   # VIEW_EMOJI
             if cmd_args.get("name"):
@@ -3994,6 +4075,7 @@ class Endcord:
                 self.view_emoji(emojis[select_num])
 
         elif cmd_type == 58:   # QUIT
+            self.add_to_command_history(cmd_text)
             self.exit()
 
         elif cmd_type == 59:   # MARK_AS_UNREAD
@@ -4031,7 +4113,7 @@ class Endcord:
             else:
                 self.update_extra_line("Game detection service is disabled or not running")
 
-        elif cmd_type == 62:   # OPEN_CINFIG_DIR
+        elif cmd_type == 62:   # OPEN_CONFIG_DIR
             peripherals.native_open(os.path.expanduser(peripherals.config_path))
 
         elif cmd_type == 63:   # SEND_MESSAGE
@@ -4301,7 +4383,7 @@ class Endcord:
             about = (ABOUT
                 .replace("%ver", peripherals.VERSION)
                 .replace("%year", datetime.now().date().strftime("%Y"))
-                .replace("%build", utils.get_build_info(cythonized, uses_pgcurses, support_media, support_call))
+                .replace("%build", utils.get_build_info(cythonized, uses_gtkcurses, support_image, support_media, support_call))
                 )
             self.chat, self.chat_format, self.chat_map = formatter.generate_about(
                 about,
@@ -4464,7 +4546,7 @@ class Endcord:
             for channel in guild["channels"]:
                 for thread in channel["threads"]:
                     if thread["id"] == target_id:
-                        return target_id, thread["name"], guild["guild_id"], None, thread["parent_id"]
+                        return target_id, thread["name"], guild["guild_id"], None, thread.get("parent_id", guild["guild_id"])
         return None, None, None, None, None
 
 
@@ -4545,13 +4627,13 @@ class Endcord:
 
 
     def smart_paste(self):
-        """Paste text and files and add them as attachmemnts, paste too long text as attachment"""
+        """Paste text and files and add them as attachments, paste too long text as attachment"""
         if self.forum:
             return
         paths = []
         if shutil.which("xclip") or shutil.which("wl-paste"):
             paths = peripherals.paste_clipboard_files(peripherals.temp_path)
-        elif support_media:
+        elif support_image:
             paths = peripherals.pillow_paste_image()
         else:
             self.update_extra_line("No media support", color=20)
@@ -4694,7 +4776,7 @@ class Endcord:
 
 
     def get_msg_embeds(self, msg_index, media_only=True, stickers=True):
-        """Get all palyable media embeds and stickers from message in chat"""
+        """Get all playable media embeds and stickers from message in chat"""
         urls = []
         for embed in self.messages[msg_index]["embeds"]:
             media_type = embed["type"].split("/")[0]
@@ -4709,7 +4791,7 @@ class Endcord:
                     urls.append(embed["url"])
         if stickers:
             for sticker in self.messages[msg_index]["stickers"]:
-                sticker_url = discord.get_sticker_url(sticker)
+                sticker_url = self.discord.get_sticker_url(sticker)
                 if sticker_url:
                     urls.append(sticker_url)
         return urls
@@ -4821,7 +4903,7 @@ class Endcord:
 
 
     def substitute_in_last_message(self, input_text):
-        """Try to perform s/ substitutiion in last sent message of this user, if the message is in current buffer"""
+        """Try to perform s/ substitution in last sent message of this user, if the message is in current buffer"""
         for message in self.messages:
             if message["user_id"] == self.my_id:
                 message_id = message["id"]
@@ -4861,8 +4943,9 @@ class Endcord:
 
     def download_file(self, url, move=True, open_media=False, open_move=False, copy=False):
         """Thread that downloads and moves file to downloads dir"""
-        if url.startswith("https://media.tenor.com/"):
-            url = downloader.convert_tenor_gif_type(url, self.tenor_gif_type)
+        is_gif = any(domain in url for domain in GIF_PROVIDERS)
+        if is_gif:
+            url = utils.convert_gif_type(url, self.gif_download_type)
         destination = None
         from_cache = False
         match = re.search(match_youtube, url)
@@ -4871,7 +4954,6 @@ class Endcord:
             if open_media:
                 self.add_running_task("Loading video", 2)
                 self.open_media(url, bool(open_media - 1))
-                self.media_thread.start()
                 self.remove_running_task("Loading video", 2)
             else:
                 self.update_extra_line("Can only play YouTube video")
@@ -4914,7 +4996,7 @@ class Endcord:
                         destination = path
                 else:
                     self.remove_running_task("Downloading file", 2)
-                    self.update_extra_line("Error downloading file, check log", color=20)
+                    self.update_extra_line(f"Error downloading file: {filename}", color=20)
                     return
             except Exception as e:
                 logger.error(f"Error downloading file: {e}")
@@ -4930,7 +5012,7 @@ class Endcord:
         if open_media:
             if not from_cache and destination:
                 self.cached_downloads.append([orig_url, destination])
-            self.open_media(destination, bool(open_media - 1))
+            self.open_media(destination, bool(open_media - 1), loop=is_gif)
 
         if copy:
             peripherals.copy_file_to_clipboard(destination)
@@ -5040,9 +5122,12 @@ class Endcord:
 
     def start_recording(self):
         """Start recording audio message"""
-        recorder.start()
-        self.recording = True
-        self.update_extra_line("RECORDING, Esc to cancel, Enter to send", timed=False)
+        recording = recorder.start()
+        if recording:
+            self.recording = True
+            self.update_extra_line("RECORDING, Esc to cancel, Enter to send", timed=False)
+        else:
+            self.update_extra_line("Failed starting recorder, see log for more info", color=20)
 
 
     def stop_recording(self, cancel=False):
@@ -5070,7 +5155,7 @@ class Endcord:
     def get_messages_with_members(self, num=50, before=None, after=None, around=None):
         """Get messages, check for missing members, request and wait for member chunk, and update local member list"""
         channel_id = self.active_channel["channel_id"]
-        messages = self.discord.get_messages(channel_id, num, before, after, around)
+        messages = self.discord.get_messages(channel_id, num, before, after, around, avatars=self.keep_avatars)
         if messages is None:   # network error
             self.gateway.set_offline()
             self.update_extra_line("Network error", color=20)
@@ -5270,7 +5355,7 @@ class Endcord:
     def preload_chat(self):
         """Download chat before switching channel to allow faster switching, used for initial chat when starting up"""
         if self.state and self.state["last_channel_id"]:
-            messages = self.discord.get_messages(self.state["last_channel_id"], self.msg_num)
+            messages = self.discord.get_messages(self.state["last_channel_id"], self.msg_num, avatars=True)
             if messages is None:   # network error
                 return
             # emoji safe
@@ -5278,6 +5363,12 @@ class Endcord:
                 for num, message in enumerate(messages):
                     messages[num] = formatter.demojize_message(message)
             if self.need_preload and messages:
+                if self.keep_deleted and messages:
+                    self.active_channel["channel_id"] = self.state["last_channel_id"]
+                    self.active_channel["guild_id"] = self.state["last_guild_id"]
+                    messages = self.restore_deleted(messages)
+                    self.active_channel["channel_id"] = None
+                    self.active_channel["guild_id"] = None
                 self.messages = messages
                 self.preloaded = True
             self.last_message_id = self.get_chat_last_message_id()
@@ -5557,7 +5648,7 @@ class Endcord:
         self.stop_assist(close=False)
         extra_title, extra_body, extra_format = formatter.generate_extra_window_call(
             self.call_participants,
-            not(self.state["volume_in"]),
+            not (self.state["volume_in"]),
             self.colors,
             self.tui.get_dimensions()[2][1],
         )
@@ -5579,7 +5670,7 @@ class Endcord:
         self.tui.set_selected(-1)
         self.tui.update_chat(self.chat, self.chat_format)
 
-        # start log watche thread
+        # start log watcher thread
         if not self.log_queue_manager:
             threading.Thread(target=self.log_watcher, daemon=True, args=(log, )).start()
 
@@ -5620,8 +5711,7 @@ class Endcord:
             self.media_thread = threading.Thread(target=self.open_media, daemon=True, args=(emoji_path, ))
             self.media_thread.start()
         elif emoji_path is None:
-            self.gateway.set_offline()
-            self.update_extra_line("Network error", color=20)
+            self.update_extra_line("CDN connection error", color=20)
 
 
     def build_reaction(self, text, msg_index=None):
@@ -5747,7 +5837,7 @@ class Endcord:
         content, channel_id, author_id, mentions, has, max_id, min_id, pinned = parser.search_string(text)
         self.search = (content, channel_id, author_id, mentions, has, max_id, min_id, pinned)
         logger.debug(f"Starting search with params: {self.search}")
-        is_dm = not(self.active_channel["guild_id"])
+        is_dm = not (self.active_channel["guild_id"])
         total_search_messages, self.search_results = self.discord.search(
             self.active_channel["channel_id"] if is_dm else self.active_channel["guild_id"],
             channel=is_dm,
@@ -5786,7 +5876,7 @@ class Endcord:
         """Repeat search and add more messages"""
         self.add_running_task("Searching", 4)
         logger.debug(f"Extending search with params: {self.search}")
-        is_dm = not(self.active_channel["guild_id"])
+        is_dm = not (self.active_channel["guild_id"])
         total_search_messages, search_chunk = self.discord.search(
             self.active_channel["channel_id"] if is_dm else self.active_channel["guild_id"],
             channel=is_dm,
@@ -5827,7 +5917,7 @@ class Endcord:
         self.remove_running_task("Searching", 4)
 
 
-    def assist(self, assist_word, assist_type, query_results=None):
+    def assist(self, assist_word, assist_type, query_results=None, input_context=None):
         """Generate and show various assists when typing"""
         self.assist_type = assist_type
         self.assist_found = []
@@ -5895,11 +5985,12 @@ class Endcord:
 
 
         elif assist_type == 3:   # emoji
+            premium_override = input_context and input_context.split(" ")[0] in self.premium_override_commands
             self.assist_found = search.search_emojis(
                 self.gateway.get_emojis(),
                 self.discord.get_settings_proto(2).get("favorite_emojis", {}).get("emojis", []),
                 self.state["favorite_emojis"],
-                self.premium,
+                self.premium or premium_override,
                 self.active_channel["guild_id"],
                 assist_word,
                 safe_emoji=self.emoji_as_text,
@@ -5910,11 +6001,15 @@ class Endcord:
                 match = re.search(match_last_parentheses, line[0])
                 if match:
                     start, end = match.span()
-                    extra_format.append([(color_low, None, start, end + 4)])
+                    if self.placeholder_emoji and line[1].startswith("<:"):
+                        extra_format.append([(color_low, None, start + 5, end + 6)])
+                    else:
+                        extra_format.append([(color_low, None, start - 1, end + 4)])
                 else:
                     extra_format.append(None)
 
         elif assist_type == 4:   # sticker
+            premium_override = input_context and input_context.split(" ")[0] in self.premium_override_commands
             if self.config["default_stickers"]:
                 default_stickers = self.discord.get_stickers()
             else:
@@ -5922,7 +6017,7 @@ class Endcord:
             self.assist_found = search.search_stickers(
                 self.gateway.get_stickers(),
                 default_stickers,
-                self.premium,
+                self.premium or premium_override,
                 self.active_channel["guild_id"],
                 assist_word,
                 limit=self.assist_limit,
@@ -6093,7 +6188,7 @@ class Endcord:
                         extra_format.append(None)
 
             elif assist_word.lower().startswith("gif "):
-                self.assist_found = search.search_gif(
+                self.assist_found = search.search_gifs(
                     self.discord.get_settings_proto(2).get("favorite_gifs", {}).get("gifs", []),
                     assist_word[4:],
                     limit=self.assist_limit,
@@ -6182,12 +6277,12 @@ class Endcord:
                 self.assist_found.append(("Provided path is invalid", True))
 
         elif assist_type == 8:   # gif search
-            self.assist_found = search.search_gif(
+            self.assist_found = search.search_gifs(
                 self.search_results if self.search_results else self.discord.get_settings_proto(2).get("favorite_gifs", {}).get("gifs", []),
                 assist_word,
                 limit=self.assist_limit,
                 score_cutoff=self.assist_score_cutoff,
-                fav=not(self.search_results),
+                fav=not (self.search_results),
                 cmd=False,
             )
             for line in self.assist_found:
@@ -6366,15 +6461,16 @@ class Endcord:
 
     def cache_deleted(self):
         """Cache all deleted messages from current channel"""
-        if not self.active_channel["channel_id"]:
+        channel_id = self.active_channel["channel_id"]
+        if not channel_id:
             return
         for channel in self.deleted_cache:
-            if channel["channel_id"] == self.active_channel["channel_id"]:
+            if channel["channel_id"] == channel_id:
                 this_channel_cache = channel["messages"]
                 break
         else:
             self.deleted_cache.append({
-                "channel_id": self.active_channel["channel_id"],
+                "channel_id": channel_id,
                 "messages": [],
             })
             this_channel_cache = self.deleted_cache[-1]["messages"]
@@ -6391,8 +6487,9 @@ class Endcord:
 
     def restore_deleted(self, messages):
         """Restore all cached deleted messages for this channels in the correct position"""
+        channel_id = self.active_channel["channel_id"]
         for channel in self.deleted_cache:
-            if channel["channel_id"] == self.active_channel["channel_id"]:
+            if channel["channel_id"] == channel_id:
                 this_channel_cache = channel["messages"]
                 break
         else:
@@ -6420,7 +6517,7 @@ class Endcord:
         return messages
 
 
-    def open_media(self, path, force_native=False):
+    def open_media(self, path, force_native=False, loop=False):
         """
         If TUI mode: prevent other UI updates, draw media and wait for input, after quitting - update UI
         If native mode: just open the file/url with xdg-open
@@ -6448,22 +6545,22 @@ class Endcord:
                     time.sleep(0.1)
                     self.tui.resume_curses()
                 return
-        if support_media and not self.config["native_media_player"] and not uses_pgcurses and not force_native:
+        if support_image and not self.config["native_media_player"] and not uses_gtkcurses and not force_native:
             if not self.terminal_media:
                 from endcord import media
                 self.terminal_media = media.TerminalMedia(self.config, self.keybindings, font_ratio=self.font_ratio)
             self.update_extra_line()
             self.tui.pause_curses()
-            self.terminal_media.play(path)
-            time.sleep(0.1)
+            open_native = self.terminal_media.play(path, loop=loop)
+            if not open_native:
+                time.sleep(0.1)
             self.tui.resume_curses()
-        else:
-            if shutil.which(self.config["yt_dlp_path"]) and shutil.which(self.config["mpv_path"]):
-                mpv_path = self.config["mpv_path"]
-            else:
-                mpv_path = ""
-            self.update_extra_line("Media will be opened in native app")
-            peripherals.native_open(path, mpv_path, yt_in_mpv=self.config["yt_in_mpv"])
+            if not open_native:
+                return
+        # fallback to open in native
+        mpv_path = self.config["mpv_path"] if shutil.which(self.config["mpv_path"]) else ""
+        self.update_extra_line("Media will be opened in native app")
+        peripherals.native_open(path, mpv_path, yt_in_mpv=(self.config["yt_in_mpv"] and shutil.which(self.config["yt_dlp_path"])))
 
 
     def update_chat(self, keep_selected=True, change_amount=0, select_message_index=None, scroll=True, select_unread=False, change_id=None, change_type=None):
@@ -6938,7 +7035,7 @@ class Endcord:
 
         # get selected tree entry id so it can "stick" to DM when it moves
         tree_sel = self.tui.get_tree_selected()
-        if tree_sel > -1 and self.tree_metadata[tree_sel]["type"] in (1, 3):
+        if tree_sel > -1 and tree_sel < len(self.tree_metadata) and self.tree_metadata[tree_sel] and self.tree_metadata[tree_sel]["type"] in (1, 3):
             selected_id = self.tree_metadata[tree_sel]["id"]
         else:
             selected_id = None
@@ -6972,7 +7069,7 @@ class Endcord:
                     break
 
         # check for unreads/mentions for tray icon
-        if uses_pgcurses:
+        if uses_gtkcurses:
             if not self.tui.get_focused() and not self.tui.get_chat_selected()[1]:
                 # tree update for current channel is triggered from process_msg_events_other_channels
                 self.tui.set_chat_index(1)
@@ -7040,7 +7137,7 @@ class Endcord:
         if smart:
             for line_map in reversed(self.chat_map):
                 if line_map and line_map[0] == msg_index and line_map[4]:
-                    if line_map[1]:
+                    if line_map[1] is not None:
                         break
                     in_msg_start_index += 1
             else:
@@ -7060,7 +7157,7 @@ class Endcord:
         Set channel/category/guild as seen if it is not already seen.
         Force will set even if its not marked as unseen, used for active channel.
         """
-        # check chanels
+        # check channels
         channel = self.read_state.get(target_id)
         if channel and channel["last_message_id"] and int(channel["last_acked_message_id"]) < int(channel["last_message_id"]):
             self.set_channel_seen(target_id)
@@ -7781,7 +7878,6 @@ class Endcord:
             if guild_id != self.active_channel["guild_id"]:
                 return
 
-            # 255_curses_bug - update only portion of roles color ids
             self.all_roles = self.tui.init_role_colors(
                 self.all_roles,
                 self.default_msg_color[1],
@@ -7983,11 +8079,11 @@ class Endcord:
 
         self.joining_call = True
         self.call_participants = []
-        self.update_extra_line(custom_text="Connecting to voice server.", permanent=True)
+        self.update_extra_line(custom_text="Connecting to voice server", permanent=True)
         self.gateway.request_voice_gateway(
             guild_id,
             channel_id,
-            not(self.state["volume_in"]),
+            not (self.state["volume_in"]),
             video=False,
             preferred_regions=self.discord.get_best_voice_region(),
         )
@@ -7999,7 +8095,13 @@ class Endcord:
         else:
             self.update_extra_line(permanent=True)
             self.update_extra_line("Failed to start call: gateway timeout", color=20)
-            logger.warning("Failed to start call: gateway timeout", color=20)
+            logger.warning("Failed to start call: gateway timeout")
+            self.joining_call = False
+            return
+        if not voice_gateway_data["guild_id"] or not voice_gateway_data["channel_id"]:
+            self.update_extra_line(permanent=True)
+            self.update_extra_line("Failed to start call: gateway rejected call", color=20)
+            logger.warning("Failed to start call: gateway rejected call")
             self.joining_call = False
             return
 
@@ -8012,7 +8114,9 @@ class Endcord:
             self.user_agent,
             proxy=self.config["proxy"],
             custom_mic=self.state["audio_input_device"],
-            silence=self.silence_threshold,
+            silence=self.config["call_silence_threshold"],
+            opus_mode=self.config["call_opus_mode"],
+            fast_mixer=self.config["call_fast_mixer"],
         )
         self.in_call = {"guild_id": guild_id, "channel_id": channel_id}
         for _ in range(100):   # wait for 10s
@@ -8026,7 +8130,7 @@ class Endcord:
         else:
             self.update_extra_line(permanent=True)
             self.update_extra_line("Failed to start call: voice gateway timeout", color=20)
-            logger.warning("Failed to start call: voice gateway timeout", color=20)
+            logger.warning("Failed to start call: voice gateway timeout")
             del self.voice_gateway
             self.voice_gateway = None
             self.joining_call = False
@@ -8110,7 +8214,7 @@ class Endcord:
 
 
     def update_call_extra_line(self):
-        """Update extra line shown when in call, eg on call participants change"""
+        """Update extra line shown when in call, eg. on call participants change"""
         if not self.voice_gateway:
             return
         self.permanent_extra_line, self.permanent_extra_line_format = formatter.generate_extra_line_call(
@@ -8263,11 +8367,8 @@ class Endcord:
             cache_path = os.path.join(os.path.expanduser(peripherals.cache_path), "pfp")
             if not os.path.exists(cache_path):
                 os.makedirs(cache_path)
-            for file_name in os.listdir(cache_path):
-                avatar_path = os.path.join(cache_path, file_name)
-                if os.path.isfile(avatar_path) and os.path.splitext(file_name)[0].strip("_round") == avatar_id:
-                    break
-            else:   # download to cache
+            avatar_path = utils.search_pfp_cache(cache_path, f"{avatar_id}*", avatar_id)
+            if not avatar_path:
                 if self.notifications_pfp != 1:
                     avatar_path = self.discord.get_pfp(data["user_id"], avatar_id, size=self.notifications_pfp, save_path=cache_path)
                 else:
@@ -8606,7 +8707,10 @@ class Endcord:
                     new_message = self.execute_extensions_methods("on_message_event", new_message, cache=True)[0]
                     new_message_channel_id = new_message["d"]["channel_id"]
                     this_channel = (new_message_channel_id == self.active_channel["channel_id"])
-                    avatar_id = new_message["d"].pop("avatar", None)
+                    if self.keep_avatars:
+                        avatar_id = new_message["d"].get("avatar", None)
+                    else:
+                        avatar_id = new_message["d"].pop("avatar", None)
                     if this_channel and self.get_chat_last_message_id() == self.last_message_id:   # if its scrolled far up, this channel bottom is cached
                         self.process_msg_events_active_channel(new_message)
                     # handle cached channels
@@ -8622,8 +8726,7 @@ class Endcord:
                             # still have to do this when scrolled far up, only to handle message delete/edit/react/poll
                             self.process_msg_events_active_channel(new_message, latest_chat=False)
                     # handle unseen and mentions
-                    if not this_channel or this_channel:
-                        self.process_msg_events_other_channels(new_message, avatar_id)
+                    self.process_msg_events_other_channels(new_message, avatar_id)
                     # remove ghost pings
                     self.process_msg_events_ghost_ping(new_message)
                     # rearrange dms
@@ -8693,7 +8796,7 @@ class Endcord:
                     if thread_event["op"] == "THREAD_UPDATE":
                         self.load_threads(thread_event)   # add or update thread
                     elif thread_event["op"] == "THREAD_DELETE":
-                        self.remove_thread()
+                        self.remove_thread(thread_event)
                 else:
                     break
 
@@ -8707,7 +8810,7 @@ class Endcord:
 
             # voice gateway stuff
             if self.voice_gateway:
-                # check if voice call disconnected with errror
+                # check if voice call disconnected with error
                 if not self.voice_gateway.run:
                     # if it errored there will still be self.voice_gateway but it wont be running
                     self.leave_call()
@@ -8906,25 +9009,30 @@ class Endcord:
 
             # check for new member presences
             if self.get_members:
-                new_members, changed_guilds, member_count, online_count = self.gateway.get_activities()
+                new_members, changed_guilds = self.gateway.get_activities()
                 if changed_guilds:
                     self.members = new_members
+                if changed_guilds and self.active_channel["guild_id"] in changed_guilds:
+                    member_count = 0
+                    online_count = 0
                     last_index = 99
                     for guild in new_members:   # select guild
                         if guild[0] == self.active_channel["guild_id"]:
-                            if "everyone" in guild[1]:
-                                self.member_list = guild[1]["everyone"][1]
-                                last_index = guild[1]["everyone"][0]
-                            elif guild[1]:
-                                self.member_list = next(iter(guild[1].values()))[1]   # fix_member_list_selection
-                                last_index = next(iter(guild[1].values()))[0]
+                            member_count, online_count = guild[2], guild[3]
+                            if self.current_channel.get("type") in (11, 12):
+                                self.member_list = guild[1].get(self.active_channel["channel_id"], [0, []])[1]
+                                last_index = 0
+                                break
+                            permission_overwrites = self.current_channel.get("permission_overwrites", [])
+                            member_list_id = perms.compute_member_list_id(permission_overwrites)
+                            if member_list_id and member_list_id in guild[1]:
+                                self.member_list = guild[1][member_list_id][1]
+                                last_index = guild[1][member_list_id][0]
                             else:
                                 self.member_list = []
                                 last_index = None
-
                             break
-                    if (self.active_channel["guild_id"] in changed_guilds and self.get_members and self.state["member_list"] and
-                        self.screen.getmaxyx()[1] - self.config["tree_width"] - self.member_list_width - 2 >= 32):
+                    if self.get_members and self.state["member_list"] and self.screen.getmaxyx()[1] - self.config["tree_width"] - self.member_list_width - 2 >= 32:
                         self.update_member_list(last_index)
                     member_list_title = f"Members: {formatter.format_kilo(online_count)}/{formatter.format_kilo(member_count)}"[:self.member_list_width - self.tui.bordered]
                     self.tui.draw_member_list_title(member_list_title, color=self.colors[9])
@@ -8955,7 +9063,7 @@ class Endcord:
             # check if new chat chunks needs to be downloaded in any direction
             if not self.forum and self.messages:
                 if (selected_line == 0 or text_index == 0) and self.get_chat_last_message_id() != self.last_message_id:
-                    self.get_chat_chunk(past=False, scroll=not(text_index == 0 and selected_line <= 2))
+                    self.get_chat_chunk(past=False, scroll=not (text_index == 0 and selected_line <= 2))
                 elif (selected_line >= len(self.chat) - 1 or self.tui.get_chat_scrolled_top()) and not self.chat_end:
                     self.get_chat_chunk(past=True, scroll=self.tui.get_chat_scrolled_top())
             elif self.forum and not self.forum_end:
@@ -8984,7 +9092,7 @@ class Endcord:
                             self.my_commands, self.my_apps = self.discord.get_my_commands()
                             if self.active_channel["guild_id"]:
                                 self.guild_commands, self.guild_apps = self.discord.get_guild_commands(self.active_channel["guild_id"])
-                                # permissions depend on channel so they myt be computed each time
+                                # permissions depend on channel so they must be computed each time
                                 self.guild_commands_permitted = perms.compute_command_permissions(
                                     self.guild_commands,
                                     self.guild_apps,
@@ -9005,7 +9113,7 @@ class Endcord:
                 elif assist_word != self.assist_word:
                     if self.search_gif:
                         assist_type = 8
-                    self.assist(assist_word, assist_type)
+                    self.assist(assist_word, assist_type, input_context=(self.tui.input_buffer if self.command else None))
             elif assist_type == 7 and assist_word != self.assist_word:   # path
                 if self.search_gif:
                     self.assist(assist_word, 8)

@@ -1,6 +1,8 @@
 ## Installing extensions
-Extensions can be installed in `Extensions` directory located in endcord config directory.  
+You can search extensions either on github with **[endcord-extension topic](https://github.com/topics/endcord-extension)**, or using endcord `search_extensions` command.  
+Extensions are installed in `Extensions` directory located in endcord config directory.  
 Installation can be done by simply git cloning extension repo into the extensions directory or by running `endcord -i [url]`.  
+Note that if youre installing manually, if extension has `setup.py`, it has to be manually executed, like `python setup.py`.  
 There is also client command available: `install_extension [url]`. Running it without url will update all installed extensions.  
 Instead `url` can also be used `repo_owner/repo_name` which assumes github.  
 Extension loading can be toggled in config and is ON by default.  
@@ -26,7 +28,7 @@ Extensions are loaded in alphanumeric order, and in some cases it can matter bec
 
 ### Settings
 Extensions can access settings loaded from main settings - `config.ini` in config directory.  
-Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name. Extension name should be same as repo name, use underscore instead dash, and remove prepended "endcord".  
+Extensions settings must always be in form: `ext_extension_name_setting_name` - starts with `ext_`, followed by lowercase extension name and then custom setting name. Extension name should be same as repo name, use underscore instead dash, and remove prefixed "endcord".  
 Settings can be accessed in extension as `app.settings` in extensions `__init__`, it is a dict so do `app.settings.get("ext_extension_name_setting_name", "default_value")`.  
 
 ### Forced build-time disable
@@ -35,7 +37,7 @@ But extension can modify almost everything in endcord, and can even access all t
 To prevent extension injection (malware can modify endcord config to enable extensions and inject extension in extensions directory) - which is very unlikely, there is build script option: `--disable-extensions` which disables extension loading in the code itself, overriding config.  
 
 ### Extension search and publishing
-It is recommended to use `endcord-extension` tag on github and other git hosting services for easier extension search. Repo name should be prepended with `endcord` eg. `endcord-your-extension-name`.  
+It is recommended to use `endcord-extension` tag on github and other git hosting services for easier extension search. Repo name should be prefixed with `endcord` eg. `endcord-your-extension-name`.  
 
 ### Logging
 Extensions can add log entries at any level and will have their name in the module name section of log entry.  
@@ -97,6 +99,7 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
 - `init_bindings` - in load_extensions in tui.py, executed right after initializing all extensions in app.py
 - `on_binding` - at the end of common_keybindings in tui.py, executed only if there are no default bindings matched
 - `on_wait_input` - at the end of wait_input in app.py, executed only if there are no default action codes matched
+- `on_message_send` - In the middle of `wait_input`, just before message is sent, has emojized text-to-be-sent at input, should output modified text
 - `on_force_redraw` - at the end of force_redraw in tui.py
 - `on_gateway_event` - at the start of loop in receiver in gateway.py, arguments: event_data
 - `on_message_event_is_irrelevant` - in gateway.py near `elif optext == "MESSAGE_CREATE"` decides if these events are relevant and should be further processed. Has **raw** message event and event optext at input and is expected to return `True` if message is relevant (doesn't override already relevant messages).
@@ -113,8 +116,8 @@ Method names can be searched in `./endcord/app.py` code to see where they are ex
 
 
 ## Adding a binding
-1. Add method `init_bindings` to extension class, it takes 1 argumet: `keybindings` - a dict: {keybinding_name: value}
-    - This is important only if adding chainged bindings.
+1. Add method `init_bindings` to extension class, it takes 1 argument: `keybindings` - a dict: {keybinding_name: value}
+    - This is important only if adding chained bindings.
 2. Add method named `on_binding` to extension class, it takes 3 arguments: `key`, `is_command` (bool), `is_forum` (bool)
     - `key` will be same thing as printed in keybinding resolver. `is_command` means that currently command is being typed. `is_forum` means that forum is currently opened.
     - Test if `key` is same as specific keybinding that was defined in `init_bindings`.
@@ -165,12 +168,12 @@ See [Example dependency installer](#example-dependency-installer), it is enough 
 
 
 ## Creating bots
-1. First of all, bot has to have `Bot ` prepended to its token.  
+1. First of all, bot has to have `Bot ` prefixed to its token.  
 2. It is recommended to set bot intents value in the config `capabilities` option. Default is `50364033` which allows basic chat features.  
 Refer to [this](https://docs.discord.com/developers/events/gateway#gateway-intents) for more info on intents.  
 4. Next step is to register application commands.  
 To register a command, use `app.discord.bot_register_command(command_obj, guild_id=None, is_json=False)` in the extension. It returns `command_id` for the registered/updated command.  
-If `guild_id` is ommited then this will be global command.  
+If `guild_id` is omitted then this will be global command.  
 `command_obj` is python object, but json string can be passed too, just set `is_json=True`.  
 `command_obj` is send as-is without any checks, refer to [this](https://docs.discord.com/developers/interactions/application-commands#application-command-object) for more info on how to write commands.  
 Command is registered only once, registering command with same name will overwrite old one.  

@@ -48,13 +48,13 @@ COMMAND_ASSISTS = (
     ("pin_message - pin selected message to current channel", "pin_message"),
     ("push_button [num/name] - push button on interactive app message", "push_button"),
     ("string_select [string] - select string on interactive app message", "string_select"),
-    ("toggle_tab *<#[channel_id]> - toggle tabbed state for selected or specified channe;", "toggle_tab"),
+    ("toggle_tab *<#[channel_id]> - toggle tabbed state for selected or specified channel;", "toggle_tab"),
     ("switch_tab [num/next/prev] - switch to specified tab by its number", "switch_tab"),
     ("remove_all_tabs - remove all tabbed channels", "remove_all_tabs"),
     ("vote [num] - vote for specified answer index on active poll message", "vote"),
     ("paste - paste image or file as attachment or text from clipboard", "paste"),
     ("record_voice_message [cancel] - start/stop/cancel recording voice message", "record_voice_message"),
-    ("insert_timestamp [time]/[tiampmest] - insert timestamp, use assist for more options", "insert_timestamp"),
+    ("insert_timestamp [time]/[timestamp] - insert timestamp, use assist for more options", "insert_timestamp"),
     ("set_notifications *<#[channel_id]> ... - show and modify server/channel notification settings", "set_notifications"),
     ("custom_status [string] - set custom status text", "custom_status"),
     ("custom_status_emoji [emoji] - set custom status emoji", "custom_status_emoji"),
@@ -112,7 +112,7 @@ Copyright (C) 2025-%year SparkLost. All Rights Reserved.
 %build
 
 # DISCLAIMER
-Using third-party client is against Discord's Terms of Service and may cause your account to be banned!
+Using third-party client is against Discords Terms of Service and may cause your account to be banned!
 Use endcord at your own risk!
 
 

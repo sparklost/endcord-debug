@@ -2,10 +2,12 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
+import ast
 import http.client
 import importlib.util
 import logging
 import os
+import re
 import shutil
 import ssl
 import struct
@@ -15,8 +17,6 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-
-import socks
 
 if sys.platform.startswith("android"):
     sys.platform = "linux"
@@ -31,7 +31,7 @@ try:
     logger.info(APP_NAME)
 except (AttributeError, NameError):
     APP_NAME = "endcord"
-VERSION = "1.5.0"
+VERSION = "1.5.3"
 NO_NOTIFY_SOUND_DE = ("kde", "plasma")   # linux desktops without notification sound
 
 # platform specific code
@@ -158,6 +158,7 @@ def import_soundcard():
         if importlib.util.find_spec("soundcard") is not None:
             import soundcard
             return soundcard
+        logger.warning("Soundcard library not found, use endcord level=LITE or above")
         return None
     except (AssertionError, RuntimeError):
         logger.warning("Soundcard failed connecting to sound system")
@@ -591,25 +592,29 @@ def get_connection(host, port=443, timeout=2, proxy=None):
     else:
         ssl_context = ssl.create_default_context()
     ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-
     if not proxy:
-        proxy = ""
-    proxy = urllib.parse.urlsplit(proxy)
-    if proxy.scheme:
-        if proxy.scheme.lower() == "http":
-            connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
+        return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+    try:
+        if proxy.startswith("http://") or proxy.startswith("http://"):
+            proxy = urllib.parse.urlsplit(proxy)
+            if proxy.startswith("http://"):
+                connection = http.client.HTTPConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
+            else:
+                connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
             connection.set_tunnel(host, port=port)
-        elif "socks" in proxy.scheme.lower():
-            proxy_sock = socks.socksocket()
-            proxy_sock.set_proxy(socks.SOCKS5, proxy.hostname, proxy.port)
-            proxy_sock.settimeout(timeout)
-            proxy_sock.connect((host, port))
-            proxy_sock = ssl_context.wrap_socket(proxy_sock, server_hostname=host)
+        elif proxy.startswith("socks5://"):
+            from python_socks.sync import Proxy
+            proxy = Proxy.from_url(proxy)
+            raw_sock = proxy.connect(dest_host=host, dest_port=port, timeout=10)
+            ssl_context = ssl.create_default_context()
+            proxy_sock = ssl_context.wrap_socket(raw_sock, server_hostname=host)
             connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)   # extra time for tor
             connection.sock = proxy_sock
         else:
+            logger.warn(f"Invalid proxy: {proxy}")
             connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
-    else:
+    except Exception as e:
+        logger.warn(f"Error connecting to proxy {proxy}: {e}")
         connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
     return connection
 
@@ -770,11 +775,11 @@ class Recorder():
             except Exception as e:
                 logger.warning(f"No microphone found. Error: {e}")
                 self.recording = False
-                return
+                return False
         else:
             logger.warning("Failed connecting to sound system")
             self.recording = False
-            return
+            return False
         with microphone.recorder(samplerate=48000, channels=1) as rec:
             while self.recording:
                 if timer >= 600:   # 10min limit
@@ -784,6 +789,7 @@ class Recorder():
                 audio_data = rec.record(numframes=48000)
                 self.audio_data.append(audio_data)
                 timer += 1
+        return True
 
 
     def start(self):
@@ -793,6 +799,8 @@ class Recorder():
             self.audio_data = []
             self.record_thread = threading.Thread(target=self.record, daemon=True)
             self.record_thread.start()
+            time.sleep(0.1)   # time for thread to try to import soundcard
+            return self.recording
 
 
     def stop(self):
@@ -870,20 +878,34 @@ class Player():
             self.play_thread.join()
 
 
-def make_round_image_pillow(input_path, output_path):
+def make_round_image_pillow(input_path, output_path, antialias=False):
     """Create new image with circular shape using pillow"""
     from PIL import Image, ImageDraw
-    img = Image.open(input_path).convert("RGBA")
+    img = Image.open(input_path)
+    source_format = img.format
     w, h = img.size
-    mask = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, w, h), fill=255)
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    if antialias:
+        mask = Image.new("L", (w * 4, h * 4), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.ellipse((0, 0, w * 4, h * 4), fill=255)
+        mask = mask.resize((w, h), Image.Resampling.LANCZOS)
+    else:
+        mask = Image.new("L", (w, h), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.ellipse((0, 0, w, h), fill=255)
     result = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     result.paste(img, mask=mask)
-    result.save(output_path, "WEBP")
+    if source_format == "JPEG":
+        output_path = os.path.splitext(output_path)[0] + ".png"
+        result.save(output_path, "PNG")
+    else:
+        result.save(output_path, source_format)
+    return output_path
 
 
-def make_round_image_imagemagick(input_path, output_path):
+def make_round_image_imagemagick(input_path, output_path, antialias=False):
     """Create new image with circular shape using imagemagick"""
     subprocess.run([
         "magick", input_path,
@@ -891,6 +913,7 @@ def make_round_image_imagemagick(input_path, output_path):
             "+clone",
             "-alpha", "transparent",
             "-fill", "white",
+            "-antialias" if antialias else "+antialias",
             "-draw", "circle %[fx:w/2],%[fx:h/2] %[fx:w/2],0",
         ")",
         "-alpha", "set",
@@ -900,10 +923,28 @@ def make_round_image_imagemagick(input_path, output_path):
     ], check=True)
 
 
-def make_round_image(image_path):
+def make_round_image_graphicsmagick(input_path, output_path, antialias=False):
+    """Create new image with circular shape using graphicsmagick"""
+    result = subprocess.run(["gm", "identify", "-format", "%w %h", input_path], capture_output=True, text=True, check=True)
+    width, height = map(int, result.stdout.strip().split())
+    mask_path = output_path + "_mask.png"
+    subprocess.run([
+        "gm", "convert",
+        "-size", f"{width}x{height}",
+        "xc:transparent",
+        "-fill", "white",
+        "-antialias" if antialias else "+antialias",
+        "-draw", f"circle {width // 2},{height // 2} {width // 2},0",
+        mask_path,
+    ], check=True)
+    subprocess.run(["gm", "composite", "-compose", "In", input_path, mask_path, output_path], check=True)
+    os.remove(mask_path)
+
+
+def make_round_image(image_path, antialias=False):
     """
     Convert image to round image and delete old one, if possible.
-    Use pillow if available, fallback to imagemagick if available.
+    Use pillow if available, fallback to imagemagick or graphicsmagick if available.
     Save image as _round and delete original, and dont re-edit same image.
     """
     try:
@@ -914,14 +955,23 @@ def make_round_image(image_path):
         if importlib.util.find_spec("PIL") is not None:
             base, ext = os.path.splitext(image_path)
             save_path = base + "_round" + ext
-            make_round_image_pillow(image_path, save_path)
+            make_round_image_pillow(image_path, save_path, antialias)
             os.remove(image_path)
             return save_path
         if shutil.which("magick"):
             try:
                 base, ext = os.path.splitext(image_path)
                 save_path = base + "_round" + ext
-                make_round_image_imagemagick(image_path, save_path)
+                make_round_image_imagemagick(image_path, save_path, antialias)
+                os.remove(image_path)
+                return save_path
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        elif shutil.which("gm"):
+            try:
+                base, ext = os.path.splitext(image_path)
+                save_path = base + "_round" + ext
+                make_round_image_graphicsmagick(image_path, save_path, antialias)
                 os.remove(image_path)
                 return save_path
             except (subprocess.CalledProcessError, FileNotFoundError):
@@ -929,3 +979,138 @@ def make_round_image(image_path):
         return image_path
     except FileNotFoundError:   # failsafe in case file was deleted mid-conversion
         return None
+
+
+def resize_image(image_path, h, w):
+    """Resize image inplace, use pillow if available, fallback to imagemagick if available"""
+    try:
+        if not image_path or not os.path.exists(image_path):
+            return None
+        if importlib.util.find_spec("PIL") is not None:
+            from PIL import Image
+            img = Image.open(image_path)
+            source_format = img.format
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+            result = img.resize((w, h), resample=Image.Resampling.LANCZOS)
+            result.save(image_path, source_format)
+            return image_path
+        if shutil.which("magick"):
+            try:
+                subprocess.run(["magick", image_path, "-filter", "Lanczos", "-resize", f"{w}x{h}!", image_path], check=True)
+                return image_path
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        elif shutil.which("gm"):
+            try:
+                subprocess.run(["gm", "convert", image_path, "-filter", "Lanczos", "-resize", f"{w}x{h}!", image_path], check=True)
+                return image_path
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        return image_path
+    except FileNotFoundError:
+        return None
+
+
+TOKEN_MAP = ("keyword", "string", "comment", "number", "type", "classname", "function", "variable", "preproc", "specialchar", "symbol", "cbracket")
+HTML_REPLACEMENTS = (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"), ("&nbsp;", " "), ("&amp;", "&"))
+match_html_code_block = re.compile(r"<pre><tt>(.*?)</tt></pre>", re.DOTALL)
+match_span = re.compile(r'<span class="([^"]+)">([^<]*)</span>|([^<]+)')
+
+
+def unescape_html(text):
+    """Decode standard HTML entities"""
+    for entity, char in HTML_REPLACEMENTS:
+        text = text.replace(entity, char)
+    return text
+
+
+def tokenize_code_srchl(code_text, lang, initial_idx=0):
+    """Get token locations for specified language, using GNU source-highlight, return [[start_idx, end_idx, token_id]...]"""
+    cmd = ["source-highlight", f"--src-lang={lang}", "--out-format=html", "--css=style.css"]
+    try:
+        result = subprocess.run(cmd, input=code_text, text=True, capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    html_output = result.stdout
+    code_block_match = re.search(match_html_code_block, html_output)
+    if not code_block_match:
+        return []
+    html_lines = code_block_match.group(1).splitlines()
+
+    tokens = []
+    start_idx = initial_idx
+    for line in html_lines:
+        for match in match_span.finditer(line):
+            if match.group(1):
+                text = unescape_html(match.group(2))
+                end_idx = start_idx + len(text)
+                try:
+                    token_id = TOKEN_MAP.index(match.group(1))
+                except ValueError:
+                    token_id = None
+                if token_id is not None:
+                    tokens.append([start_idx, end_idx, token_id])
+                start_idx = end_idx
+            elif match.group(3):
+                text = unescape_html(match.group(3))
+                start_idx += len(text)
+        start_idx += 1
+
+    return tokens
+
+
+PYGMENTS_TOKEN_MAP = [
+    "Keyword",
+    "Literal.String",
+    "Comment",
+    "Literal.Number",
+    "Keyword.Type",
+    "Name.Class",
+    "Name.Function",
+    "Name.Variable",
+    "Name.Builtin",
+    "Literal.String.Escape",
+    "Operator",
+    "Punctuation",
+]
+
+
+def tokenize_code_pygments(code_text, lang, initial_idx=0):
+    """Get token locations for specified language using Pygments, return [[start_idx, end_idx, token_id]...]"""
+    cmd = ["pygmentize", f"-l={lang}", "-f=raw"]
+    try:
+        result = subprocess.run(cmd, input=code_text, text=True, capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+
+    tokens = []
+    current_idx = initial_idx
+
+    # line: Token.Keyword\t'def'\n
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        token_type, token_repr = parts
+        token_type = token_type[6:]
+        try:
+            text = ast.literal_eval(token_repr)
+        except (ValueError, SyntaxError):
+            continue
+        end_idx = current_idx + len(text)
+        try:
+            token_id = PYGMENTS_TOKEN_MAP.index(token_type)
+        except ValueError:   # fallback: search for broader token group
+            token_id = None
+            for idx, mapped_type in enumerate(PYGMENTS_TOKEN_MAP):
+                if token_type.startswith(mapped_type):
+                    token_id = idx
+                    break
+        if token_id is not None:
+            tokens.append([current_idx, end_idx, token_id])
+        current_idx = end_idx
+
+    return tokens

@@ -3,6 +3,8 @@ THIRD_PARTY_LICENSES.txt
 .debris
 .megaignore
 .cpython
+.pyproject.toml.bak
+*_cython/*.c
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

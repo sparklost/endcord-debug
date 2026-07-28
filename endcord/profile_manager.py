@@ -79,7 +79,7 @@ SELECT_LOGIN_TEXT = (
     FULL_HINT,
 )
 LOGIN_OPTIONS = (
-    "Paste token (recommended)",
+    "Paste token (safest)",
     "Email/phone number and password",
     "Scan QR code",
 )
@@ -87,9 +87,9 @@ EMAIL_LOGIN_TEXT = f""" Login with your email/phone number and password.
 
  Credentials will never be saved to disk.
  They are only used to obtain token which will be stored for later use.
- WARNING: It is recomended to use "Paste token" method.
+ WARNING: It is recommended to use "Paste token" method.
  Verify on github issues and with other custom clients that there are no recent
- reports of discord banning accouts for using login with email.
+ reports of discord banning accounts for using login with email.
  If using phone number, it must be E.164-formatted (the one with + at the start).
 
 
@@ -117,19 +117,20 @@ Enter the code here to verify your login.
  {PART_HINT}
 """
 FAILED_AUTH_IP_TEXT = ("Failed to authorize this IP address." + CHECK_LOG, "", ANY_KEY_TEXT)
-NETWORK_ERROR_TEXT = ("Network error occured.", "", ANY_KEY_TEXT)
+NETWORK_ERROR_TEXT = ("Network error occurred.", "", ANY_KEY_TEXT)
 SELECT_MFA_TEXT = (
     "Select multi-factor authentication method:",
     "", "", "", "",
     FULL_HINT,
 )
-TOTP_PROMPT_TEXT = f""" Enter the code fron your TOTP authentucator app here.
+TOTP_PROMPT_TEXT = f""" Enter the code from your TOTP authenticator app here.
 
 
 
  {PART_HINT}
 """
 CAPTCHA_REQUIRED_TEXT = (UNABLE_LOGIN_TEXT, "Captcha is required.", "Login with official client first over this IP, then try again.", "", ANY_KEY_TEXT)
+FAILED_AUTH_INIT_TEXT = ("Failed starting authentication gateway.", 'Either use "Paste token" method or use endcord level=MINI or above.', "", ANY_KEY_TEXT)
 logger = logging.getLogger(__name__)
 
 
@@ -330,7 +331,10 @@ def convert_time(unix_time):
 
 def init_auth(config):
     """Initialize discord authentication API class"""
-    from endcord import auth, client_properties
+    try:
+        from endcord import auth, client_properties
+    except ImportError:
+        return None
     if config["client_properties"].lower() == "anonymous":
         client_prop = client_properties.get_anonymous_properties()
     else:
@@ -383,21 +387,19 @@ def main_tui(screen, profiles_enc, profiles_plain, selected, have_keyring, confi
         title_text = pad_name("Name", "Last used", "Save method", w)
         screen.addstr(4, 0, title_text, curses.color_pair(1) | curses.A_STANDOUT)
 
-        y = 5
         for num, profile in enumerate(profiles):
             date = convert_time(profile["time"])
             text = pad_name(profile["name"], date, profile["source"], w)
             if num == selected_num:
-                screen.addstr(y, 0, text, curses.color_pair(1) | curses.A_STANDOUT)
+                screen.addstr(num + 5, 0, text, curses.color_pair(1) | curses.A_STANDOUT)
             else:
-                screen.addstr(y, 0, text, curses.color_pair(1))
-            y += 1
+                screen.addstr(num + 5, 0, text, curses.color_pair(1))
         draw_buttons(screen, selected_button, h-1, w)
 
         key = screen.getch()
-        if key == 27:   # ecape key
+        if key in (27, "ESC"):
             break
-        if key == 10:   # ENTER
+        if key in (10, "ENTER"):
             if selected_button == 0 and profiles:   # LOAD
                 proceed = True
                 selected = profiles[selected_num]["name"]
@@ -442,19 +444,19 @@ def main_tui(screen, profiles_enc, profiles_plain, selected, have_keyring, confi
                 regenerate = True
             elif selected_button == 4:   # QUIT
                 break
-        elif key == curses.KEY_UP:
+        elif key in (curses.KEY_UP, "UP"):
             if selected_num > 0:
                 selected_num -= 1
-        elif key == curses.KEY_DOWN:
+        elif key in (curses.KEY_DOWN, "DOWN"):
             if selected_num < len(profiles) - 1:
                 selected_num += 1
-        elif key == curses.KEY_LEFT:
+        elif key in (curses.KEY_LEFT, "LEFT"):
             if selected_button > 0:
                 selected_button -= 1
-        elif key == curses.KEY_RIGHT:
+        elif key in (curses.KEY_RIGHT, "RIGHT"):
             if selected_button < 4:
                 selected_button += 1
-        elif key == curses.KEY_RESIZE:
+        elif key in (curses.KEY_RESIZE, "RESIZE"):
             regenerate = True
 
         if regenerate:
@@ -539,6 +541,12 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                 prev_step()
 
         elif step == 200:   # email login
+            if not discord_auth:
+                discord_auth = init_auth(config)
+                if not discord_auth:
+                    key_prompt(screen, FAILED_AUTH_INIT_TEXT)
+                    set_step(2, mem=False)
+                    continue
             proceed = True
             if not skip_login_prompt:
                 texts, proceed = text_prompt(
@@ -552,8 +560,6 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                 email, password = texts
             if proceed:
                 if email and password:
-                    if not discord_auth:
-                        discord_auth = init_auth(config)
                     status, data = discord_auth.login(email, password)
                     if status == 0 and data:   # success
                         profile["token"] = data
@@ -613,10 +619,10 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                         key_prompt(screen, (UNABLE_LOGIN_TEXT, "Account is suspended.", "", ANY_KEY_TEXT))
                     elif status == 6:   # account disabled/marked for deletion
                         key_prompt(screen, (UNABLE_LOGIN_TEXT, "Account is disabled or marked for deletion.", "", ANY_KEY_TEXT))
-                    elif status == 7:   # captha required
+                    elif status == 7:   # captcha required
                         key_prompt(screen, CAPTCHA_REQUIRED_TEXT)
                     elif status == 8:   # network error
-                        key_prompt(screen, (UNABLE_LOGIN_TEXT, "Network error occured, check logfor more info.", "", ANY_KEY_TEXT))
+                        key_prompt(screen, (UNABLE_LOGIN_TEXT, "Network error occurred, check log for more info.", "", ANY_KEY_TEXT))
             else:
                 prev_step()
 
@@ -680,8 +686,12 @@ def manage_profile(screen, have_keyring, config, editing_profile=None):
                     break
 
         elif step == 300:   # qr code login
-            from endcord import auth, client_properties, qr_code, terminal_utils
             discord_auth = init_auth(config)
+            if not discord_auth:
+                key_prompt(screen, FAILED_AUTH_INIT_TEXT)
+                set_step(2, mem=False)
+                continue
+            from endcord import auth, client_properties, qr_code, terminal_utils
             if config["custom_user_agent"]:
                 user_agent = config["custom_user_agent"]
             else:
@@ -794,9 +804,9 @@ def delete_profile(screen, profiles_enc, profiles_plain, selected_profile):
         screen.addstr(int(h/2), 0, text, curses.color_pair(1) | curses.A_STANDOUT)
 
         key = screen.getch()
-        if key == 27 or key == 110:   # ESCAPE / N
+        if key in (27, 110, "ESC", "n"):
             return profiles_enc, profiles_plain, False
-        if key == 10 or key == 121:   # ENTER / Y
+        if key in (10, 121, "ENTER", "y"):
             if enc_source:
                 profiles_enc.pop(num)
             else:
@@ -870,37 +880,42 @@ def text_prompt(screen, description_text, prompts, init=None, mask=None, prompt_
             screen.nodelay(False)
             if sequence[-1] == -1 and sequence[-2] == 27:
                 break
+        elif key == "ESC":
+            break
+        elif isinstance(key, str) and key.startswith("PASTE"):
+            texts[selected] = texts[selected][:input_index] + key[6:] + texts[selected][input_index:]
+            input_index += len(key) - 6
 
-        if key == 10:  # ENTER
+        elif key in (10, "ENTER"):
             try:
                 selected = next(i for i, t in enumerate(texts) if not t.strip())
             except StopIteration:
                 proceed = True
                 break
 
-        elif key in (BACKSPACE, 127) and input_index > 0:
+        elif key in (BACKSPACE, 127, "BACKSPACE") and input_index > 0:
             texts[selected] = texts[selected][:input_index-1] + texts[selected][input_index:]
             input_index -= 1
 
-        if key == curses.KEY_UP:
+        if key in (curses.KEY_UP, "UP"):
             selected = max(0, selected - 1)
             input_index = len(texts[selected])
-
-        elif key == curses.KEY_DOWN:
+        elif key in (curses.KEY_DOWN, "DOWN"):
             selected = min(len(prompts) - 1, selected + 1)
             input_index = len(texts[selected])
-
-        elif key == curses.KEY_LEFT and input_index > 0:
+        elif key in (curses.KEY_LEFT, "LEFT") and input_index > 0:
             input_index -= 1
-
-        elif key == curses.KEY_RIGHT and input_index < len(texts[selected]):
+        elif key in (curses.KEY_RIGHT, "RIGHT") and input_index < len(texts[selected]):
             input_index += 1
 
         elif isinstance(key, int) and 32 <= key <= 126:
             texts[selected] = texts[selected][:input_index] + chr(key) + texts[selected][input_index:]
             input_index += 1
+        elif isinstance(key, str) and len(key) == 1:
+            texts[selected] = texts[selected][:input_index] + key + texts[selected][input_index:]
+            input_index += 1
 
-        elif key == 9:  # TAB
+        elif key in (9, "TAB"):
             selected = (selected + 1) % len(prompts)
             input_index = len(texts[selected])
 
@@ -940,18 +955,18 @@ def select_prompt(screen, description_text, options, y_offset):
 
         key = screen.getch()
 
-        if key == 27:   # ESCAPE
+        if key in (27, "ESC"):
             break
 
-        elif key == 10:   # ENTER
+        elif key in (10, "ENTER"):
             proceed = True
             break
 
-        elif key == curses.KEY_UP:
+        elif key in (curses.KEY_UP, "UP"):
             if selected_num > 0:
                 selected_num -= 1
 
-        elif key == curses.KEY_DOWN:
+        elif key in (curses.KEY_DOWN, "DOWN"):
             if selected_num < len(options) - 1:
                 selected_num += 1
 
@@ -975,12 +990,12 @@ def key_prompt(screen, description_text, enter=False):
     proceed = False
     while run:
         key = screen.getch()
-        if key and not enter:
+        if key not in (-1, "RESIZE", "FOCUS_IN", "FOCUS_OUT") and not isinstance(key, tuple) and not enter:
             proceed = True
             break
-        if key == 27:   # ESCAPE
+        if key in (27, 110, "ESC", "n"):
             break
-        elif key == 10:   # ENTER
+        elif key in (10, 121, "ENTER", "y"):
             proceed = True
             break
     screen.clear()

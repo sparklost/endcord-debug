@@ -2,12 +2,14 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
+import os
 import re
 from datetime import datetime
 
 PLATFORM_TYPES = ("Desktop", "Xbox", "Playstation", "IOS", "Android", "Nitendo", "Linux", "MacOS")
 CONTENT_TYPES = ("Played Game", "Watched Media", "Top Game", "Listened Media", "Listened Session", "Top Artist", "Custom Status", "Launched Activity", "Leaderboard")
 DISCORDAPP_CDN_ATTACHMENTS = ("https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments")
+GIF_PROVIDERS = ("tenor.com/", "giphy.com/", "klipy.com/")
 match_discord_attachment_url = re.compile(r"https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\/attachments\/\d+\/\d+\/([^\?\s)\]>]+)(?:\?.+)?")
 match_url = re.compile(r"https?:\/\/[\w-]+(\.[\w-])+[^\s)\]>]*")
 
@@ -24,7 +26,7 @@ def generate_timestamp(timestamp, timestamp_format, unix=False):
 
 
 def quote(text):
-    """Prepend '> ' to text and to each newline"""
+    """Prefix '> ' to text and to each newline"""
     return f"> {text.replace("\n", "\n> ")}"
 
 
@@ -39,20 +41,23 @@ def prepare_embeds(embeds, message_content):
         skip_main_url = False
         media = []
         embed_type = embed.get("type", "unknown")
+        url = embed.get("url", "")
 
-        if "url" in embed and "tenor.com/" not in embed["url"] and "giphy.com/" not in embed["url"]:
+        if url and not any(domain in url for domain in GIF_PROVIDERS):
             # dont repeat unless its not discord attachment and handle x=twitter
             if (embed_type != "rich" and ".discordapp." not in embed["url"]) or embed["url"] not in message_content.replace("https://x.com", "https://twitter.com") or embed_type == "image":
-                content.append(embed["url"])
-                main_url = embed["url"]
+                main_url = url
                 skip_main_url = True
 
-        if "author" in embed and "name" in embed["author"] and "giphy.com/" not in embed.get("url", ""):
+        if "name" in embed.get("author", {}) and not any(domain in url for domain in GIF_PROVIDERS):
             name = embed["author"]["name"]
             if name not in embed.get("title", "") and name not in embed.get("description", ""):
                 content.append(quote(name))
         if "title" in embed:
-            content.append(quote(embed["title"]))
+            if main_url:
+                content = [" ", quote(f"[{embed["title"]}]({main_url})")]
+            else:
+                content.append(quote(embed["title"]))
         if "description" in embed and (not main_url or "youtube." not in main_url):   # skip long descriptions for yt
             content.append(quote(embed["description"]))
 
@@ -72,6 +77,8 @@ def prepare_embeds(embeds, message_content):
             if embed["image"]["url"] not in content:
                 if embed_type == "rich":
                     content.append(quote(embed["image"]["url"]))
+                elif embed_type.startswith("gif") and "title" in embed:
+                    content = [f"[{embed["title"]}]({embed["image"]["url"]})"]
                 else:
                     content.append(embed["image"]["url"])
             main_url = embed["image"]["url"]
@@ -83,6 +90,8 @@ def prepare_embeds(embeds, message_content):
             if "youtube." not in embed["video"]["url"] and embed["video"]["url"] not in content:
                 if embed_type == "rich":
                     content.append(quote(embed["video"]["url"]))
+                elif embed_type.startswith("gif") and "title" in embed:
+                    content = [f"[{embed["title"]}]({embed["video"]["url"]})"]
                 else:
                     content.append(embed["video"]["url"])
             if not skip_main_url:
@@ -97,6 +106,8 @@ def prepare_embeds(embeds, message_content):
         content = "\n".join(content)
         if content:
             if content == message_content:
+                message_content = ""
+            if message_content.startswith("https://") and " " not in message_content and "\n" not in message_content and any(domain in content for domain in GIF_PROVIDERS):
                 message_content = ""
             ready_data = {
                 "type": embed_type,
@@ -163,9 +174,12 @@ def prepare_message(message):
                 message["referenced_message"]["attachments"] = forwarded.get("attachments")
             reference_embeds, _ = prepare_embeds(message["referenced_message"]["embeds"], "")
             for attachment in message["referenced_message"].get("attachments", []):
+                name = attachment["filename"]
+                if attachment.get("title"):
+                    name = attachment["title"] + os.path.splitext(name)[1]
                 reference_embeds.append({
                     "type": attachment.get("content_type", "unknown"),
-                    "name": attachment["filename"],
+                    "name": name,
                     "url": attachment["url"],
                 })   # keep attachments in same place as embeds
             message["referenced_message"], reference_embeds = content_to_attachment(message["referenced_message"], reference_embeds)
@@ -223,13 +237,19 @@ def prepare_message(message):
     # embeds and attachments
     embeds, message["content"] = prepare_embeds(message["embeds"], message["content"])
     for attachment in message["attachments"]:
-        embeds.append({
+        name = attachment["filename"]
+        if attachment.get("title"):
+            name = attachment["title"] + os.path.splitext(name)[1]
+        data = {
             "type": attachment.get("content_type", "unknown"),
-            "name": attachment["filename"],
+            "name": name,
             "url": attachment["url"],
             "proxy_url": attachment.get("proxy_url"),
             "hw": (attachment["height"], attachment["width"]) if "height" in attachment else None,
-        })   # keep attachments in same place as embeds (attachments have no "main_url")
+        }
+        if attachment.get("duration_secs"):
+            data["duration"] = round(attachment["duration_secs"])
+        embeds.append(data)   # keep attachments in same place as embeds (attachments have no "main_url")
     message, embeds = content_to_attachment(message, embeds)
     # mentions
     mentions = []
@@ -297,12 +317,12 @@ def prepare_message(message):
     return message_dict
 
 
-def prepare_messages(data, have_channel_id=False, clean=True):
+def prepare_messages(data, have_channel_id=False, avatars=False):
     """Prepare list of messages"""
     messages = []
     for message in data:
         ready_message = prepare_message(message)
-        if clean:
+        if not avatars:
             del ready_message["avatar"]
         messages.append(ready_message)
         if have_channel_id:
@@ -343,7 +363,7 @@ def prepare_components(components):
             elif button_type == 5:   # purchase button
                 text.append("*Button: purchase_button_disabled*")
             else:
-                text.append("*Button: unknown_butotn_disabled*")
+                text.append("*Button: unknown_button_disabled*")
         elif comp_type == 3:   # STRING_SELECT
             selected = None
             for option in component["options"]:

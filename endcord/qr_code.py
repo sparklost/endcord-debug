@@ -98,7 +98,7 @@ def bit_str(val, width):
 
 
 def bch_encode(data, shift_bits, generator, gen_len, mask=0):
-    """Encode the data isung BCH algorithm"""
+    """Encode the data using BCH algorithm"""
     d = data << shift_bits
     while d.bit_length() >= gen_len:
         shift = d.bit_length() - gen_len
@@ -161,7 +161,7 @@ def make_qr(data, version, mask_pattern, error_correction, binary_mode):
 
     # place finder pattern and separators
     for row, col in ((0, 0), (modules_count - 7, 0), (0, modules_count - 7)):
-        for r in range(-1, 8):   # 8x8 area to have space for separatorsZ
+        for r in range(-1, 8):   # 8x8 area to have space for separators
             for c in range(-1, 8):
                 target_row = row + r
                 target_col = col + c
@@ -306,7 +306,7 @@ def generate_qr_data(version, error_correction, data, binary_mode):
         # slice data blocks
         current_data_chunk = data_bytes[offset : offset + data_chunk_count]
         offset += data_chunk_count
-        # calculate reed-solomon polynomial (could use precomputed tables but no neeed)
+        # calculate reed-solomon polynomial (could use precomputed tables but no need)
         rs_poly = [1]
         for i in range(error_chunk_count):
             rs_poly = gf_poly_mul(rs_poly, [1, gf_gexp(i)])
@@ -434,7 +434,7 @@ def gen_qr_terminal_string(text, text_above="", text_bellow=""):
     out_lines = []
     out_lines.append(bg_black + fg_white + "\n".join(text_above) + reset)
 
-    # calculate paddings
+    # calculate padding
     padding_h = (screen_height - height // 2) // 2
     padding_w = (screen_width - width) // 2
 

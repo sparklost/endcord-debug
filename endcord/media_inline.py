@@ -4,7 +4,6 @@
 
 import curses
 import glob
-import importlib
 import logging
 import os
 import queue
@@ -37,7 +36,7 @@ def freed_vertical_segments(old_rects, new_rects_y):
                 continue
             if occ_start >= old_end:
                 break
-            if occ_start > cursor:   # start segnemt
+            if occ_start > cursor:   # start segment
                 to_clear.append((ox, cursor, ow, occ_start - cursor))
             cursor = max(cursor, occ_end)
         if cursor < old_end:   # end segment
@@ -175,12 +174,12 @@ class InlineMedia:
                     if not data or not draw:
                         continue
                     abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
-                    if abs_y - chat_y <= -h or abs_y > chat_h:
+                    if abs_y - chat_y <= -h or abs_y > chat_h + 1 + subtitle_line:
                         continue
                     abs_x = chat_x + rel_x
                     cut_y = 0
                     cut_h = h
-                    if abs_y > chat_h - h + 1:
+                    if abs_y > chat_h - h + 1 + subtitle_line:
                         cut_h = min(h, chat_h - abs_y + 1) + subtitle_line
                     if abs_y <= subtitle_line:
                         cut_h += abs_y - chat_y
@@ -239,7 +238,7 @@ class InlineMedia:
                     continue
                 if occupied_start >= old_end:
                     break
-                if occupied_start > new_y:   # start segnemt
+                if occupied_start > new_y:   # start segment
                     to_clear.append((new_y, occupied_start, x, w, mention_old))
                 new_y = max(new_y, occupied_end)
             if new_y < old_end:   # end segment
@@ -268,7 +267,7 @@ class InlineMedia:
 
 
     def draw_selection(self, pos):
-        """Draaw selection line around images"""
+        """Draw selection line around images"""
         chat_y, chat_x = self.tui.win_chat.getbegyx()
         chat_h, chat_w = self.tui.chat_hw
         for data, rel_y, rel_x, h, w, draw, _ in self.image_cache.values():
@@ -368,12 +367,12 @@ class InlineMedia:
                 subtitle_line = bool(self.tui.win_subtitle_line)
                 with self.image_cache_lock:
                     abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
-                    if abs_y - chat_y <= -h or abs_y > chat_h:
+                    if abs_y - chat_y <= -h or abs_y > chat_h + 1 + subtitle_line:
                         continue
                     abs_x = chat_x + rel_x
                     cut_y = 0
                     cut_h = h
-                    if abs_y > chat_h - h + 1:
+                    if abs_y > chat_h - h + 1 + subtitle_line:
                         cut_h = min(h, chat_h - abs_y + 1) + subtitle_line
                     if abs_y <= subtitle_line:
                         cut_h += abs_y - chat_y
@@ -568,9 +567,11 @@ def img_to_term_block_truecolor(data, bg_color, screen_width, screen_height, img
 
 
 # use cython if available, ~1.7 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.media"):
+try:
     from endcord_cython.media import (
         img_to_term,
         img_to_term_block,
         img_to_term_block_truecolor,
     )
+except ImportError:
+    pass

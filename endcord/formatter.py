@@ -3,15 +3,15 @@
 # Redistribution of modified versions is not permitted.
 
 import curses
-import importlib.util
 import logging
 import re
+import shutil
 import time
 from bisect import bisect_left
 from datetime import UTC, datetime
 from itertools import chain
 
-from endcord import utils
+from endcord import peripherals, utils
 from endcord.wide_ranges import WIDE_RANGES
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ try:
     APP_NAME = __main__.APP_NAME   # set in main.py
 except (AttributeError, NameError):
     APP_NAME = "endcord"
+uses_gtkcurses = hasattr(curses, "GTKCURSES")
 
 DAY_MS = 24 * 60 * 60 * 1000
 DISCORD_EPOCH_MS = 1420070400000
@@ -27,7 +28,7 @@ TREE_EMOJI_REPLACE = "▮"
 TIME_DIVS = [1, 60, 3600, 86400, 2678400, 31190400]
 TIME_UNITS = ["second", "minute", "hour", "day", "month", "year"]
 SPLIT_AFTER_TIME = 10 * 60
-ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
+ALT_SPACE = " " if uses_gtkcurses else " "   # U+2000 - en quad
 MIN_TAB_LEN = 8
 
 ACTIVITY_VERBS = ("Playing", "Streaming", "Listening to", "Watching", "Competing in")
@@ -41,7 +42,8 @@ match_timestamp = re.compile(r"<t:(\d+)(:[tTdDfFsSR])?>")
 match_escaped_md = re.compile(r"\\(?=[^a-zA-Z\d\s])")
 match_md_spoiler = re.compile(r"(?<!\\)\|\|.+?\|\|")
 match_md_code_snippet = re.compile(r"(?<!`|\\)`[^`]+`")
-match_md_code_block = re.compile(r"(?s)```(.*?)```")
+match_md_code_block = re.compile(r"(?s)```(?:([a-zA-Z0-9+#-]+)?[ \t]*\n)?(.*?)```")
+match_md_url = re.compile(r"(?<!\\)\[((?:(?!\]\().)+)\]\(([^)]+)\)")
 match_url = re.compile(r"https?:\/\/[\w.-]+(\.[\w-])+[^\s)\]>]*[^\s).\]>]")
 match_discord_channel_url = re.compile(r"https:\/\/discord(?:app)?\.com\/channels\/(\d*)\/(\d*)(?:\/(\d*))?")
 match_sticker_id = re.compile(r"<;\d+;>")
@@ -181,17 +183,19 @@ def generate_relative_time(timestamp):
     return time_string
 
 
-def format_seconds(seconds, nice=False):
+def format_seconds(seconds, nice=False, pad=True):
     """Convert seconds to hh:mm:ss or HHh MMm SSs"""
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     parts = []
+    fmt = "02d" if pad else "d"
     if hours:
-        parts.append(f"{hours:02d}" + ("h" if nice else ""))
+        parts.append(f"{hours:{fmt}}" + ("h" if nice else ""))
     if minutes or hours:
-        parts.append(f"{minutes:02d}" + ("m" if nice else ""))
-    parts.append(f"{secs:02d}" + ("s" if nice else ""))
+        if pad:
+            parts.append(f"{minutes:{fmt}}" + ("m" if nice else ""))
+    parts.append(f"{secs:{fmt}}" + ("s" if nice else ""))
     if nice:
         return " ".join(parts)
     return ":".join(parts)
@@ -234,7 +238,7 @@ def find_timestamp(full_string, timestamp):
 
 
 def format_kilo(n, dec=1):
-    """Convert integer to string with K sufix"""
+    """Convert integer to string with K suffix"""
     if n < 1000:
         return str(n)
     value = n / 1000
@@ -338,7 +342,7 @@ def split_index_wch(text, max_width):
     return len(text)
 
 
-def fix_line_format(line_format, text):
+def fix_line_format_py(line_format, text):
     """Fix line format ranges for wide character positions"""
     if len(line_format) <= 1:
         return line_format
@@ -405,7 +409,7 @@ def fix_map_ranges(map_ranges, text):
 
 
 # use cython if available, ~6 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.formatter"):
+try:
     from endcord_cython.formatter import (
         fix_line_format,
         fix_map_ranges,
@@ -416,6 +420,8 @@ if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endc
         split_index_wch,
     )
     init_wide_ranges(WIDE_RANGES)
+except ImportError:
+    fix_line_format = fix_line_format_py
 
 
 def normalize_string(input_string, max_length, emoji_safe=False, dots=False, fill=True):
@@ -778,9 +784,9 @@ def replace_code_blocks(text, *ranges_lists):
     for match in re.finditer(match_md_code_block, text):
         start, end = match.span()
         result.append(text[last_pos:start])
-        new_text = match.group(1)
+        new_text = match.group(2)
         new_text = new_text.removeprefix("\n")
-        lang = None
+        lang = match.group(1)
         result.append(new_text)
 
         new_start = start + offset
@@ -797,6 +803,66 @@ def replace_code_blocks(text, *ranges_lists):
     return "".join(result), code_snippet_ranges
 
 
+def replace_bracketed_urls(text):
+    """Find <https://...> and remove < > from it"""
+    result = []
+    last_pos = 0
+    pos = 0
+    while True:
+        start = text.find("<https://", pos)
+        if start == -1 or text[start-1] == "\\":
+            break
+        end = text.find(">", start)
+        if end == -1:
+            pos = start + 1
+            continue
+        result.append(text[last_pos:start])
+        result.append(text[start + 1 : end])
+        last_pos = end + 1
+        pos = last_pos
+    result.append(text[last_pos:])
+    return "".join(result)
+
+
+def replace_markdown_urls(text, except_ranges, *ranges_lists):
+    """Replace [text](url) and [text](<url>) with text and return it as url range"""
+    result = []
+    url_ranges = []
+    last_pos = 0
+    offset = 0
+
+    for match in re.finditer(match_md_url, text):
+        start, end = match.span()
+        skip = False
+        for except_range in chain(*except_ranges):
+            start_r = except_range[0]
+            end_r = except_range[1]
+            if start > start_r and start < end_r and end > start_r and end < end_r:
+                skip = True
+                break
+        if skip:
+            continue
+        new_text = match.group(1)
+        url = match.group(2).strip("<>")
+        if not match_url.match(url):   # verify url
+            continue
+        result.append(text[last_pos:start])
+        result.append(new_text)
+
+        new_start = start + offset
+        new_end = new_start + len(new_text)
+        url_ranges.append([new_start, new_end, url])
+
+        diff = len(new_text) - (end - start)
+        if diff != 0:
+            shift_ranges(ranges_lists, new_start, diff)
+        offset += diff
+        last_pos = end
+
+    result.append(text[last_pos:])
+    return "".join(result), url_ranges
+
+
 def replace_spoilers(line):
     """Replace spoiler: ||content|| with ACS_BOARD characters"""
     for _ in range(20):   # safety limit
@@ -809,7 +875,7 @@ def replace_spoilers(line):
     return line
 
 
-def replace_escaped_md(line, except_ranges=[]):
+def replace_escaped_md(line, except_ranges=()):
     r"""
     Replace escaped markdown characters.
     eg "\:" --> ":"
@@ -819,7 +885,7 @@ def replace_escaped_md(line, except_ranges=[]):
     for match in re.finditer(match_escaped_md, line):
         start, end = match.span()
         skip = False
-        for except_range in except_ranges:
+        for except_range in chain(*except_ranges):
             start_r = except_range[0]
             end_r = except_range[1]
             if start > start_r and start < end_r and end > start_r and end < end_r:
@@ -854,7 +920,7 @@ def generate_count(count):
     return " (99+)"
 
 
-def format_md_all(line, content_start, except_ranges):
+def format_md_all(line, content_start, except_ranges=()):
     """
     Replace all supported formatted markdown strings and return list of their formats.
     This should be called only after curses has initialized color.
@@ -882,7 +948,7 @@ def format_md_all(line, content_start, except_ranges):
         start = string_match.start() + content_start
         end = string_match.end() + content_start
         skip = False
-        for except_range in except_ranges:
+        for except_range in chain(*except_ranges):
             start_r = except_range[0]
             end_r = except_range[1]
             # if this match is inside excepted range
@@ -1065,7 +1131,7 @@ def get_global_name(data, use_nick):
 
 
 def replace_backreferences(text):
-    """Repace sed like backreference with python re like brckreference """
+    """Replace sed like backreference with python re like backreference"""
     def replacer(match):
         num = match.group(1)
         return f"\\g<{num}>"
@@ -1156,8 +1222,9 @@ def format_poll(poll):
 class ChatGenerator:
     """Chat generator class"""
 
-    def __init__(self, config, colors, colors_formatted, my_id, placeholder_emoji, placeholder_images, font_ratio=2.25, dpw=1):
+    def __init__(self, config, colors, colors_formatted, colors_code, my_id, placeholder_emoji, placeholder_images, font_ratio=2.25, dpw=1):
         # load from config
+        self.config = config
         self.format_message = config["format_message"]
         self.format_message_grouped = config["format_message_grouped"]
         self.format_newline = config["format_newline"]
@@ -1184,6 +1251,7 @@ class ChatGenerator:
         self.trim_embed_url_size = max(config["trim_embed_url_size"], 20)
         self.dynamic_name_len = config["dynamic_name_len"]
         self.limit_chat_buffer = config["limit_chat_buffer"]
+        self.syntax_highlight = config["syntax_highlight"]
         self.smart_chat_lines = config["smart_chat_lines"] and self.message_grouping
         self.unreads_edge = "" if self.emoji_as_text else config["tree_drop_down_thread"]
         if self.smart_chat_lines:
@@ -1209,6 +1277,7 @@ class ChatGenerator:
         self.color_mention_chat_edited = colors_formatted[16][0]
         self.color_mention_chat_url = colors_formatted[17][0][0]
         self.color_mention_spoiler = colors_formatted[18][0][0]
+        self.colors_code = colors_code
 
         # load formatted colors: [[id], [id, start, end]...]
         self.color_message = colors_formatted[0]
@@ -1239,7 +1308,24 @@ class ChatGenerator:
         self.chat_map = []
         # self.chat_lock = threading.Lock()   # enable if threads collide which is very unlikely
 
-        # calculate stuff
+        self.tokenize_code = None
+        if self.syntax_highlight:
+            if shutil.which("pygmentize"):
+                self.tokenize_code = peripherals.tokenize_code_pygments
+            elif shutil.which("source-highlight"):
+                self.tokenize_code = peripherals.tokenize_code_srchl
+
+        self.calculate_lengths()
+
+
+    def calculate_lengths(self):
+        """Calculate all lengths based on config"""
+        # moved to method so extensions can modify settings and trigger recalculation
+        if self.smart_chat_lines:
+            self.tree_drop_down_intersect = self.config["tree_drop_down_intersect"]
+            self.tree_drop_down_vline = self.config["tree_drop_down_vline"]
+            self.spaces_before_text = len(self.format_reactions) - len(self.format_reactions.lstrip(" "))
+
         self.placeholder_timestamp = generate_timestamp("2015-01-01T00:00:00.000000+00:00", self.format_timestamp)
         placeholder_message = (self.format_message
             .replace("%username", " " * self.limit_username)
@@ -1247,7 +1333,7 @@ class ChatGenerator:
             .replace("%timestamp", self.placeholder_timestamp)
             .replace("%edited", "")
             .replace("%app", "")
-            # .replace("%content", "")   # will be splitted on %content
+            # .replace("%content", "")   # will be split on %content
         ).split("%content")[0]
         self.default_pre_content_len = len(placeholder_message)
         self.timestamp_range = find_timestamp(placeholder_message, self.placeholder_timestamp)
@@ -1295,8 +1381,8 @@ class ChatGenerator:
         else:
             self.pre_edited_len = 0
 
-        # curses optimizes scrolling, so large empty sace in chat will cause flickering when scrolling tree / member list
-        # this is prevented by verically alternating space and alt_space character (U+2800 - braille pattern blank)
+        # curses optimizes scrolling, so large empty space in chat will cause flickering when scrolling tree / member list
+        # this is prevented by vertically alternating space and alt_space character (U+2800 - braille pattern blank)
         # same thing is in member list but if member list is closed, here must be too
         fixed_content = (self.format_newline
             .replace("%timestamp", self.placeholder_timestamp)
@@ -1323,7 +1409,7 @@ class ChatGenerator:
             format_reactions (reactions added to main message)
         chat = [one_message_line, ...]
         chat_format = [[[default_color_id], [color_id, start, end], ...], ...]
-        chat_map = [(msg_num, username:(st, end), is_reply, reactions:((st, end, emji_id), ...), date:(st, end), ranges), ...]
+        chat_map = [(msg_num, username:(st, end), is_reply, reactions:((st, end, emoji_id), ...), date:(st, end), ranges), ...]
             ranges = (url:(st, end, idx), spoiler:(st, end, idx), emoji:(st, end, id), mentions:(st, end, id), channels:(st, end, id), images:(y, x, h, w))
         change_id hints that only one specific message got changed, change_type hints type of that change: 1 - append, 2 - delete, 3 - edit.
         """
@@ -1358,7 +1444,7 @@ class ChatGenerator:
                 self.shift_chat_map(-1, 1)
                 self.insert_data_into(self.chat_map, message_chat_map, 0)
 
-            elif change_type in (2, 20):   # fully delete messsage / delete when remove pending
+            elif change_type in (2, 20):   # fully delete message / delete when remove pending
                 self.remove_message(change_id)   # change_id is msg_num in this case
                 if change_id != 0 and change_type == 2:   # have to reconstruct the message bellow, to update separator lines
                     # skipped when pending because its simple message update
@@ -1635,13 +1721,15 @@ class ChatGenerator:
                     content = ref_message["content"]
                     if self.emoji_as_text:
                         content = utils.demojize(content)
-                    content, _ = replace_escaped_md(content)
+                    content = replace_bracketed_urls(content)
                     content = replace_spoilers(content)
                     content, _ = replace_mentions(content, ref_message["mentions"], global_name=self.use_global_name, use_nick=self.use_nick)
                     content, _ = replace_roles(content, roles)
                     content = replace_discord_url(content)
                     content, _ = replace_channels(content, channels)
                     content, _ = replace_timestamps(content, self.convert_timezone)
+                    content, _ = replace_markdown_urls(content, ())
+                    content, _ = replace_escaped_md(content)
                     content, emoji_ranges = replace_discord_emoji(content, self.placeholder_emoji)
                 if reply_embeds:
                     for embed in reply_embeds:
@@ -1750,6 +1838,7 @@ class ChatGenerator:
             content = message["content"]
             if self.emoji_as_text:
                 content = utils.demojize(content)
+            content = replace_bracketed_urls(content)
             content, emoji_ranges = replace_discord_emoji(content, self.placeholder_emoji)
             content, mention_ranges = replace_mentions(content, message["mentions"], emoji_ranges, global_name=self.use_global_name, use_nick=self.use_nick)
             content, role_ranges = replace_roles(content, roles, emoji_ranges, mention_ranges)
@@ -1759,6 +1848,16 @@ class ChatGenerator:
             content, timestamp_ranges = replace_timestamps(content, self.convert_timezone, emoji_ranges, mention_ranges, channel_ranges)
             content, code_snippets = replace_code_snippets(content, emoji_ranges, mention_ranges, channel_ranges, timestamp_ranges)
             content, code_blocks = replace_code_blocks(content, emoji_ranges, mention_ranges, channel_ranges, timestamp_ranges, code_snippets)
+            content, urls = replace_markdown_urls(content, (code_snippets, code_blocks), emoji_ranges, mention_ranges, channel_ranges, timestamp_ranges, code_snippets)
+            code_blocks_tokens = []
+            if self.syntax_highlight:
+                for block in code_blocks:
+                    if not block[2]:
+                        continue
+                    tokens = self.tokenize_code(content[block[0]:block[1]], block[2], initial_idx=block[0])
+                    for token in tokens:
+                        token[2] = self.colors_code[token[2]]
+                    code_blocks_tokens += tokens
             shift_ranges_all(
                 pre_content_len,
                 emoji_ranges,
@@ -1767,6 +1866,8 @@ class ChatGenerator:
                 timestamp_ranges,
                 code_snippets,
                 code_blocks,
+                code_blocks_tokens,
+                urls,
             )
             if content.startswith("> "):
                 content = self.quote_character + " " + content[2:]
@@ -1778,57 +1879,82 @@ class ChatGenerator:
             timestamp_ranges = []
             code_snippets = []
             code_blocks = []
+            code_blocks_tokens = []
+            urls = []
+        embeds = []
         image_locations = []
         embed_marker_ranges = []
         for num_e, embed in enumerate(message["embeds"]):
             embed_url = embed["url"]
-            if embed_url and not embed.get("hidden") and embed_url not in content:
-                if content:
-                    content += "\n"
-                spoiler = embed["name"] and embed["name"].startswith("SPOILER_")
-                if spoiler:
-                    spoiler = 1000 + num_e not in message.get("spoiled", [])
-                if "main_url" not in embed:   # its attachment
-                    if self.placeholder_images:
-                        embed_url = ""
-                    elif self.trim_embed_url_size:
-                        embed_url = trim_string(embed_url, self.trim_embed_url_size)
-                    embed_type = clean_type(embed["type"])
-                    embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 14])
-                    content += f"[{embed_type} attachment]: {embed_url}"
-                elif embed["type"] == "rich":
-                    embed_url = embed_url.replace("\r\n", "\n")
-                    embed_marker_ranges.append([len(content), len(content) + 13])
-                    content += f"[rich embed]:\n{embed_url}"
+            embed_type = embed["type"]
+            if not embed_url or embed.get("hidden") or embed_url in content:
+                continue
+            if content:
+                content += "\n"
+            spoiler = embed["name"] and embed["name"].startswith("SPOILER_")
+            if spoiler:
+                spoiler = 1000 + num_e not in message.get("spoiled", [])
+            if "main_url" not in embed:   # its attachment
+                if self.placeholder_images:
+                    embed_url = ""
+                elif self.trim_embed_url_size:
+                    embed_url = trim_string(embed_url, self.trim_embed_url_size)
+                embed_type = clean_type(embed_type)
+                if embed_type.lower() not in ("image", "video"):
+                    embed_type = "file"
+                    embed_url = embed.get("name", "")
+                    if embed.get("duration"):
+                        embed_url += f" ({format_seconds(embed["duration"], nice=True, pad=False)})"
+                    pre_embed_len = pre_content_len + len(content)
+                    embeds.append([pre_embed_len, pre_embed_len + len(embed_type) + 15 + len(embed_url), 0])
+                embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 14])
+                content += f"[{embed_type} attachment]: {embed_url}"
+            elif embed_type == "rich":
+                embed_url = embed_url.replace("\r\n", "\n").strip(" \n")
+                embed_url, url_ranges = replace_markdown_urls(embed_url, ())
+                if url_ranges:
+                    pre_embed_len = pre_content_len + len(content) + len(embed_type) + 10
+                    for url_range in url_ranges:
+                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], 0])
+                embed_marker_ranges.append([len(content), len(content) + 13])
+                content += f"[rich embed]:\n{embed_url}"
+            else:
+                if embed_type.startswith("gif") and embed_url.startswith(">"):
+                    embed_url = embed_url[2:]
+                embed_url, url_ranges = replace_markdown_urls(embed_url, ())
+                if url_ranges:
+                    pre_embed_len = pre_content_len + len(content) + len(embed_type) + 10
+                    for url_range in url_ranges:
+                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], 0])
+                if embed_type.startswith("gif") and embed_url.startswith("["):
+                    pass
+                elif self.placeholder_images and embed_type not in ("article", "link"):
+                    embed_url = ""
+                elif embed["main_url"] == embed_url and self.trim_embed_url_size:
+                    embed_url = trim_string(embed_url, self.trim_embed_url_size)
+                embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 9])
+                content += f"[{embed_type} embed]: {embed_url}"
+            if self.placeholder_images and embed.get("proxy_url") and embed["hw"]:
+                if not embed["hw"][0] or not embed["hw"][1]:
+                    continue
+                h = embed["hw"][0] / self.font_ratio
+                w = embed["hw"][1]
+                smallest_h = h / self.dpw
+                smallest_w = w / self.dpw
+                scale = min(min(self.placeholder_images, smallest_h) / h, min(max_length - 1 - self.newline_len, smallest_w) / w, 1)
+                h = round(h * scale)
+                w = round(w * scale) - 1
+                if self.chat_constant_space_idx is None:   # insert here if cant in newline format
+                    content += f"\n<{MARKER}:{num_e}>"
+                    for line in range(h - 1):
+                        content += f"\n{" " if line % 2 else ALT_SPACE}"
+                        if spoiler:
+                            content += " " * w
+                elif spoiler:
+                    content += f"\n<{MARKER}:{num_e}>" + ("\n" + " " * w) * (h - 1)
                 else:
-                    if self.placeholder_images and embed["type"] != "article":
-                        embed_url = ""
-                    elif embed["main_url"] == embed_url and self.trim_embed_url_size:
-                        embed_url = trim_string(embed_url, self.trim_embed_url_size)
-                    embed_type = clean_type(embed["type"])
-                    embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 9])
-                    content += f"[{embed_type} embed]: {embed_url}"
-                if self.placeholder_images and embed.get("proxy_url") and embed["hw"]:
-                    if not embed["hw"][0] or not embed["hw"][1]:
-                        continue
-                    h = embed["hw"][0] / self.font_ratio
-                    w = embed["hw"][1]
-                    smallest_h = h / self.dpw
-                    smallest_w = w / self.dpw
-                    scale = min(min(self.placeholder_images, smallest_h) / h, min(max_length - 1 - self.newline_len, smallest_w) / w, 1)
-                    h = round(h * scale)
-                    w = round(w * scale) - 1
-                    if self.chat_constant_space_idx is None:   # insert here if cant in newline format
-                        content += f"\n<{MARKER}:{num_e}>"
-                        for line in range(h - 1):
-                            content += f"\n{" " if line % 2 else ALT_SPACE}"
-                            if spoiler:
-                                content += " " * w
-                    elif spoiler:
-                        content += f"\n<{MARKER}:{num_e}>" + ("\n" + " " * w) * (h - 1)
-                    else:
-                        content += f"\n<{MARKER}:{num_e}>" + "\n " * (h - 1)
-                    image_locations.append((h, w, spoiler))
+                    content += f"\n<{MARKER}:{num_e}>" + "\n " * (h - 1)
+                image_locations.append((h, w, spoiler))
         for sticker in message["stickers"]:
             sticker_type = sticker["format_type"]
             if content:
@@ -1860,8 +1986,7 @@ class ChatGenerator:
         message_line = lazy_replace(message_line, "%app", lambda: app_string if app_string else "")
         message_line = message_line.replace("%content", content)
 
-        # find all urls
-        urls = []
+        # find all non-markdown urls
         if self.color_chat_url:
             for match in re.finditer(match_url, message_line):
                 start, end = match.span()
@@ -1873,7 +1998,13 @@ class ChatGenerator:
                         skip = True
                         break
                 if not skip:
-                    urls.append([start, end])
+                    urls.append([start, end, match.group()])
+        urls = sorted(urls, key=lambda x: x[0])
+        for idx, url in enumerate(urls):
+            url[2] = idx
+        idx = len(urls)
+        for i, embed in enumerate(embeds):
+            embed[2] = idx + i
 
         # find spoilers - must be after all other replacements
         spoilers = []
@@ -1884,21 +2015,23 @@ class ChatGenerator:
             spoilers = [value for i, value in enumerate(spoilers) if i not in spoiled]   # exclude spoiled messages
 
         # find all markdown and correct format indexes
-        message_line, md_format, md_indexes = format_md_all(message_line, pre_content_len, code_snippets + code_blocks + urls)
+        message_line, md_format, md_indexes = format_md_all(message_line, pre_content_len, (code_snippets, code_blocks, urls))
         if md_indexes:
             move_by_indexes(
                 md_indexes,
                 urls,
+                embeds,
                 spoilers,
                 code_snippets,
                 code_blocks,
+                code_blocks_tokens,
                 emoji_ranges,
                 mention_ranges,
                 channel_ranges,
                 timestamp_ranges,
                 embed_marker_ranges,
             )
-        message_line, escaped_indexes = replace_escaped_md(message_line, code_snippets + code_blocks + urls)
+        message_line, escaped_indexes = replace_escaped_md(message_line, (code_snippets, code_blocks, urls))
 
         # correct format indexes for removed markdown escape characters "\"
         if escaped_indexes:
@@ -1906,9 +2039,11 @@ class ChatGenerator:
                 escaped_indexes,
                 md_format,
                 urls,
+                embeds,
                 spoilers,
                 code_snippets,
                 code_blocks,
+                code_blocks_tokens,
                 emoji_ranges,
                 mention_ranges,
                 channel_ranges,
@@ -1924,6 +2059,7 @@ class ChatGenerator:
                 urls,
                 code_snippets,
                 code_blocks,
+                code_blocks_tokens,
                 emoji_ranges,
                 mention_ranges,
                 channel_ranges,
@@ -1982,15 +2118,17 @@ class ChatGenerator:
         code_block_format = format_multiline_one_line_end(code_blocks, newline_index+1, 0, self.color_code, max_length-1, quote)
         if code_block_format:
             message_line = message_line.ljust(max_length-1)
+        code_block_format += format_multiline_one_line_format(code_blocks_tokens, newline_index+1, 0, quote)
 
         chat.append(message_line)
-        urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls, newline_index+1, 0, quote), message_line)
+        urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls + embeds, newline_index+1, 0, quote), message_line)
         spoilers_this_line = fix_map_ranges(ranges_multiline_one_line(spoilers, newline_index+1, 0, quote), message_line)
         emoji_this_line = fix_map_ranges(ranges_multiline_one_line(emoji_ranges, newline_index+1, 0, quote), message_line)
         mentions_this_line = fix_map_ranges(ranges_multiline_one_line(mention_ranges, newline_index+1, 0, quote), message_line)
         channels_this_line = fix_map_ranges(ranges_multiline_one_line(channel_ranges, newline_index+1, 0, quote), message_line)
         this_line_ranges = (urls_this_line, spoilers_this_line, emoji_this_line, mentions_this_line, channels_this_line, None)
-        chat_map.append((num, (self.pre_name_len, end_name), False, None, (0, 0) if group else self.timestamp_range, this_line_ranges))
+        # using False for name range if group so app.msg_to_lines still can find message base (if its None then its not base)
+        chat_map.append((num, False if group else (self.pre_name_len, end_name), False, None, (0, 0) if group else self.timestamp_range, this_line_ranges))
 
         # formatting
         len_message_line = len(message_line)
@@ -2064,9 +2202,11 @@ class ChatGenerator:
                 content_index_correction,
                 md_format,
                 urls,
+                embeds,
                 spoilers,
                 code_snippets,
                 code_blocks,
+                code_blocks_tokens,
                 emoji_ranges,
                 mention_ranges,
                 channel_ranges,
@@ -2125,10 +2265,11 @@ class ChatGenerator:
             code_block_format = format_multiline_one_line_end(code_blocks, len_new_line, self.newline_len, self.color_code, max_length-1, this_quote)
             if code_block_format:
                 new_line = new_line.ljust(max_length-1)
-            len_new_line = len(new_line)
+            code_block_format += format_multiline_one_line_format(code_blocks_tokens, len_new_line, self.newline_len, this_quote)
 
+            len_new_line = len(new_line)
             chat.append(new_line)
-            urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls, len_new_line, self.newline_len, quote), new_line)
+            urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls + embeds, len_new_line, self.newline_len, quote), new_line)
             spoilers_this_line = fix_map_ranges(ranges_multiline_one_line(spoilers, len_new_line, self.newline_len, quote), new_line)
             emoji_this_line = fix_map_ranges(ranges_multiline_one_line(emoji_ranges, len_new_line, self.newline_len, quote), new_line)
             mentions_this_line = fix_map_ranges(ranges_multiline_one_line(mention_ranges, len_new_line, self.newline_len, quote), new_line)
@@ -2149,7 +2290,10 @@ class ChatGenerator:
                 format_line += format_spoilers
                 if edited and not next_line and not (self.edited_before_content and not group):
                     format_line.append(self.color_mention_chat_edited + [len_new_line - self.len_edited, len_new_line])
-                chat_format.append(fix_line_format(format_line, new_line))
+                try:
+                    chat_format.append(fix_line_format(format_line, new_line))
+                except OverflowError:   # fallback if anything goes wrong
+                    chat_format.append(fix_line_format_py(format_line, new_line))
             else:
                 format_line = self.color_newline[:]
                 format_line += format_multiline_one_line_format(md_format, len_new_line, self.newline_len, this_quote)
@@ -2160,7 +2304,11 @@ class ChatGenerator:
                 format_line += format_spoilers
                 if edited and not next_line and not (self.edited_before_content and not group):
                     format_line.append([*self.color_chat_edited, len_new_line - self.len_edited, len_new_line])
-                chat_format.append(fix_line_format(format_line, new_line))
+                try:
+                    chat_format.append(fix_line_format(format_line, new_line))
+                except OverflowError:   # fallback if anything goes wrong
+                    chat_format.append(fix_line_format_py(format_line, new_line))
+                    logger.error(f"An OverflowError occurred in cython. Please report with this information: {repr(format_line)}, {repr(new_line)}")
             line_num += 1
 
         # add images to ranges in chat_map relative to this message base line and add format for spoiler images
@@ -2273,7 +2421,7 @@ def generate_status_line(my_user_data, my_status, unread_count, typing, active_c
         %server
         %channel
         %channel_no_tab - no text if there are tabs
-        %action   # replying/editig/deleting
+        %action   # replying/editing/deleting
         %task   # currently running long task
         %tabs
         %slowmode   # 'slowmode {time}'
@@ -2487,7 +2635,7 @@ def generate_tab_string(channel_cache, active_channel_id, read_state, format_tab
         %server
     """
     tabs_separated = []
-    tab_string_map = []   # [[start, end, tab_num], ...]   # tab_num = -1 - arrow left -2 - arrow rignt
+    tab_string_map = []   # [[start, end, tab_num], ...]   # tab_num = -1 - arrow left -2 - arrow right
     trimmed_left = False
     default_color = colors[0]
 
@@ -2742,7 +2890,7 @@ def generate_extra_line_upload(attachments, selected, max_len, colors):
 
 
 def generate_extra_line_ring(caller_name, max_len, bordered, colors):
-    """Generate extra line containing iformation about incoming call"""
+    """Generate extra line containing information about incoming call"""
     max_len = max_len - bordered * 3
     color_standout = colors[9]
     left_text = f"{caller_name} is calling you, use commands: voice_*"
@@ -2768,11 +2916,12 @@ def generate_extra_line_ring(caller_name, max_len, bordered, colors):
 
 
 def generate_extra_line_call(call_participants, volume_in, volume_out, max_len, bordered, rtt, colors):   # noqa
-    """Generate extra line containing iformation about ongoing call"""
+    """Generate extra line containing information about ongoing call"""
     max_len = max_len - bordered * 3
+    color_low = colors[8]
     color_standout = colors[9]
     left_text = "In the call: You"
-    rtt_text = ""   # f"({min(rtt, 999.9):.1f}ms) " if rtt is not None else ""
+    rtt_text = f"({min(rtt, 999.9):.1f}ms) " if rtt is not None else ""
     right_text = f"{rtt_text}[I:{(str(volume_in)+"%").center(4)} O:{(str(volume_out)+"%").center(4)}] [Leave]"
     max_str_length = max_len - len(right_text) - 3   # 3 for ...
 
@@ -2784,7 +2933,8 @@ def generate_extra_line_call(call_participants, volume_in, volume_out, max_len, 
     line_format = [
         (color_standout, None, 13, len(left_text[:max_str_length])),
         (color_standout, None, max_len - 23, max_len - 8),
-        (20 if volume_in == 0 else None, None, max_len - 15, max_len - 9),
+        (20 if int(rtt) > 500 else 19 if rtt > 200 else color_low, None, max_len - 23 - len(rtt_text), max_len - 23),
+        (20 if volume_out == 0 else None, None, max_len - 15, max_len - 9),
         (20 if volume_in == 0 else None, None, max_len - 22, max_len - 16),
         (20, None, max_len - 7, max_len),
     ]
@@ -3140,12 +3290,14 @@ def generate_extra_window_search(query, messages, roles, channels, blocked, tota
                 if emoji_as_text:
                     content = utils.demojize(content)
                 content = replace_spoilers(content)
+                content = replace_bracketed_urls(content)
                 content, _ = replace_discord_emoji(content)
                 content, _ = replace_mentions(content, message["mentions"], global_name=use_global_name, use_nick=use_nick)
                 content, _ = replace_roles(content, roles)
                 content = replace_discord_url(content)
                 content, _ = replace_channels(content, channels)
                 content, _ = replace_timestamps(content, convert_timezone)
+                content, _ = replace_markdown_urls(content, ())
 
             for embed in message["embeds"]:
                 if embed["url"] and not embed.get("hidden") and embed["url"] not in content:
@@ -3463,12 +3615,14 @@ def generate_message_notification(data, channels, roles, guild_name, my_data, co
 
     if data["content"]:
         body = replace_spoilers(data["content"])
+        content = replace_bracketed_urls(body)
         body, _ = replace_discord_emoji(body)
         body, _ = replace_mentions(body, data["mentions"] + [my_data], global_name=use_global_name, use_nick=use_nick)
         body, _ = replace_roles(body, roles)
         body = replace_discord_url(body)
         body, _ = replace_channels(body, channels)
         body, _ = replace_timestamps(body, convert_timezone)
+        content, _ = replace_markdown_urls(body, ())
     elif data.get("embeds"):
         num = len(data["embeds"])
         if num == 1:

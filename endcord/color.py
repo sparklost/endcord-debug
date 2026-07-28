@@ -3,7 +3,6 @@
 # Redistribution of modified versions is not permitted.
 
 import curses
-import importlib.util
 import sys
 
 from endcord import xterm256
@@ -42,9 +41,23 @@ def int_to_rgb(int_color):
 
 
 def hex_to_rgb(hex_str):
-    """Convert hexadecimal color strin to rgb tuple"""
+    """Convert hexadecimal color string to rgb tuple"""
     hex_str = hex_str.lstrip("#")
     return tuple(int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def parse_color(data):
+    """Parse (r, g, b) and '#123abc' color formats and convert to 8-bit ansi"""
+    if isinstance(data, list):
+        for i, value in enumerate(data):
+            data[i] = parse_color(value)
+    if isinstance(data, int):   # already ansi
+        return data
+    if isinstance(data, tuple) and len(data) == 3:   # rgb tuple
+        return closest_color(data)[0]
+    if isinstance(data, str) and data.startswith("#"):   # hex string
+        return closest_color(hex_to_rgb(data))[0]
+    return data
 
 
 def convert_role_colors(all_roles, guild_id=None, role_id=None, default=-1):
@@ -75,7 +88,7 @@ def convert_role_colors(all_roles, guild_id=None, role_id=None, default=-1):
 
 
 # use cython if available, ~20 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.color"):
+try:
     from endcord_cython.color import convert_role_colors as convert_role_colors_cython
     def convert_role_colors(all_roles, guild_id=None, role_id=None, default=-1):
         """
@@ -84,6 +97,8 @@ if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endc
         Optionally update only one guild and/or one role.
         """
         return convert_role_colors_cython(all_roles, colors, guild_id, role_id, default)
+except ImportError:
+    pass
 
 
 def check_color(color):
@@ -117,16 +132,16 @@ def check_color_formatted(color_format):
 def extract_colors(config):
     """Extract simple colors from config if any value is None, default is used"""
     return (   # DO NOT CHANGE ORDER
-        check_color(config["color_default"]),
+        check_color(config["color_default"]),   # 0
         check_color(config["color_chat_mention"]),
         check_color(config["color_chat_blocked"]),
-        check_color(config["color_chat_deleted"]),
+        check_color(config["color_chat_deleted"]),   # 3
         check_color(config["color_chat_pending"]),
         check_color(config["color_chat_separator"]),
-        check_color(config["color_chat_code"]),
+        check_color(config["color_chat_code"]),   # 6
         check_color(config["color_chat_standout"]),
         check_color(config["color_extra_window_low"]),   # color_extra_window is loaded in tui
-        check_color(config["color_extra_window_standout"]),
+        check_color(config["color_extra_window_standout"]),   # 9
     )
 
 
@@ -173,11 +188,11 @@ def color_palette_internal(screen):
             if y >= h:
                 break
 
-        # ckeck key
+        # chkeck key
         key_code = screen.getch()
-        if key_code == 32:   # space
+        if key_code in (32, "SPACE"):
             draw_bg = not draw_bg
-        else:
+        elif key_code not in ("RESIZE", "FOCUS_IN", "FOCUS_OUT") and not isinstance(key_code, tuple):
             break
 
 

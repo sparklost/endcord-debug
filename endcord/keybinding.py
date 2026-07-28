@@ -8,6 +8,7 @@ import os
 import sys
 
 logger = logging.getLogger(__name__)
+uses_gtkcurses = hasattr(curses, "GTKCURSES")
 
 
 MESSAGE = """ Press key combination, its code will be printed in terminal.
@@ -17,7 +18,7 @@ MESSAGE = """ Press key combination, its code will be printed in terminal.
  Ctrl+C to exit."""
 
 ARROW_MAP = {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}
-MODIFIER_MAP = (None, None, "S", "M", "M-S", "C", None, None)
+MODIFIER_MAP = (None, None, "S", "M", "M-S", "C", "C-S", None)
 
 
 def get_key(screen, backspace_code=127):
@@ -45,6 +46,7 @@ def get_key(screen, backspace_code=127):
                 break
             sequence_list.append(ch)
         screen.nodelay(False)
+        screen.timeout(250)   # restore previous setting
 
         if len(sequence_list) > 1:
             sequence = "".join(chr(b) for b in sequence_list)
@@ -53,7 +55,7 @@ def get_key(screen, backspace_code=127):
             if sequence.startswith("\x1b[<") and (sequence.endswith("m") or sequence.endswith("M")):
                 clicked = sequence.endswith("M")
                 try:
-                    button_str, x_str, y_str = sequence[3:-1].split(";")
+                    button_str, x_str, y_str = sequence.split("\x1b[<")[-1][:-1].split(";")
                     return (int(y_str) - 1, int(x_str) - 1, int(button_str), clicked)
                 except (ValueError, IndexError):
                     return -1
@@ -79,17 +81,44 @@ def get_key(screen, backspace_code=127):
                         return f"{modifier}-DEL"
                 return "DEL"
 
-            # terminal focus and bracket pasting
+            # home and end keys
+            if sequence in ("\x1b[H", "\x1b[1~", "\x1b[7~", "\x1bOH"):
+                return "HOME"
+            if sequence in ("\x1b[F", "\x1b[4~", "\x1b[8~", "\x1bOF"):
+                return "END"
+            if sequence.startswith("\x1b[1;") and sequence[-1] in ("H", "F"):
+                key = "HOME" if sequence[-1] == "H" else "END"
+                if len(sequence) >= 6:
+                    modifier = MODIFIER_MAP[int(sequence[4])]
+                    if modifier:
+                        return f"{modifier}-{key}"
+                return key
+
+            # pgup and pgdn keys
+            if sequence.startswith("\x1b[5"):
+                if len(sequence) >= 6 and sequence.startswith("\x1b[5;"):
+                    modifier = MODIFIER_MAP[int(sequence[4])]
+                    if modifier:
+                        return f"{modifier}-PGUP"
+                return "PGUP"
+            if sequence.startswith("\x1b[6"):
+                if len(sequence) >= 6 and sequence.startswith("\x1b[6;"):
+                    modifier = MODIFIER_MAP[int(sequence[4])]
+                    if modifier:
+                        return f"{modifier}-PGDN"
+                return "PGDN"
+
+            # misc
             if sequence == "\x1b[I":
                 return "FOCUS_IN"
             if sequence == "\x1b[O":
                 return "FOCUS_OUT"
-            if sequence == "\x1b[200~":
-                return "PASTE_START"
-            if sequence == "\x1b[201~":
-                return "PASTE_END"
             if sequence == "\x1b\n":
                 return "M-ENTER"
+
+            # bracket paste
+            if sequence.startswith("\x1b[200~") and sequence.endswith("\x1b[201~"):
+                return f"PASTE {sequence[6:-6]}"
 
             # 2-byte escape sequences
             if len(sequence_list) == 2:
@@ -97,7 +126,7 @@ def get_key(screen, backspace_code=127):
                 if 1 <= payload <= 26:
                     return f"C-M-{chr(payload + 96)}"
                 if payload == 0:
-                    return "C-M-SPC"
+                    return "C-M-SPACE"
                 if payload == backspace_code:
                     return "M-BACKSPACE"
                 if payload == 29:
@@ -257,13 +286,11 @@ def get_key_fallback(screen, backspace_code=127):
             screen.nodelay(False)
             return "ESC"
         sequence_list = [27, ch]
-        while ch != -1:   # -1 means no key is pressed, 126 is end of escape sequence
+        while True:
             ch = get_key_code(screen)
             if ch == -1:
                 break
             sequence_list.append(ch)
-            if ch == 126 or ch == 27:
-                break
         screen.nodelay(False)
         if len(sequence_list) == 2:
             payload = sequence_list[1]
@@ -272,7 +299,7 @@ def get_key_fallback(screen, backspace_code=127):
             if 1 <= payload <= 26:
                 return f"C-M-{chr(payload + 96)}"
             if payload == 0:
-                return "C-M-SPC"
+                return "C-M-SPACE"
             if payload == (backspace_code):
                 return "M-BACKSPACE"
             if payload == 29:
@@ -286,10 +313,8 @@ def get_key_fallback(screen, backspace_code=127):
                 if char.isupper():
                     return f"M-S-{char.lower()}"
                 return f"M-{char}"
-        if sequence_list == [27, 91, 50, 48, 48, 126]:   # bracket paste start
-            return "PASTE_START"
-        if sequence_list == [27, 91, 50, 48, 49, 126]:   # bracket paste end
-            return "PASTE_END"
+        if sequence_list[:6] == [27, 91, 50, 48, 48, 126]:   # bracket paste
+            return f"PASTE {"".join(chr(b) for b in sequence_list[6:-6])}"
         if sequence_list[-1] == 27:   # holding escape key
             return "ESC"
         return "ESC"
@@ -346,6 +371,14 @@ def get_key_fallback(screen, backspace_code=127):
         return "C-DEL"
     if key == 526:
         return "M-DEL"
+    if key == curses.KEY_HOME:
+        return "HOME"
+    if key == curses.KEY_END:
+        return "END"
+    if key == curses.KEY_PPAGE:
+        return "PGUP"
+    if key == curses.KEY_NPAGE:
+        return "PGDN"
     if key == curses.KEY_RESIZE:
         return "RESIZE"
     if key == 590:
@@ -364,6 +397,11 @@ def get_key_fallback(screen, backspace_code=127):
         return f"C-{chr(key + 96)}"
 
     return repr(key)
+
+
+def get_key_passthrough(screen, backspace_code=None):   # noqa
+    """Passthrough get_key, this is used with gtkcurses enabled because it internally parses events"""
+    return screen.getch()
 
 
 KEY_ESCAPE = 1000
@@ -458,11 +496,16 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
     curses.use_default_colors()
     curses.curs_set(0)
     curses.init_pair(1, -1, -1)
-    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+    curses.mousemask(curses.ALL_MOUSE_EVENTS)
+    curses.mouseinterval(0)
+    sys.stdout.write("\x1b[?2004h")
+    sys.stdout.flush()
     if sys.platform == "win32":
         fallback = True
     if not fallback:
         screen.keypad(False)
+    if uses_gtkcurses:
+        fallback = False
     screen.bkgd(" ", curses.color_pair(1))
     screen.addstr(1, 0, MESSAGE)
     command_bindings = [(val, key) for key, val in command_bindings.items()]
@@ -475,9 +518,13 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
     while True:
         if fallback:
             key_code = get_key_fallback(screen, backspace_code)
+        elif uses_gtkcurses:
+            key_code = get_key_passthrough(screen, backspace_code)
         else:
             key_code = get_key(screen, backspace_code)
-        if key_code == curses.KEY_RESIZE:
+        if key_code == -1:
+            continue
+        if key_code == KEY_RESIZE:
             screen.addstr(1, 0, MESSAGE)
         text = f"Keybinding code: {key_code}"
         warning = ""
@@ -489,6 +536,8 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
             if key_code == value and not warning:
                 warning = f'Warning: same keybinding as for command "{key}"'
                 break
+        if key_code in ("C-c", "QUIT"):
+            break
         _, w = screen.getmaxyx()
         screen.addstr(7, 1, text + " " * (w - len(text)))
         screen.addstr(8, 1, warning + " " * (w - len(warning)))

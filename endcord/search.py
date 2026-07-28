@@ -3,7 +3,6 @@
 # Redistribution of modified versions is not permitted.
 
 import heapq
-import importlib.util
 import re
 from itertools import chain
 
@@ -57,8 +56,10 @@ def fuzzy_match_score(query, candidate):
 
 
 # use cython if available, ~10 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.search"):
+try:
     from endcord_cython.search import fuzzy_match_score
+except ImportError:
+    pass
 
 
 def search_options(options, query, prompt, limit=50, score_cutoff=15):
@@ -339,12 +340,17 @@ def search_emojis(all_emojis, favorite_emojis, local_emojis, premium, guild_id, 
                 else:
                     emoji_name = data[0]
                     long_name = data[1]
-                formatted += f" - {emoji_name} ({data[1]})"
+                formatted += f" - {emoji_name} ({long_name})"
             else:
                 emoji_name = data[0]
                 long_name = None
                 formatted += " - " + data[0]
-            score = fuzzy_match_score(query, emoji_name + f" {long_name}" if long_name else "")
+            score = fuzzy_match_score(query, emoji_name)
+            if long_name:
+                score_long = fuzzy_match_score(query, long_name)
+                score = max(score, score_long)
+            if "_" in emoji_name:   # penalizing multi-word matches
+                score -= emoji_name.count("_")
             if score < worst_score:
                 continue
             heapq.heappush(results, (formatted, emoji_name, score))
@@ -605,7 +611,7 @@ def search_profiles(profiles, query, limit=50, score_cutoff=15):
     return sorted(results, key=lambda x: x[2], reverse=True)
 
 
-def search_gif(gifs, query, limit=50, score_cutoff=15, fav=True, cmd=True):
+def search_gifs(gifs, query, limit=50, score_cutoff=15, fav=True, cmd=True):
     """Search for gifs"""
     results = []
     worst_score = score_cutoff
@@ -616,22 +622,24 @@ def search_gif(gifs, query, limit=50, score_cutoff=15, fav=True, cmd=True):
         return []
     iterable = gifs if not fav else gifs.items()
     for url, data in iterable:
-        formatted = " ".join(url.split("/")[-1].split("-")[:-1])
+        if "tenor.com/" in url:
+            formatted = " ".join(url.split("/")[-1].split("-")[:-1])
+        else:
+            formatted = " ".join(url.split("/")[-1].split("-"))
+        formatted = formatted.removesuffix(" gif")
         if fav:
             preview = data["src"]
             order = data["order"]
         else:
             preview = data
             order = 0
-        if formatted.endswith("gif"):
-            formatted = formatted[:-4]
         if query:
             score = fuzzy_match_score(query, formatted)
         else:
             score = score_cutoff + int(order) if fav else 0
         if score < worst_score and query:
             continue
-        heapq.heappush(results, (("Favorite: " if fav else "Tenor: ") + formatted, ("gif " if cmd else "") + url, score, preview))
+        heapq.heappush(results, (("Favorite: " if fav else "Klipy: ") + formatted, ("gif " if cmd else "") + url, score, preview))
         if len(results) > limit:
             heapq.heappop(results)
             worst_score = results[0][2]

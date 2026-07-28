@@ -14,12 +14,14 @@ logger = logging.getLogger(__name__)
 XTERM_LIKE_BINDINGS_TERMS = ("xterm", "foot")
 
 
-def save_config(path, data, section):
+def save_config(path, data, section, lower=True):
     """Save config section"""
     path = os.path.expanduser(path)
     if os.path.dirname(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
     config = ConfigParser(interpolation=None)
+    if not lower:
+        config.optionxform = str
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             config.read_file(f)
@@ -61,7 +63,7 @@ def load_config(path, default, section="main", gen_config=False, merge=False):
                 try:
                     eval_value = literal_eval(config_data_raw[key])
                     if section == "theme":
-                        eval_value = parse_color(eval_value)
+                        eval_value = color.parse_color(eval_value)
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = config_data_raw[key]
@@ -72,7 +74,7 @@ def load_config(path, default, section="main", gen_config=False, merge=False):
                 try:
                     eval_value = literal_eval(value)
                     if section == "theme":
-                        eval_value = parse_color(eval_value)
+                        eval_value = color.parse_color(eval_value)
                     config_data[key] = eval_value
                 except ValueError:
                     config_data[key] = value
@@ -155,21 +157,7 @@ def update_config(config, key, value):
     return config
 
 
-def parse_color(data):
-    """Automatically parse (r, g, b) and '#123abc' color formats and convert to 8-bit ansi"""
-    if isinstance(data, list):
-        for i, value in enumerate(data):
-            data[i] = parse_color(value)
-    if isinstance(data, int):   # already ansi
-        return data
-    if isinstance(data, tuple) and len(data) == 3:   # rgb tuple
-        return color.closest_color(data)[0]
-    if isinstance(data, str) and data.startswith("#"):   # hex string
-        return color.closest_color(color.hex_to_rgb(data))[0]
-    return data
-
-
-def load_keybindings(path, default, section="keybindings", gen_config=False, merge=False):
+def load_keybindings(path, default, section="keybindings", gen_config=False, merge=False, lower=True):
     """
     Load keybindings from config with special handling.
     If some value is missing, it is replaced with default value.
@@ -185,12 +173,14 @@ def load_keybindings(path, default, section="keybindings", gen_config=False, mer
                 default_ready[key] = tuple(item[0] for item in value)
             else:
                 default_ready[key] = value[0]
-        save_config(path, default_ready, section)
+        save_config(path, default_ready, section, lower)
         if not gen_config:
             print(f"Default config generated at: {path}")
         config_data = default
     else:
         config = ConfigParser(interpolation=None)
+        if not lower:
+            config.optionxform = str
         with open(path, "r", encoding="utf-8") as f:
             config.read_file(f)
         if not config.has_section(section):
@@ -220,11 +210,12 @@ def load_keybindings(path, default, section="keybindings", gen_config=False, mer
                 config_data[key] = default[key]
         if merge:
             for key, value in config_data_raw.items():
+                clean_key = literal_eval(key) if key.startswith('"') or key.startswith('"') else key
                 try:
                     eval_value = literal_eval(value)
-                    config_data[key] = eval_value
+                    config_data[clean_key] = eval_value
                 except ValueError:
-                    config_data[key] = value
+                    config_data[clean_key] = value
     return config_data
 
 
@@ -237,7 +228,7 @@ def normalize_keybindings(keybindings):
 
 
 def deduplicate_keybindings(keybindings_a, keybindings_b, command=False):
-    """Deduplicate 2 keubinding dicts that can have strings and tuples of strings inside a first element of tuple as values, keeping keybindings_b"""
+    """Deduplicate 2 keybinding dicts that can have strings and tuples of strings inside a first element of tuple as values, keeping keybindings_b"""
     def deduplicate_value(dedupe_value, keybindings):
         for key, outer_tuple in keybindings.items():
             if not isinstance(outer_tuple, tuple) or not outer_tuple:

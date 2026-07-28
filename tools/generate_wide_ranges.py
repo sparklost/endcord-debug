@@ -41,7 +41,7 @@ def http_get_with_redirect(host, path, header=None):
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader("Location")
             if not location:
-                print("Error: Redirect without lcation")
+                print("Error: Redirect without location")
                 return ""
             redirects += 1
             conn.close()

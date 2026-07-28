@@ -4,26 +4,18 @@
 
 import base64
 import http.client
+import json
 import logging
 import random
 import socket
 import ssl
 import struct
+import sys
 import threading
 import time
 import urllib.parse
 
 import websocket
-
-try:
-    import orjson as json
-except ImportError:
-    try:
-        import ujson as json
-    except ImportError:
-        import json
-
-import socks
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
@@ -87,30 +79,38 @@ class Discord():
         if client_prop:
             self.header["X-Super-Properties"] = client_prop
         self.user_agent = user_agent
-        self.proxy = urllib.parse.urlsplit(proxy)
+        self.proxy = proxy
 
 
-    def get_connection(self, host, port, timeout=10):
+    def get_connection(self, host, port, timeout=2):
         """Get connection object and handle proxying"""
-        if self.proxy.scheme:
-            if self.proxy.scheme.lower() == "http":
-                connection = http.client.HTTPSConnection(self.proxy.hostname, self.proxy.port)
+        if sys.platform == "darwin":
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        else:
+            ssl_context = ssl.create_default_context()
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        if not self.proxy:
+            return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+        try:
+            if self.proxy.startswith("http://"):
+                proxy = urllib.parse.urlsplit(self.proxy)
+                connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
                 connection.set_tunnel(host, port=port)
-            elif "socks" in self.proxy.scheme.lower():
-                proxy_sock = socks.socksocket()
-                proxy_sock.set_proxy(socks.SOCKS5, self.proxy.hostname, self.proxy.port)
-                proxy_sock.settimeout(10)
-                proxy_sock.connect((host, port))
+            elif self.proxy.startswith("socks5://"):
+                from python_socks.sync import Proxy
+                proxy = Proxy.from_url(self.proxy)
+                raw_sock = proxy.connect(dest_host=host, dest_port=port, timeout=10)
                 ssl_context = ssl.create_default_context()
-                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-                proxy_sock = ssl_context.wrap_socket(proxy_sock, server_hostname=host)
-                # proxy_sock.do_handshake()   # seems like its not needed
-                connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)
+                proxy_sock = ssl_context.wrap_socket(raw_sock, server_hostname=host)
+                connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)   # extra time for tor
                 connection.sock = proxy_sock
             else:
-                connection = http.client.HTTPSConnection(host, port)
-        else:
-            connection = http.client.HTTPSConnection(host, port, timeout=timeout)
+                logger.warn(f"Invalid proxy: {self.proxy}")
+                connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
+        except Exception as e:
+            logger.warn(f"Error connecting to proxy {self.proxy}: {e}")
+            connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
         return connection
 
 
@@ -248,7 +248,7 @@ class Discord():
 
 
     def verify_mfa(self, auth_type, code, login_instance_id, ticket):
-        """Verify multi-factore authentication and get token"""
+        """Verify multi-factor authentication and get token"""
         message_dict = {
             "code": code,
             "login_instance_id": login_instance_id,
@@ -319,7 +319,7 @@ class Gateway():
             "Origin: https://discord.com",
             f"User-Agent: {user_agent}",
         ]
-        self.proxy = urllib.parse.urlsplit(proxy)
+        self.proxy = proxy
         self.run = True
         self.state = 0
         self.heartbeat_received = True
@@ -334,14 +334,23 @@ class Gateway():
 
     def connect_ws(self):
         """Connect to websocket"""
-        self.ws = websocket.WebSocket()
-        if self.proxy.scheme:
+        if sys.platform == "darwin":
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        else:
+            ssl_context = ssl.create_default_context()
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.ws = websocket.WebSocket(sslopt={"context": ssl_context})
+        if self.proxy:
+            proxy = urllib.parse.urlsplit(self.proxy)
+            scheme = proxy.scheme
             self.ws.connect(
                 self.gateway_url + "/?v=2",
                 header=self.header,
-                proxy_type=self.proxy.scheme,
-                http_proxy_host=self.proxy.hostname,
-                http_proxy_port=self.proxy.port,
+                proxy_type="socks5h" if scheme == "socks5" else "http" if scheme == "https" else scheme,
+                http_proxy_host=proxy.hostname,
+                http_proxy_port=proxy.port,
+                http_proxy_auth=(proxy.username, proxy.password) if proxy.username else None,
             )
         else:
             self.ws.connect(self.gateway_url + "/?v=2", header=self.header)
@@ -401,7 +410,7 @@ class Gateway():
 
 
     def decrypt_user_payload(self, user_payload):
-        """Decrypt user playload received when remote authentication session starts"""
+        """Decrypt user payload received when remote authentication session starts"""
         cipher = PKCS1_OAEP.new(self.private_key, hashAlgo=SHA256)
         user_payload_bytes = cipher.decrypt(base64.b64decode(user_payload))
         user_id, _, _, username = user_payload_bytes.decode("utf-8").split(":")
@@ -524,7 +533,7 @@ class Gateway():
             "encoded_public_key": encoded_public_key,
         }
         self.send(payload)
-        logger.debug("Initialized aut session")
+        logger.debug("Initialized auth session")
 
 
     def get_state(self):
@@ -543,7 +552,7 @@ class Gateway():
 
 
     def get_ticket(self):
-        """Get authentication ticket that can be exchanged for authenticatin token"""
+        """Get authentication ticket that can be exchanged for authentication token"""
         return self.ticket
 
 

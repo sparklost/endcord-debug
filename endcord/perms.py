@@ -69,7 +69,7 @@ def compute_permissions(guilds, this_guild_roles, this_guild_id, my_roles, my_id
         if "permitted" in channel:
             continue
 
-        # replace get with pop if uses lots of ram, but it will break live role updates
+        # replace get with pop if uses lots of ram, but it will break live role updates and member list
         permission_overwrites = guild["channels"][num].get("permission_overwrites", [])
 
         # @everyone role overwrite
@@ -213,3 +213,78 @@ def compute_command_permissions(commands, all_app_perms, this_channel_id, this_g
             else:
                 done_perms.append(False)
     return done_perms
+
+
+def compute_member_list_id(permission_overwrites):
+    """
+    Calculate channel member list id from its permission_overwrites.
+    The format before hashing is: allow:ID1,allow:ID2,deny:ID3,deny:ID4.
+    'Deny' and 'allow' are grouped so 'allow' is first, ids are sorted ascending in the groups.
+    """
+    allow = []
+    deny = []
+    if not permission_overwrites:
+        return "everyone"
+    for overwrite in permission_overwrites:
+        allow_bits = int(overwrite["allow"])
+        deny_bits = int(overwrite["deny"])
+        if allow_bits & 1024:
+            allow.append(str(overwrite["id"]))
+        if deny_bits & 1024:
+            deny.append(str(overwrite["id"]))
+    if not allow and not deny:
+        return "everyone"
+    allow.sort(key=int)
+    deny.sort(key=int)
+    parts = []
+    for overwrite_id in allow:
+        parts.append(f"allow:{overwrite_id}")
+    for overwrite_id in deny:
+        parts.append(f"deny:{overwrite_id}")
+    # return mmh3.hash(",".join(parts), seed=0, signed=False)
+    return murmurhash3(",".join(parts))
+
+
+def murmurhash3(key, seed=0):
+    """Calculate unsingned murmur3 32bit hash on given key"""
+    if isinstance(key, str):
+        key = key.encode("utf-8")
+    length = len(key)
+    c1 = 0xcc9e2d51
+    c2 = 0x1b873593
+    h1 = seed
+
+    # body in 4-byte chunks
+    blocks_num = length // 4
+    for i in range(blocks_num):
+        k1 = key[i * 4] | (key[i * 4 + 1] << 8) | (key[i * 4 + 2] << 16) | (key[i * 4 + 3] << 24)   # extract 4 bytes
+        k1 = (k1 * c1) & 0xffffffff   # to prevent python from expanding it over 32 bits
+        k1 = ((k1 << 15) | (k1 >> 17)) & 0xffffffff  # rotate left 15
+        k1 = (k1 * c2) & 0xffffffff
+        h1 ^= k1
+        h1 = ((h1 << 13) | (h1 >> 19)) & 0xffffffff  # rotate left 13
+        h1 = (h1 * 5 + 0xe6546b64) & 0xffffffff
+
+    # tail is remaining 1-3 bytes
+    k1 = 0
+    tail_index = blocks_num * 4
+    remainder = length & 3
+    if remainder >= 3:
+        k1 ^= key[tail_index + 2] << 16
+    if remainder >= 2:
+        k1 ^= key[tail_index + 1] << 8
+    if remainder >= 1:
+        k1 ^= key[tail_index]
+        k1 = (k1 * c1) & 0xffffffff
+        k1 = ((k1 << 15) | (k1 >> 17)) & 0xffffffff  # rotate left 15
+        k1 = (k1 * c2) & 0xffffffff
+        h1 ^= k1
+
+    # mix block length and hash code
+    h1 ^= length
+    h1 ^= h1 >> 16
+    h1 = (h1 * 0x85ebca6b) & 0xffffffff
+    h1 ^= h1 >> 13
+    h1 = (h1 * 0xc2b2ae35) & 0xffffffff
+    h1 ^= h1 >> 16
+    return h1

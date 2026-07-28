@@ -32,7 +32,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     After how many **minutes** to automatically switch to idle status. Set to `None` or `0` to disable.  
     Note: this only detects when window is **not focused**.
 - `notification_when_focused = False`  
-    Wether to receive desktop notifications when terminal is not focused.
+    Whether to receive desktop notifications when terminal is not focused.
 - `remove_previous_notification = True`  
     Remove previous desktop notification that's coming from same DM/Channel.
 - `ack_throttling = 5`  
@@ -60,7 +60,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `assist = True`  
     Assist when typing @username, @role, #channel, :emoji:, ;sticker;
  - `assist_swap_binding = True`  
-    Wether to swap `chat_up` and `chat_down` with `extra_up` and `extra_down` when popup window is open.
+    Whether to swap `chat_up` and `chat_down` with `extra_up` and `extra_down` when popup window is open.
+- `cursor_bar = True`  
+    Whether to use terminals own bar-shaped cursor, instead of builtin block-shaped cursor in input line.
 - `cursor_on_time = 0.7`  
     Time in seconds the cursor stays ON. Set to `None` or `0` to disable cursor blinking.
 - `cursor_off_time = 0.5`  
@@ -80,6 +82,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Limit number of cached deleted messages per channel.
 - `max_thumb_cache_age = 7`  
     How long to keep cached thumbs for inline images, in days. Set `0` to clear on each new run.  
+- `syntax_highlight = True`  
+    Whether to enable code block syntax highlighting. Code block needs to have language prefix.  
+    For this to work, either GNU `source-highlight` or `python-pygments` needs to be installed.
 - `tree_show_folders = True`  
     Whether to show or hide server folders in tree.
 - `wrap_around = True`  
@@ -97,8 +102,8 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Too low value will cause visual "glitches". Increasing value will add latency between performed action and visual feedback.
 - `extra_line_delay = 5`  
     How long will temporary extra line pop-ups remain before they are auto-removed.
-- `tenor_gif_type = 1`  
-    Type of the media when gif is downloaded from tenor:  
+- `gif_download_type = 1`  
+    Type of the media when gif is downloaded from tenor (klippy and giphy cant be changed):  
     0 - gif HD  
     1 - gif UHD  
     2 - mp4 Video  
@@ -139,14 +144,14 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `native_file_dialog = "Auto"`  
     Use system native file dialog when uploading files.  
     Available options: `True` - use system native file picker, `False` - use internal file picker, `"Auto"` - use yazi if available, fallback to system native.
-- `save_sumamries = True`  
+- `save_summaries = True`  
     Whether to save summaries to disk. Disable to save RAM and reduce disk writes.
 - `default_stickers = True`  
     Download discord default stickers and add them to sticker search. Disable to save some RAM.
 - `only_one_open_server = False`  
     Force only one open server at a time in tree. When one is opened other is closed, excluding DMs.
-- `remember_collapsed_channels = False`  
-    Wether to persist collapsed state for forums and channels with threads.
+- `remember_collapsed_channels = True`  
+    Whether to persist collapsed state for forums and channels with threads.
 - `assist_skip_app_command = False`  
     Skip assist for app_name when typing app command. Instead, show all app commands and insert app_name with selected command.
 - `fallback_keybinding_parser = False`  
@@ -168,10 +173,16 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     If system mic volume is too low, actual sound may be detected as silence, so decrease this value until voice can be heard properly.  
     Increase it if endcord is constantly sending noise when its silence. Or decrease mic volume and increase input volume in endcord.  
     Set to `0` to disable silence detection (sound will be constantly sent and will use more bandwidth).
+- `call_opus_mode = "voip"`  
+    This setting changes quality of the sent audio, higher quality means more network usage and higher sound delay. Options: `lowdelay`, `voip`, `audio`.  
+    Lowdelay has the worst quality. Voip is good for voice calls. Audio mode is useful when streaming music.  
+- `call_fast_mixer = False`  
+    This option only has effect on mixing received audio from multiple users speaking at the same time.  
+    If True, call will use faster mixer that uses less CPU but might result in lower audio quality.  
 - `downloads_path = None`  
     Path to custom downloads directory. Set to `None` to use system default.
 - `notifications_pfp = True`  
-    Whether to include profile pictures in notifications.   
+    Whether to include profile pictures in notifications.  
     If enabled will slightly delay notification if picture is being downloaded. Pictures are cached in system default cache dir.  
     Set to number to change maximum picture resolution, eg. `notifications_pfp = 128` will always download image with resolution 128x128 or worse.
 - `linux_notification_sound = "message"`  
@@ -181,7 +192,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `linux_ringtone_incoming = "phone-incoming-call"`  
     Sound played when there is incoming call. Linux only. Set to `None` to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension. Set this and custom_ringtone_incoming to `None` to disable sound entirely.
 - `custom_ringtone_incoming = None`  
-    Path to audi file played when there is incoming call. Set to `None` to disable. The file will be played in loop.
+    Path to audio file played when there is incoming call. Set to `None` to disable. The file will be played in loop.
 - `linux_ringtone_outgoing = "phone-outgoing-call"`  
     Sound played when there is outgoing call. Linux only. Set to `None` to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension.
 - `custom_ringtone_outgoing = None`  
@@ -216,8 +227,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 -  `client_properties = "default"`  
     Client properties are used by discord in spam detection system.  
     They contain various system information like operating system and browser user agent. Available options:
-    - `"default"` - Approximately what official desktop client sends. Includes: OS version, architecture, Linux window manager, locale.  
-    - `"anonymous"` - Approximately what official web client sends. But there is higher risk to trigger spam heuristics.  
+    - `"default"` - Approximately what official desktop client sends. Includes: OS version, architecture, Linux window manager, locale.
+    - `"anonymous"` - Approximately what official web client sends. But there is higher risk to trigger spam heuristics.
+    - `"android"` - Default but modified to look like android device. Other users will see this client as mobile phone device.
 - `custom_user_agent = None`  
     Custom [user agent string](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/User-Agent) for `client_properties`.  
     Default user agent is Firefox for `"anonymous"` and discord desktop client for `default` client properties.  
@@ -225,15 +237,15 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Setting wrong user agent can make you more suspicious to discord spam filter! Make sure user agent string matches your OS.
 - `send_x_super_properties = True`  
     Enable sending X-Super-Properties header containing system information. May reduce risk suspicion of client.  
-    Disabling this may solve message sending issues ("reurned error code 400" in log).  
+    Disabling this may solve message sending issues ("returned error code 400" in log).  
 - `proxy = None`  
-    Proxy URL to use, it must be this format: `protocol://host:port`, example: `socks5://localhost:1080`.  
-    Supported proxy protocols: `http`, `socks5`.  
-    Be warned! Using proxy (especially TOR) might make you more suspicious to discord.  
+    Proxy URL to use, it must be this format: `protocol://host:port`, example: `socks5://localhost:1080`. Or `protocol://user:password@host:port`.  
+    Supported proxy protocols: `http`, `https`, `socks5`.  
+    WARNING: Using proxy (especially TOR) might make you more suspicious to discord.  
     Voice and video calls will only work with socks5 proxy and it must support UDP ASSOCIATE.  
 - `custom_host = None`  
     Custom host to connect to, like `old.server.spacebar.chat`. Set to `None` to use default host (`discord.com`)
-- `capbilities = None`  
+- `capabilities = None`  
     DO NOT CHANGE, unless you know what you're doing. This might cause some features to not work or client to get unstable.  
     If bot token is used, then this will be used as `intents` parameter instead. See [discord bot documentation](https://discord.com/developers/docs/events/gateway#gateway-intents).  
     Default capabilities: `30717`, default intents: `50364033`.  
@@ -299,7 +311,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
  - `app_string = "- (%app)"`  
     A string that replaces `%app` in the message format when the message is sent from app or webhook.
 - `quote_character = "║"`  
-    A character that is prepended to each line of single or multiline quote.
+    A character that is prefixed to each line of single or multiline quote.
 - `scrollbar_character = "┃"`  
     A character used to draw scrollbar on the right side of the chat.
 - `reactions_separator = " "`  
@@ -343,14 +355,14 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `tree_drop_down_voice = "○"`  
     A single character used to draw voice channel pointer in tree drop down menus.
 - `tree_dm_status = "●"`  
-    A single character prepended to DM name in tree drop down, to indicate status: online/away/dnd. Also used in member list.
+    A single character prefixed to DM name in tree drop down, to indicate status: online/away/dnd. Also used in member list.
 - `border_corners = "╭╰╮╯"`  
     Characters used to draw corners in bordered mode.
 - `activity_icons = "🎮︎📺︎♪📺︎🎮︎"`  
     Characters used to indicate rich presence activity in member list.  
     Order of characters: Playing, Streaming, Listening, Watching, Competing.
 - `smart_chat_lines = True`  
-    Wether to extend lines in chat, left of reactions, in grouped messages only. Will use `tree_drop_down_intersect` and `tree_drop_down_vline`.
+    Whether to extend lines in chat, left of reactions, in grouped messages only. Will use `tree_drop_down_intersect` and `tree_drop_down_vline`.
 - `username_role_colors = True`  
     Allow `%username` and `%global_name` to have color of primary role.
 - `dynamic_name_len = True`  
@@ -388,8 +400,9 @@ Every next list has additional `start` and `end`- indexes on a line where color 
 - `color_orange = [208, -1]`  
 - `color_red = [196, -1]`  
     Colors for green/orange/red elements in various windows and lines.
-- `color_chat_mention = [223, 234]`  
-    Color for highlighted messages containing mentions (reply with ping included) and mention roles.
+- `color_chat_mention = [-2, 234]`  
+    Color for highlighted messages containing mentions (reply with ping included) and mention roles.  
+    If fg is `-2` then it will not overwrite message element original fg.  
 - `color_chat_blocked = [242, -1]`  
     Color for blocked messages if `block_mode = 1`.
 - `color_chat_deleted = [95, -1]`  
@@ -430,6 +443,8 @@ Every next list has additional `start` and `end`- indexes on a line where color 
     Base color for input line.
 - `color_cursor = [233, 255]`  
     Color for cursor in input line.
+- `color_scrollbar = [-1, -1]`
+    Color for scrollbars.
 - `color_misspelled = [222, -1]`  
     Color for misspelled words in input line.
 - `color_tree_default = [255, -1]`  
@@ -458,6 +473,10 @@ Every next list has additional `start` and `end`- indexes on a line where color 
     Color format for message app interaction string. Corresponding to `format_interaction`.
 - `color_format_forum = [[-1, -1], [242, -2, 0, 0, 12], [25, -2, 0, 15, 20]]`  
     Color format for threads in forum. Corresponding to `format_forum`.
+- `"syntax_token_colors = [133, 185, 102, 173, 133, 173, 111, -1, 167, 111, -1, -1]`  
+    A list of foreground colors for code block syntax. Must have all 12 values. Values correspond to (in order):  
+    keyword, string, comment, number, type, classname, function, variable, preproc/builtin, specialchar, symbol, cbracket.  
+    Set to negative value to disable this token.  
 - `media_color_bg = -1`  
     Single color value for background color when showing media.
 
@@ -556,7 +575,7 @@ Note: everything after `%content` may be pushed to newline.
 - `%app` - either `App`, `App - Ephemeral` or `Webhook`
 
 
-## pgcurses.json - config for experimental windowed mode
+## gtkcurses.json - config for GTK3 windowed mode
 - `window_size: [900, 600]`  
     Initial window width and height in pixels.
 - `maximized: false`  
@@ -565,12 +584,10 @@ Note: everything after `%content` may be pushed to newline.
     Size of the font.
 - `font_name: "Source Code Pro"`  
     Name of the font installed on the system.
+- `gtk_dark_theme = True`  
+    Whether to use dark GTK theme for the window.
 - `app_name: "Endcord"`  
     Only changes title of the window.
-- `repeat_delay: 400`  
-    Delay before held key will start repeating, in ms.
-- `repeat_interval: 25`  
-    Delay between each key repeat when holding key, in ms.
 - `ctrl_v_paste: false`  
     If `true` will use `Ctrl+V` instead `Ctrl+Shift+V` for pasting.
 - `enable_tray: true`  

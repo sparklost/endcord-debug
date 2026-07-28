@@ -14,9 +14,7 @@ import subprocess
 import sys
 import time
 
-import filetype
-
-from endcord import peripherals
+from endcord import minimagic, peripherals
 
 if sys.platform.startswith("android"):
     sys.platform = "linux"
@@ -117,23 +115,37 @@ def detect_runtime():
     return "source"
 
 
-def get_build_info(cythonized, uses_pgcurses, support_media, support_call):
+def get_build_level(support_image, support_media, support_call):
+    """Get build level based on present dependencies"""
+    if support_call or support_media:
+        return "FULL" + (" -media" if not support_call else "") + (" -call" if not support_call else "")
+    if support_image:
+        return "MEDIUM"
+    if not importlib.util.find_spec("Crypto"):
+        return "MICRO"
+    if not importlib.util.find_spec("numpy"):
+        return "MINI"
+    return "LITE"
+
+
+def get_build_info(cythonized, uses_gtkcurses, support_image, support_media, support_call):
     """Write build info string"""
     build_info = [detect_runtime()]
     if cythonized:
         build_info.append("cythonized")
-    if uses_pgcurses:
+    if uses_gtkcurses:
         build_info.append("windowed")
+    build_info.append(f"level={get_build_level(support_image, support_media, support_call)}")
     if support_media:
-        build_info.append("media support")
+        build_info.append("media")
     if support_call:
-        build_info.append("call support")
+        build_info.append("call")
     custom_build = " (CUSTOM BUILD)" if importlib.util.find_spec("_bz2") is None else ""
     version = sys.version
     start = version.find("(++")
     if start >= 0:
         version = version[:start] + version[version.find(")", start):]
-    if not importlib.util.find_spec("curses"):
+    if uses_gtkcurses or not importlib.util.find_spec("curses"):
         curses_ver = "None"
         curses_module = "None"
     else:
@@ -269,26 +281,22 @@ def get_dir_size(path, mb=False):
     return count, total_size
 
 
+def get_mime(path):
+    """Try to get mime type of the file"""
+    mime = minimagic.guess(path)
+    if mime:
+        return mime
+    return "unknown/unknown"
+
+
 def get_is_clip(path):
     """Get whether file is video or not"""
-    kind = filetype.guess(path)
-    if kind and kind.mime:
-        return kind.mime.split("/")[0] == "video"
+    return get_mime(path).split("/")[0] == "video"
 
 
 def get_can_play(path):
     """Get whether file can be played as media"""
-    kind = filetype.guess(path)
-    if kind and kind.mime:
-        return kind.mime.split("/")[0] in ("image", "video", "audio")
-
-
-def get_mime(path):
-    """Try to get mime type of the file"""
-    kind = filetype.guess(path)
-    if kind:
-        return kind.mime
-    return "unknown/unknown"
+    return get_mime(path).split("/")[0] in ("image", "video", "audio")
 
 
 def get_media_type(path, hint=None):
@@ -345,6 +353,17 @@ def complete_path(path, separator=True):
     return sorted(completions)
 
 
+def search_pfp_cache(cache_path, search_patter, target_id):
+    """Search for specified pfp in cache"""
+    search_pattern = os.path.join(cache_path, search_patter)
+    for path in glob.iglob(search_pattern):
+        if os.path.isfile(path):
+            file_name = os.path.basename(path)
+            stem = os.path.splitext(file_name)[0]
+            if stem.removesuffix("_round") == target_id:
+                return path
+
+
 def json_array_objects(stream):
     """Stream a json array from a file like object. Yield one parsed object at a time without loading full json into memory"""
     # replaces ijson.items(data, "item")
@@ -392,6 +411,27 @@ def delete_old_files(directory, days, accessed=False):
                 os.remove(path)
         except OSError:
             pass
+
+
+def convert_gif_type(url, content_type):
+    """
+    Convert tenor video link between types:
+    0 - gif HD
+    1 - gif UHD
+    2 - mp4 Video
+    """
+    if "tenor.com/" in url:
+        if content_type == 1:
+            return url.replace("AAAPo/", "AAAAC/")[:-3] + "gif"
+        if content_type == 2:
+            return url
+        return url.replace("AAAPo/", "AAAAd/")[:-3] + "gif"
+    # if "giphy.com/" in url:   # giphy doesnt provide other formats
+    #     return url
+    # if "klipy.com/" in url:   # klippy has completely random urls
+    #     logger.info(url)
+    #     return url
+    return url
 
 
 def get_base_path():
@@ -498,8 +538,9 @@ def demojize(text, safe=False):
             i += 1
             continue
         cluster, i = next_emoji_cluster(text, i)
-        if ord(cluster[-1]) == 0xFE0E or ord(cluster[-1]) == 0xFE0F:
-            cluster = cluster[0:-1]   # remove variation selector for for text/emoji
+        # not removing variation selector because they are used in emoji.json
+        # if ord(cluster[-1]) == 0xFE0E or ord(cluster[-1]) == 0xFE0F:
+        #     cluster = cluster[0:-1]
         emoji = EMOJI_DATA.get(cluster)
         if emoji:
             result.append(min(emoji, key=len))

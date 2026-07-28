@@ -13,7 +13,7 @@
 <img src="./.github/screenshots/01.png" alt="Screenshot 1" width="864">
 </div>
 
-Endcord is a third-party feature rich Discord client, running entirely in terminal.  
+Endcord is a third-party feature rich Discord client, running entirely in terminal (or in its own GTK3 window).  
 It is built with Python (this [doesn't mean its slow](#note-on-python-performance-misconceptions)) and ncurses library, to deliver lightweight yet feature rich experience.  
 [More screenshots](https://github.com/sparklost/endcord/blob/main/.github/screenshots.md).  
 Official endcord will always stay **purely human project**.  
@@ -27,7 +27,7 @@ Any third party endcord forks may add features that can lead to account ban, con
 - Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
 - Mouse controls
-- Kitty protocol images (through extensions: [1](https://github.com/sparklost/endcord-image-emoji), [[2](https://github.com/sparklost/endcord-image-inline)])
+- Kitty protocol images, pfp, emoji (through extensions: [1](https://github.com/sparklost/endcord-image-inline), [2](https://github.com/sparklost/endcord-image-pfp), [3](https://github.com/sparklost/endcord-image-emoji))
 - Login with email, 2fa, QR code, or paste token
 - Desktop notifications
 - Inline images (pixelated/ascii-art/[kitty-protocol](https://github.com/sparklost/endcord-image-inline))
@@ -46,18 +46,18 @@ Any third party endcord forks may add features that can lead to account ban, con
     - Show channels with mention as red with number of mentions
     - Collapse categories and servers
     - DMs in separate drop-down, show DM status
-    - Forums, imageborads and threadsthread channels 
+    - Forums, imageborads and thread channels
     - Folders with custom naming
 - Show reactions, replied message, forwarded message
-- Show embeds, attachment types and links, code blocks
+- Show embeds, attachment types and links, code blocks (with syntax highlighting)
 - Spellchecking
 - Advanced input line operations and ability to use external editor
+- Configurable bar or block shaped cursor
 - Tabs and temporary tabs with mouse controls (click, double click, middle click)
 - Assist when typing channel/username/role/emoji/sticker
 - Search, preview and send gifs
 - Record and send voice messages
 - `s/old/new` replacement with extended regex
-- Open link in browser
 - Unlimited chat scrolling
 - Keep deleted messages (OFF by default)
 - Highlight messages with mentions
@@ -82,7 +82,7 @@ Any third party endcord forks may add features that can lead to account ban, con
 - Proxy support
 - Profile manager for multiple accounts
 - Store token in system keyring
-- Experimental windowed mode with tray icon
+- GTK windowed mode with tray icon
 - Works in termux, with android notifications
 - Auto endcord and extensions check for updates
 - Run bots, with interactions
@@ -124,7 +124,7 @@ Manager can be re-opened using `--manager` flag.
 - Scan QR code - note that some terminals may fail to render QR code
 - Token - used to access Discord through your account without logging-in
 - Token as an argument: `endcord -t [YOUR_TOKEN]`, but note that it might get saved in your terminal history file  
-Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then youll have to use token method.  
+Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then you'll have to use token method.  
 If you want to verify what is happening with credentials, look in profile_manager.py and auth.py.  
 **Do not share your token!**  
 
@@ -175,7 +175,7 @@ If `native_file_dialog` is set to `True` in config, it will open system native f
 Type path to file that should be uploaded and press enter. Cached content will be restored.  
 Wait until file is uploaded and then send the message. Multiple files can be added this way.  
 Path can be absolute or relative, and has autocomplete on `tab` key.  
-If file size exceeds discord's limit it will not be added to the sent message.  
+If file size exceeds Discords limit it will not be added to the sent message.  
 Attachments can be navigated with `Ctrl+Left/Right` in popup line (above status line).  
 `Ctrl+X` will cancel ALL downloads and attachments, with a confirmation prompt.  
 `Ctrl+K` will cancel selected attachment (and stop upload) and remove it from attachments list.
@@ -194,20 +194,22 @@ Popup window is drawn for viewing:
 `Alt+Enter` in member list will show user profile of the selected member.  
 
 ### Assist with mention, role, channel, emoji, sticker
-When typing eg. username prepended with `@`, assist will open as popup window with search results for typed text after `@` (search is case-insensitive).  
+When typing eg. username prefixed with `@`, assist will open as popup window with search results for typed text after `@` (search is case-insensitive).  
 Assist triggers are (the first character): `@username`, `@role`, `#channel`, `:emoji:`, `;sticker;`.  
 Press `Esc` to stop assist. Re-type trigger to start it again.  
 Navigation: `Alt+Up/Down` - Go up/down, `Alt+Enter` or `Enter` - insert selected item.  
 When inserted in input line, item will usually be shown as `<some_numbers>` - that is intended - do not alter it.  
 Stickers and emoji are sorted into packs, and will be shown as `pack name - emoji/sticker name`, and search is performed on that string.  
-Emoji assist has special feature: type `:**` to search all favorited emojis.  
+Emoji assist has special features:
+- Type  `:**` to search all favorited emojis.
+- Type `+:` at the start of input line, and when eg `+:sparkles:` is sent, it will react to selected message instead.
 
 ### Adding/Removing reactions
 To start reaction assist, press `Alt+E`.  
-Then type emoji name prepended with `:`, just like with regular assist then enter.  
+Then type emoji name prefixed with `:`, just like with regular assist then enter.  
 If reaction is already present it will be +1. Reaction is removed if current account already reacted (reactions are toggled).  
 To add/remove one of already present reactions, only type its index (starts from 1).  
-If this account reacted to the message, that reaction will have `*` prepended to reaction count.  
+If this account reacted to the message, that reaction will have `*` prefixed to reaction count.  
 
 ### Escape key priority order
 Stop recording, close popup window, stop replying, everything else.
@@ -236,7 +238,7 @@ To add default emoji in message just type its name or alias, like this: `:thumbs
 For now, there is no emoji assist, but it is planned.  
 Emoji names can be found [here](https://unicode.org/emoji/charts/full-emoji-list.html) and aliases [here](https://www.webfx.com/tools/emoji-cheat-sheet/).  
 
-# s/ replacements with regex
+### s/ replacements with regex
 Type `s/old/new` as a message and send it to edit your last message by replacing `old` with `new`.  
 Note that this is using regex. And is very similar to how sed works.  
 Features other than full regex support:
@@ -246,7 +248,7 @@ Features other than full regex support:
 - `&` in the replacement portion represents the entire matched pattern from the search portion
 - `\NUMBER` in the replacement portion represents capture groups in the search portion
 
-# Tabs
+### Tabs
 Tabs are "pinned" channels in channel cache, and are counted in channel cache limit.  
 Currently active channel can be un/tabbed with `Alt+B`.  
 To switch to any tabbed channel use `Alt+NUM`, where `NUM` is tab number (use keys in number row).
@@ -295,23 +297,25 @@ All the visual media is converted to ASCII art that can be additionally configur
 But there is also setting in config to open media in external app (cross-system, will use default system app for that file format).  
 "endcord-lite" (without voice calls and ASCII media support), can be built by specifying `--lite` flag to build script. Lite version is significantly smaller, cant make voice calls, but still can open media in external app.  
 
-### Experimental windowed mode
-This mode entirely replaces curses with pygame-ce GUI library. This means Endcord runs in its own window, not in terminal, but UI remains terminal-like.  
+### Windowed mode
+This mode entirely replaces curses and the need for terminal emulator, using GTK3 window, UI still remains terminal-like.  
 Tray icon will also be enabled, so closing window will only minimize it to tray.  
 If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.  
 Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All media will be opened in native player.  
-Building with nuitka on python >=3.13 will create executable that segfaults! Building with pyinstaller is not recommended because it generates huge binary.  
-You can toggle experimental mode by running: `python build.py --experimental`.  
+Building with pyinstaller is not recommended because it generates huge binary.  
+You can toggle windowed mode by running: `python build.py --toggle-windowed`.  
 Then run endcord from source: `uv run main.py`.  
-After first run in experimental mode, extra config will be generated in endcord config path in file called `pgcurses.json`. More info in [configuration](docs/configuration.md).
+After first run in windowed mode, extra config will be generated in endcord config path, a file called `gtkcurses.json`. More info in [configuration](docs/configuration.md).  
+Note: To have tray icon on Linux, [ayatana appindicator](https://github.com/AyatanaIndicators/libayatana-appindicator) must be installed.  
 
 ### Custom hosts
 Connecting to other discord-like instance can be configured in `config.ini` by setting `custom_host = ` to preferred host domain. Set to `None` to use default host (`discord.com`) or use `--custom-host=` command argument.  
 But endcord may crash at any time. Further, each host may have different spam filters, so **use at your own risk** still applies.  
-Wether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the risk of a crash. If endcord crashes - its hosts fault. Do not report bugs related to this.
+Whether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the risk of a crash. If endcord crashes - its hosts fault. Do not report bugs related to this.
 
 ### Termux
-Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, cd to folder and run it from source: `uv run main.py` (it will take some time to download and build numpy and orjson). To skip waiting for some dependencies, or if it fails building them run: `uv remove numpy soundcard soundfile orjson pycryptodome`.  
+Endcord cant be built in termux, so to run it: first install python >= 3.12 and `uv`, then clone this repo, setup env to "MICRO" level: `python --nobuild --level=MICRO` (one time), and run it: `uv run main.py`.  
+Setting up environment for higher levels will probably fail because these dependencies will have to be built for arm architecture.  
 To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
 Notifications will work as ling as endcord is running, so it might be necessary for termux to "Acquire wakelock".  
 
@@ -322,15 +326,12 @@ To prevent extension injection (malware can modify endcord config and inject ext
 
 ## Installing
 ### Linux
-- Pre-built binaries (built with nuitka using clang) are available in releases  
-    Binaries are built on Ubuntu-like distro with `--custom-python --nuitka --clang` build script options, meaning they are maximally optimized.
-- Arch Linux (AUR) (OFFICIAL):
+- Pre-built binaries (**recommended**) are available in releases  
+    Binaries are built on Ubuntu-like distro with `--custom-python --nuitka` build script options with clang, meaning they are maximally optimized.
+- Arch Linux (AUR):
     - `yay -S endcord` - full version with media support, larger executable
     - `yay -S endcord-lite` - lite version without voice calls and media support
     - `-git` versions will build from source, with latest changes
-- Gentoo Linux (GURU):
-    - `emerge --ask net-im/endcord` - full version installed from source (not built)
-    - `emerge --ask net-im/endcord-bin` - prebuilt full binary
 - [Build](#building) endcord, then copy built executable to system:  
     `sudo cp dist/endcord /usr/local/bin/`
 - Install script (installs binary from latest release or updates existing):
@@ -348,14 +349,15 @@ Optional dependencies:
 - `yt-dlp` - youtube support
 - `mpv` - Play youtube videos in native player (non-ascii)
 - `libsecret` - Store token in system keyring (secret service provider is also required (eg. `gnome-keyring`, `KWallet`, `KeePassXC`), with `dbus` as dependency)
-- `libappindicator-gtk3` - Tray support under wayland, for [experimental windowed mode](#experimental-windowed-mode) only.
+- `libappindicator-gtk3` - Tray support under wayland, for [windowed mode](#windowed-mode) only.
 - `imagemagick` - To make notification images round; only needed for endcord-lite.
+- `source-highlight` or `python-pygments` - Code block syntax highlighting (Alternatively use [this extension](https://github.com/sparklost/endcord-pygments-syntax)).
 
 ### Windows
 - Pre-built binaries (built with nuitka) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`  
 
-Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with experimental windowed mode, terminal is not required to use endcord.  
+Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with windowed mode, terminal is not required to use endcord.  
 WezTerm proved to introduce the least drawing issues.  
 Cmder settings: "Mouse" > check "Send mouse events to console" and "Mark/Copy" > uncheck "Intelligent mode", and set "Main console font" and "Alternative font" to same monospace font.  
 Emoji are known to work only with WezTerm but many will fail to draw and mess-up the UI, so its best to set `emoji_as_text = True` in config.  
@@ -384,11 +386,11 @@ Third party endcord forks may add features that can lead to account ban, contain
 
 ## Building
 To see all build script options, run: `python build.py -h`.  
-To build endcord-lite, add `--lite` flag. No voice calls and ascii media, slightly less RAM usage, smaller executable, faster startup.  
+To build endcord-lite, add `--level=LITE` flag. No voice calls and terminal media, slightly less RAM usage, smaller executable, faster startup.  
 To build into directory, not as a single executable, add `--onedir` flag. Will speed up startup.  
 To build with Nuitka, add `--nuitka` flag. More optimized, smaller executable, long compile time. See [Nuitka](#nuitka) for more info.  
 If compiler is not available, or built binary is failing, try building with `--nocython`, which will produce slightly less optimized binaries.  
-To toggle [experimental windowed mode](#experimental-windowed-mode) run: `python build.py --toggle-experimental`.  
+To toggle [windowed mode](#windowed-mode) run: `python build.py --toggle-windowed`.  
 
 ### Linux
 1. Clone this repository: `git clone https://github.com/sparklost/endcord.git`
@@ -436,7 +438,7 @@ Built endcord binary will be few MB smaller and run a little faster.
 ### Free-threaded Python
 Endcord does work with free-threaded python (3.14 only), and it significantly improves media player performance with large video resolutions, by allowing decoding, video and sound playing to be run in separate CPU threads, completely removing crackling sound when playing on high "terminal resolution".  
 This comes at the cost of much larger binary, increased CPU and RAM usage.  
-Currently nuitka [doesn't support free-threaded mode](<https://github.com/Nuitka/Nuitka/issues/3062>) yet. Pyinstaller (without `--nutka` flag) does build it successfully.  
+Currently nuitka [doesn't support free-threaded mode](<https://github.com/Nuitka/Nuitka/issues/3062>) yet. Pyinstaller (without `--nuitka` flag) does build it successfully.  
 To make it use freethreaded python run `python build.py` (not `uv`!) with `--freethreaded` argument.  
 
 ### Building without rust
@@ -463,7 +465,9 @@ Endcord does its best to avoid causing any suspicious activity, so using it as-i
 - Do not use `--token` flag, endcord automatically refreshes token stored with profile manager, so there is no need to update it manually.
 - `anonymous` mode in `client_properties` setting might be more risky than `default` mode.
 - Do not set invalid `custom_user_agent` setting, and try to match it with your OS.
-- Do not use public proxy, like VPN or TOR.  
+- Do not use public proxy, like VPN or especially TOR.  
+- Try to not send messages that will be blocked by filter rules in servers.
+- Try to not get blocked by someone.
 
 ### What if you get banned?
 You can write to Discord Support team: https://dis.gd/request.  
@@ -534,7 +538,8 @@ RAM usage greatly depends on multiple factors:
 Simply make the launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.
 
 ### Legacy theme
-Endcord default theme uses non-standard characters to display som TUI elements, and these characters may not work on some terminals, or look weird wih some fonts.  
+Endcord default theme uses non-standard characters to display some TUI elements, and these characters may not work on some terminals, or look weird wit
+h some fonts.  
 If that happens, use [legacy theme](themes/legacy.ini). It is used by default on windows.  
 
 ### Virus scanners are flagging endcord binaries as malware

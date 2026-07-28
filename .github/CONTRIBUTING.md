@@ -53,11 +53,8 @@ ruff check --fix endcord/user_frecency_pb2.py
 ## Useful debugging things
 
 ### Debug points in the code
-- `debug_events` - save all received events from gateway.
-- `debug_guilds_tree` - print all tree data in jsons.
-- `255_curses_bug` - this part of the code should be changed after [ncurses bug](https://github.com/python/cpython/issues/119138) is fixed. If there is no note, just remove the code.
-- `fix_member_list_selection` - properly select member list when figured out how to use `id` in `GUILD_MEMBER_LIST_UPDATE`.
-- `fix_davey` - commented pieces of code in voice.py that use davey instead dave.py, should be re-visited after [this bug](https://github.com/Snazzah/davey/issues/15) gets fixed.
+- `debug_events` - save all received events from gateway as jsons.
+- `debug_guilds_tree` - save all tree data as jsons.
 
 ### Network tab filter
 Filter for network tab in dev tools:  
@@ -181,7 +178,7 @@ user/flags - missing
 
 - `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `/api/v9/channels/{channel_id}/messages`, `/api/v9/guilds/{guild_id}/messages/search` and `/api/v9/channels/{channel_id}/pins`:
 /author/global_name - missing  
-/referenced_message - should be null only if its pointing to delteted message, otherwise remove this field  
+/referenced_message - should be null only if its pointing to deleted message, otherwise remove this field  
 /referenced_message/author/global_name - missing  
 /reactions/emoji/id - missing  
 /poll - should be removed if its `null`  
@@ -224,10 +221,12 @@ Gateway returns error code 4000 if event "update presence" (opcode 3) is sent.
 
 ## Build steps for package maintainers
 1. Download and build custom python with recent ncurses (optional)
-- Clang is optional everywhere, but it's recommended as it provides better binary.
-- The entire process is done by `tools/build_python.sh`. to run it: `bash tools/build_python.sh 3.14.5 clang curses v6_6_20260627` (you can read curses tag from build.py, its near the top).
+- Clang is optional everywhere, but it's recommended as it provides better and smaller binary.
+- The entire process is done by `tools/build_python.sh`. to run it: `bash tools/build_python.sh 3.14.5 clang curses v6_6_20260627`
+- Python version and curses tag should be read from `pyproject.toml`, under `[tool.build]` section.
+- `build_python.sh` can be run in network isolation if: there is `build` dir and there are python and curses source archives in it. Wget will skip download if the names are matching. Check `build_python.sh` for download urls.
 - Python will be installed in `./.cpython/bin/python3.14`.
-- Once finished just configure venv to use `./.cpython/bin/python3.14`
+- Once finished just configure venv to use `./.cpython/bin/python3.14`.
 
 2. Setup dependencies
 - Linux system build dependencies when using nuitka (recommended): `clang` (or gcc), `patchelf` (DO NOT use v0.18.x).
@@ -238,10 +237,10 @@ Gateway returns error code 4000 if event "update presence" (opcode 3) is sent.
 - `uv sync --group build` - endcord-lite  
     Will install all dependencies from pyproject.toml under `dependencies` and `build`.
 
-3. Check if numpy without openblas is already installed, if returns 1 then its not, so download and build numpy
+3. Check if numpy without openblas is already installed
 - Numpy build can be skipped if its impossible, but binary will be few MB larger.
 - If building with pyinstaller skip numpy build.
-- This command will print `1` if openblas is found in numpy, and then it has to be built locally.
+- This command will print `1` if openblas is found in numpy, if thats the case then it has to be built locally (do step 4).
 ```bash
 uv run python -c "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))"
 ```
@@ -253,12 +252,11 @@ export CC=clang
 export CXX=clang++
 uv pip install pip
 .venv/bin/python -m pip uninstall --yes numpy
-.venv/bin/python -m pip install --no-cache-dir --no-binary=:all: numpy --config-settings=setup-args=-Dblas=None --config-settings=setup-args=-Dlapack=None
+.venv/bin/python -m pip install --no-cache-dir --no-binary=:all: numpy --config-settings=setup-args=-Dblas=none --config-settings=setup-args=-Dlapack=none --config-settings=setup-args=-Dallow-noblas=true
 uv pip uninstall pip
 ```
 
 5. Build cython extensions
-- Skip this step only if final binary gives error `Dynamic module does not define module export function`.
 - Compiler args are set in the setup.py, so no need to set them as env vars.
 ```bash
 export CC=clang
@@ -271,6 +269,6 @@ uv run python setup.py build_ext --inplace
 - run `compress_emoji()` from build.py - will make `emoji.json` smaller.
 
 7. Get and run build command
-- Build commands can be obtained by running `python build.py --print-cmd`, adding other arguments will change the printed command.
+- Build commands can be obtained by running `python build.py --print-cmd`, adding other arguments will change it.
 - The script will also append to `CFLAGS` and `LDFLAGS` environment variables, which depend on compiler used. Same compiler args are used for all compilations except custom python build (the bash script will set them).
 - Recommended: `python build.py --print-cmd --nuitka`.

@@ -12,13 +12,6 @@ import shutil
 import subprocess
 import sys
 import tomllib
-from importlib.metadata import distribution
-
-PYTHON_MAX_MINOR = 14
-PYTHON_FREETHREADED = 14
-PYTHON_LAST_SAFE = 13
-PYTHON_PATCH = 6
-CURSES_TAG = "v6_6_20260627"
 
 CUSTOM_CFLAGS = [
     "-DNDEBUG",
@@ -54,6 +47,16 @@ if sys.platform.startswith("android"):
     sys.platform = "linux"
 if "bsd" in sys.platform:
     sys.platform = "linux"
+
+
+def load_build_config():
+    """Load build config from pyproject.toml"""
+    if os.path.exists("pyproject.toml"):
+        with open("pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+        return data.get("build", {})
+    print("pyproject.toml file not found", file=sys.stderr)
+    sys.exit(1)
 
 
 def get_app_name():
@@ -96,6 +99,65 @@ def get_version_number():
     sys.exit(1)
 
 
+def supports_color():
+    """Return True if the running terminal supports ANSI colors."""
+    if sys.platform == "win32":
+        return (os.getenv("ANSICON") is not None or
+            os.getenv("WT_SESSION") is not None or
+            os.getenv("TERM_PROGRAM") == "vscode" or
+            os.getenv("TERM") in ("xterm", "xterm-color", "xterm-256color")
+        )
+    if not sys.stdout.isatty():
+        return False
+    return os.getenv("TERM", "") != "dumb"
+
+
+build_config = load_build_config()
+
+PYTHON_MAJOR = int(build_config.get("python_max", "3.14.6").split(".")[0])
+PYTHON_MAX_MINOR = int(build_config.get("python_max", "3.14.6").split(".")[1])
+PYTHON_PATCH = int(build_config.get("python_max", "3.14.6").split(".")[2])
+PYTHON_FREETHREADED = int(build_config.get("python_freethreaded", "3.14").split(".")[1])
+PYTHON_LAST_SAFE = int(build_config.get("python_last_safe", "3.13").split(".")[1])
+CURSES_TAG = build_config.get("curses_tag", "v6_6_20260627")
+PKGNAME = get_app_name()
+PKGVER = get_version_number()
+USE_COLOR = supports_color()
+
+
+def fprint(text, color=PURPLE, prefix=f"[{PKGNAME.capitalize()} Build Script]: ", file=sys.stdout):
+    """Print colored text prefixed with text, default is light purple"""
+    if USE_COLOR and color:
+        print(f"{color}{prefix}{text}\033[0m", file=file, flush=True)
+    else:
+        print(f"{prefix}{text}", file=file, flush=True)
+
+
+def iprint(text, indent=2, color=None):
+    """Print inented low importance text belonging to build step"""
+    if color:
+        fprint(text, prefix=(indent * " "), color=color)
+    else:
+        print(f"{indent * " "}{text}", flush=True)
+
+
+def backup_file(file_path, backup_path, overwrite=False):
+    """Backup file by creating backup_path version of it"""
+    if os.path.exists(backup_path):
+        if overwrite:
+            os.remove(backup_path)
+        else:
+            return
+    shutil.copy2(file_path, backup_path)
+
+
+def restore_file(file_path, backup_path):
+    """Restore file from backup_path if its found"""
+    if not os.path.exists(backup_path):
+        return
+    os.replace(backup_path, file_path)
+
+
 def is_gil_enabled():
     """Safely check if GIL is enabled"""
     try:
@@ -110,14 +172,14 @@ def get_python_version():
         try:
             version_result = subprocess.run(["uv", "run", "--no-sync", "python", "-VV"], capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as e:
-            print(f"uv error: {e}", file=sys.stderr)
-            return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
+            fprint(f"uv error: {e}", color_code=RED, prefix="", file=sys.stderr)
+            return sys.version_info.major, sys.version_info.minor, not is_gil_enabled()
         all_parts = version_result.stdout.strip().split(" ")
         version_parts = all_parts[1].split(".")
         if len(version_parts) < 2:
-            return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
+            return sys.version_info.major, sys.version_info.minor, not is_gil_enabled()
         return int(version_parts[0]), int(version_parts[1]), "free-threading" in all_parts[2]
-    return sys.version_info.major, sys.version_info.minor, is_gil_enabled()
+    return sys.version_info.major, sys.version_info.minor, not is_gil_enabled()
 
 
 def get_nice_python_version():
@@ -129,41 +191,15 @@ def get_nice_python_version():
     return version[:start] + version[version.find(")", start):]
 
 
-def supports_color():
-    """Return True if the running terminal supports ANSI colors."""
-    if sys.platform == "win32":
-        return (os.getenv("ANSICON") is not None or
-            os.getenv("WT_SESSION") is not None or
-            os.getenv("TERM_PROGRAM") == "vscode" or
-            os.getenv("TERM") in ("xterm", "xterm-color", "xterm-256color")
-        )
-    if not sys.stdout.isatty():
-        return False
-    return os.getenv("TERM", "") != "dumb"
-
-
-PKGNAME = get_app_name()
-PKGVER = get_version_number()
-USE_COLOR = supports_color()
-
-
-def fprint(text, color_code=PURPLE, prepend=f"[{PKGNAME.capitalize()} Build Script]: "):
-    """Print colored text prepended with text, default is light purple"""
-    if USE_COLOR:
-        print(f"{color_code}{prepend}{text}\033[0m", flush=True)
-    else:
-        print(f"{prepend}{text}", flush=True)
-
-
 def check_python():
-    """Check python version and print warning, and return True if runing inside pure python (no uv)"""
+    """Check python version and print warning, and return True if running inside pure python (no uv)"""
     if sys.version_info.major != 3:
-        print(f"Python {sys.version_info.major} is not supported. Only Python 3 is supported.", file=sys.stderr)
+        fprint(f"Python {sys.version_info.major} is not supported. Only Python 3 is supported.", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
 
     if os.environ.get("UV", ""):
         if sys.version_info.minor < 12 or sys.version_info.minor > PYTHON_MAX_MINOR:
-            fprint(f'WARNING: Python {sys.version_info.major}.{sys.version_info.minor} is not supported but build may succeed. Run "python build.py" to let uv download and setup recommended temporary python interpreter.', color_code=RED)
+            fprint(f'WARNING: Python {sys.version_info.major}.{sys.version_info.minor} is not supported but build may succeed. Run "python build.py" to let uv download and setup recommended temporary python interpreter.', color=RED)
         else:
             try:
                 version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
@@ -173,18 +209,18 @@ def check_python():
             fprint(f"Using Python {get_nice_python_version()}")
         if not is_gil_enabled():
             if sys.version_info.minor == PYTHON_FREETHREADED:
-                fprint("WARNING: While endcord works with freethreaded python, final binary is much larger. Nutka doesnt yet support freethreaded python, so build is likely to fail.", color_code=RED)
+                fprint("WARNING: While endcord works with freethreaded python, final binary is much larger. Nuitka doesnt yet support freethreaded python, so build is likely to fail.", color=RED)
             else:
-                fprint(f'WARNING: Endcord is known to only build with freethreaded python version 3.{PYTHON_FREETHREADED}. Buil is likely to fail on other versions. Run "python build.py" to let uv download and setup recommended temporary python interpreter, optionally with flag "--freethreaded".', color_code=RED)
+                fprint(f'WARNING: Endcord is known to only build with freethreaded python version 3.{PYTHON_FREETHREADED}. Build is likely to fail on other versions. Run "python build.py" to let uv download and setup recommended temporary python interpreter, optionally with flag "--freethreaded".', color=RED)
         return False
 
     try:
         version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"uv error: {e}", file=sys.stderr)
+        fprint(f"uv error: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError:
-        print("uv command not found, please ensure uv is installed and in PATH", file=sys.stderr)
+        fprint("uv command not found, please ensure uv is installed and in PATH", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
     return True
 
@@ -201,11 +237,11 @@ def ensure_python(freethreaded, safe=False):
         return None, have_freethreaded
 
     if freethreaded:
-        version = f"3.{PYTHON_FREETHREADED}+freethreaded"
+        version = f"{PYTHON_MAJOR}.{PYTHON_FREETHREADED}+freethreaded"
     else:
-        version = f"3.{selected_version}"
+        version = f"{PYTHON_MAJOR}.{selected_version}"
         # ensure there is no same-name freethreaded python
-        subprocess.run(["uv", "python", "uninstall", f"3.{minor}+freethreaded"], check=False)
+        subprocess.run(["uv", "python", "uninstall", f"{PYTHON_MAJOR}.{minor}+freethreaded"], check=False)
 
     freethreaded_string = "freethreaded " if freethreaded else ""
     fprint(f"Setting up {freethreaded_string}python {version} for this project")
@@ -221,7 +257,7 @@ def check_patchelf():
 
     patchelf_path = shutil.which("patchelf")
     if not patchelf_path:
-        fprint("Patchelf is required for building with nuitka. Please install it first.", color_code=RED)
+        fprint("Patchelf is required for building with nuitka. Please install it first.", color=RED)
         sys.exit(1)
     try:
         result = subprocess.run([patchelf_path, "--version"], capture_output=True, text=True, check=True)
@@ -229,81 +265,78 @@ def check_patchelf():
         if not output.startswith("patchelf "):
             return
         if output.split(" ")[1].startswith("0.18."):
-            fprint("Patchelf version 0.18.0 is a known buggy release, nuitka will likely refuse to use it! Please upgrade or downgrade it.", color_code=RED)
+            fprint("Patchelf version 0.18.0 is a known buggy release, nuitka will likely refuse to use it! Please upgrade or downgrade it.", color=RED)
     except Exception:
         pass
 
 
-def check_media_support():
-    """Check if media is supported"""
-    return (
-        importlib.util.find_spec("av") is not None and
-        importlib.util.find_spec("dave") is not None and
-        importlib.util.find_spec("PIL") is not None and
-        importlib.util.find_spec("nacl") is not None
-    )
-
-
-def add_media():
-    """Add media support"""
-    if not check_media_support():
-        fprint("Adding media support dependencies")
-        subprocess.run(["uv", "sync", "--all-groups"], check=True)
-
-
-def remove_media():
-    """Remove media support"""
-    if check_media_support():
-        fprint("Removing media support dependencies")
-        subprocess.run(["uv", "pip", "uninstall"] + get_media_packages(), check=True)
-
-
-def check_dev():
-    """Check if its dev environment and set it up"""
-    if importlib.util.find_spec("PyInstaller") is None or importlib.util.find_spec("nuitka") is None:
-        subprocess.run(["uv", "sync", "--group", "build"], check=True)
-
-
-def is_local_build(package_name):
-    """Check if package is locally built"""
-    try:
-        dist = distribution(package_name)
-        for file in dist.files or []:
-            if file.name == "WHEEL":
-                wheel_path = dist.locate_file(file)
-                break
-        else:
+def check_deps(*deps):
+    """Check if specified dependencies are installed"""
+    for dep in deps:
+        if importlib.util.find_spec(dep) is None:
             return False
-        with open(wheel_path, "r", encoding="utf-8") as f:
-            return "manylinux" not in f.read()
-    except Exception:
-        pass
-    return False
+    return True
+
+
+def setup_dependencies(level, set_dev):
+    """Setup first stage of dependencies based on provided level"""
+    restore_file("pyproject.toml", ".pyproject.toml.bak")
+
+    if level == "FULL" and (not check_deps("av", "dave", "PIL", "nacl") or (set_dev and not check_deps("nuitka"))):
+        subprocess.run(["uv", "sync", "--group=media"] + (["--group=build"] if set_dev else []), check=True)
+
+    elif level == "MEDIUM" and (not check_deps("PIL") or check_deps("av") or (set_dev and not check_deps("nuitka"))):
+        subprocess.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
+        with open("pyproject.toml", "rb") as f:
+            media_deps = tomllib.load(f).get("dependency-groups", {}).get("media", {})
+        medium_deps = load_build_config().get("medium_deps", [])
+        for media_dep in media_deps:
+            if any(x in media_dep for x in medium_deps):
+                subprocess.run(["uv", "pip", "install", media_dep], check=True)
+
+    elif level == "LITE" and (check_deps("PIL") or not check_deps("numpy") or (set_dev and not check_deps("nuitka"))):
+        subprocess.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
+
+    elif level == "MINI":
+        backup_file("pyproject.toml", ".pyproject.toml.bak")
+        subprocess.run(["uv", "remove", *build_config.get("mini_exclude_deps")], check=True)
+        if set_dev:
+            subprocess.run(["uv", "sync", "--group=build"], check=True)
+        fprint("WARNING: pyproject.toml is modified! Backup is '.pyproject.toml.bak'", color=RED)
+
+    elif level == "MICRO":
+        backup_file("pyproject.toml", ".pyproject.toml.bak")
+        subprocess.run(["uv", "remove", *build_config.get("micro_exclude_deps")], check=True)
+        if set_dev:
+            subprocess.run(["uv", "sync", "--group=build"], check=True)
+        fprint("WARNING: pyproject.toml is modified! Backup is '.pyproject.toml.bak'", color=RED)
+
+    fprint(f"Environment configured to endcord-{level} with{"" if set_dev else "out"} build dependencies")
 
 
 def force_ujson():
-    """Remove orjson and force installing ujson instead. WARNING: this modifies pyproject.toml"""
-    try:
-        subprocess.run(["uv", "remove", "orjson"], check=True, stderr=subprocess.DEVNULL)
-        fprint("Switching orjson -> ujson   !! pyproject.toml is modified !!", color_code=RED)
-        subprocess.run(["uv", "add", "ujson"], check=True)
-    except subprocess.CalledProcessError:
-        pass
+    """Remove orjson and force installing ujson instead"""
+    subprocess.run(["uv", "-q", "pip", "uninstall", "orjson"], check=False, capture_output=True)
+    subprocess.run(["uv", "-q", "pip", "install", "ujson"], check=True)
+    fprint("Switched orjson -> ujson")
 
 
 def build_third_party_licenses(exclude=[]):
-    """Collect and build all lincenses found in venv into THIRD_PARTY_LICENSES.txt file"""
+    """Collect and build all licenses found in venv into THIRD_PARTY_LICENSES.txt file"""
     fprint("Building list of third party licenses")
     subprocess.run(["uv", "pip", "install", "pip-licenses"], check=True)
     command = [
         "uv", "run", "pip-licenses",
-        "--ignore-packages " + " ".join(exclude),
+        "--ignore-packages", *exclude,
         "--format=plain-vertical",
         "--no-license-path",
+        "--with-license-file",
         "--output-file=THIRD_PARTY_LICENSES.txt",
     ]
     subprocess.run(command, check=True)
     subprocess.run(["uv", "pip", "uninstall", "pip-licenses", "prettytable", "wcwidth"], check=True)
+    shutil.rmtree("build")
+    sys.exit(0)
 
 
 def get_cython_bins(directory="endcord_cython", startswith=None):
@@ -329,7 +362,7 @@ def find_file_in_venv(lib_name, file_name, silent=False, recurse=False, startswi
                 if (startswith and f.startswith(file_name)) or f == file_name:
                     return os.path.join(root, f)
     if not silent:
-        print(f"{lib_name}/{file_name} not found", flush=True)
+        iprint(f"{lib_name}/{file_name} not found")
     return None
 
 
@@ -350,7 +383,7 @@ def patch_soundcard():
     """
     fprint("Patching soundcard")
     if not os.path.exists(".venv"):
-        print(".venv dir not found", flush=True)
+        iprint(".venv dir not found")
         return
 
     # patch mediafoundation.py
@@ -373,9 +406,9 @@ def patch_soundcard():
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-        print(f"Patched file: {path}", flush=True)
+        iprint(f"Patched file: {path}")
     else:
-        print(f"Nothing to patch in file {path}", flush=True)
+        iprint(f"Nothing to patch in file {path}")
 
     # patch pulseaudio.py
     path = find_file_in_venv("soundcard", "pulseaudio.py")
@@ -398,9 +431,37 @@ def patch_soundcard():
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-        print(f"Patched file: {path}", flush=True)
+        iprint(f"Patched file: {path}")
     else:
-        print(f"Nothing to patch in file {path}", flush=True)
+        iprint(f"Nothing to patch in file {path}")
+
+
+def patch_pystray():
+    """
+    Search for pystray/_util/gtk.py in .venv
+    Replace "finally: return False" in mainloop callback with "except Exception: pass" and "return False".
+    """
+    fprint("Patching pystray")
+    if not os.path.exists(".venv"):
+        iprint(".venv dir not found")
+        return
+
+    path = find_file_in_venv("pystray", "gtk.py", recurse=True)
+    if not path:
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    pattern = re.compile(r"(\n[ \t]*)finally:\s*\n[ \t]*return False\b")
+    if pattern.search(content):   # \1 is indentation spaces and newline
+        replacement = r"\1except:\1    pass\1return False"
+        new_content = pattern.sub(replacement, content)
+        new_content = pattern.sub(replacement, content)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        iprint(f"Patched file: {path}")
+    else:
+        iprint(f"Nothing to patch in file {path}")
 
 
 def compress_emoji():
@@ -409,10 +470,10 @@ def compress_emoji():
     json_path_in = os.path.join("endcord", "emoji.json")
     json_path_out = os.path.join("build", "emoji.json")
     if not os.path.exists(json_path_in):
-        print("emoji.json not found", flush=True)
+        iprint("emoji.json not found")
         return None
     if not os.path.exists("build"):
-        os.mkdir("build")
+        os.makedirs("build", exist_ok=True)
     with open(json_path_in, "r", encoding="utf-8") as f:
         data = json.load(f)
     with open(json_path_out, "w", encoding="utf-8") as f:
@@ -420,9 +481,9 @@ def compress_emoji():
     return json_path_out
 
 
-def toggle_experimental(check_only=False):
-    """Toggle experimental mode"""
-    whitelist = ("endcord" + os.sep, "endcord_cython" + os.sep)
+def toggle_windowed(check_only=False):
+    """Toggle windowed mode"""
+    whitelist = ("endcord" + os.sep, "endcord_cython" + os.sep, "main.py")
     file_list = []
     for path, subdirs, files in os.walk(os.getcwd()):
         subdirs[:] = [d for d in subdirs if not d.startswith(".")]
@@ -439,11 +500,11 @@ def toggle_experimental(check_only=False):
         changed = False
         for num, line in enumerate(lines):
             if line.startswith("import curses"):
-                lines[num] = "from endcord import pgcurses as curses\n"
+                lines[num] = "from endcord import gtkcurses as curses\n"
                 changed = True
                 enable = True
                 break
-            elif line.startswith("from endcord import pgcurses as curses"):
+            elif line.startswith("from endcord import gtkcurses as curses"):
                 lines[num] = "import curses\n"
                 changed = True
                 enable = False
@@ -489,15 +550,14 @@ def toggle_experimental(check_only=False):
                     os.rename(old_name, new_name)
 
     # toggle dependencies
-    experimental_dependencies = ["pygame-ce", "pyperclip", "pystray"]
-    if sys.platform == "linux":
-        experimental_dependencies += ["pygobject"]
+    windowed_deps = load_build_config().get("windowed_deps", [])
     if enable:
-        subprocess.run(["uv", "pip", "install"] + experimental_dependencies, check=True)
-        fprint("Experimental windowed mode enabled!")
+        subprocess.run(["uv", "pip", "install"] + windowed_deps, check=True)
+        patch_pystray()
+        fprint("Windowed mode enabled!")
     else:
-        subprocess.run(["uv", "pip", "uninstall"] + experimental_dependencies, check=True)
-        fprint("Experimental windowed mode disabled!")
+        subprocess.run(["uv", "pip", "uninstall"] + windowed_deps, check=True)
+        fprint("Windowed mode disabled!")
     return not enable
 
 
@@ -549,16 +609,16 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
 def ensure_custom_python(safe, clang, curses):
     """Check if current python is custom built, setup env or build it if not"""
     minor = PYTHON_LAST_SAFE if safe else PYTHON_MAX_MINOR
-    version = f"3.{minor}.{PYTHON_PATCH}"
-    if importlib.util.find_spec("_bz2") is None:
+    version = f"{PYTHON_MAJOR}.{minor}.{PYTHON_PATCH}"
+    if not check_deps("_bz2"):
         return
-    if os.path.exists(".cpython") and os.path.exists(f".cpython/bin/python3.{version.split(".")[1]}"):
+    if os.path.exists(".cpython") and os.path.exists(f".cpython/bin/python{PYTHON_MAJOR}.{version.split(".")[1]}"):
         if os.environ.get("UV", ""):
             if os.environ.get("_CUSTOM_PYTHON_CHECKED"):
                 fprint("Failed starting custom python build, delete .cpython dir and try again")
                 sys.exit(1)
             os.environ["_CUSTOM_PYTHON_CHECKED"] = "1"
-            subprocess.run(["uv", "venv", "--clear", "--python", f".cpython/bin/python3.{minor}"], check=True)
+            subprocess.run(["uv", "venv", "--clear", "--python", f".cpython/bin/python{PYTHON_MAJOR}.{minor}"], check=True)
         os.execvp("uv", ["uv", "run", *sys.argv])
         sys.exit(0)
     else:
@@ -581,93 +641,124 @@ def build_custom_python(version, clang, curses):
     line = None
     first = True
     built_curses = not curses
+    downloading = True
     for line in process.stdout:
+        # print(line.strip("\n"))
         if len(line) > 100:
             continue
-        if line.startswith("Building curses"):
-            print(line.strip().replace("_", "."))
-        if line.startswith("Building Python"):
-            built_curses = True
-            print(line.strip())
         if not built_curses:
+            if line.startswith("Building ncurses"):
+                curses = line.strip().split(" ")[-1].replace("_", ".")
+            elif downloading and "Length" in line and "[application/" in line:
+                curses_size = line.split("(")[1].split(")")[0] if "(" in line else "unknown size"
+                downloading = False
+                iprint(f"Downloading ncurses-{curses}.tar.gz ({curses_size})")
+            elif "checking build system type" in line:
+                iprint("Compiling ncurses shared library")
+            elif line.startswith("Building Python"):
+                built_curses = True
+                downloading = True
             continue
-        elif "Resolving www.python.org" in line:
-            print("Downloading Python source", flush=True)
+        elif downloading and "Length" in line and "[application/" in line:
+            python_size = line.split("(")[1].split(")")[0] if "(" in line else "unknown size"
+            downloading = False
+            iprint(f"Downloading Python-{version}.tgz ({python_size})")
         elif "checking build system type" in line:
-            print("Configuring build system", flush=True)
+            iprint("Configuring build system")
         elif "Building with support for profile generation" in line:
-            print("Compiling instrumented binaries", flush=True)
+            iprint("Compiling instrumented binaries")
         elif "run the profile task to generate the profile information" in line:
-            print("Running tests to generate profile data", flush=True)
+            iprint("Running tests to generate profile data")
         elif "Rebuilding with profile guided optimizations:" in line and first:
             first = False
-            print("Rebuilding with profile guided optimizations", flush=True)
+            iprint("Recompiling with profile guided optimizations")
     process.wait()
     if process.returncode != 0:
         if line:
-            print(line.strip(), flush=True)
+            iprint(line.strip())
         raise subprocess.CalledProcessError(process.returncode, cmd)
+
+
+def run_pip_build_command(command):
+    """Run pip command to build sdist package with selected printed lines"""
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    line = None
+    package_name = "package"
+    for line in process.stdout:
+        # print(line.strip("\n"))
+        if "Downloading" in line:
+            package_name = line.strip().split(" ")[1].split(".tar")[0]
+            iprint(line.strip())
+        elif "Preparing metadata" in line and "started" in line.lower():
+            iprint(f"Building {package_name}")
+        elif "Successfully installed" in line:
+            iprint(line.strip())
+    process.wait()
+    if process.returncode != 0:
+        if line:
+            iprint(line.strip())
+        raise subprocess.CalledProcessError(process.returncode, command)
+
+
+def build_generic_package(package, clang, safe=False):
+    """Build any python C compiled package with custom compiler args to reduce final binary size"""
+    if sys.platform != "linux":
+        return
+    fprint(f"Building {package} with custom compiler args")
+    setup_compiler(clang, safe=safe)
+    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    try:
+        python = ".venv/bin/python" if sys.platform != "win32" else r".venv\Scripts\python.exe"
+        subprocess.run([python, "-m", "pip", "uninstall", "--yes", package], check=False, capture_output=True)
+        run_pip_build_command([python, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", package])
+    except subprocess.CalledProcessError as e:   # fallback
+        iprint(e, flush=True)
+        fprint(f"Failed building {package}, falling back to default prebuilt version", color=RED, prefix="")
+        subprocess.run(["uv", "-q", "pip", "install", package], check=True)
+    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True)
 
 
 def build_numpy_lite(clang):
     """Build numpy without openblass to reduce final binary size"""
     if sys.platform != "linux":
-        fprint("Skipping numpy lite (no openblas) building on non-linux platforms")
+        fprint("Skipping numpy-lite (no openblas) building on non-linux platforms")
         return
-    fprint("Building numpy-lite (no openblas)")
+    fprint("Building numpy-lite (no openblas) with custom compiler args")
     check_openblas_cmd = [
         "uv", "run", "python", "-c",
         "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))",
     ]   # check if numpy without blas is not already installed
     value = subprocess.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
     if not value or not int(value):
-        print("Numpy-lite (no openblas) is already built", flush=True)
+        iprint("Numpy-lite (no openblas) is already built locally")
         return
     setup_compiler(clang)
-    subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
     try:
-        if sys.platform == "win32":
-            python_interpreter = r".venv\Scripts\python.exe"
-        else:
-            python_interpreter = ".venv/bin/python"
-        subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", "numpy"], check=True)
-        subprocess.run([
-            python_interpreter, "-m", "pip", "install", "numpy",
+        python = ".venv/bin/python" if sys.platform != "win32" else r".venv\Scripts\python.exe"
+        subprocess.run([python, "-m", "pip", "uninstall", "--yes", "numpy"], check=False, capture_output=True)
+        run_pip_build_command([
+            python, "-m", "pip", "install", "numpy",
             "--no-cache-dir",
             "--no-binary=:all:",
             "--config-settings=setup-args=-Dblas=none",
             "--config-settings=setup-args=-Dlapack=none",
             "--config-settings=setup-args=-Dallow-noblas=true",
-        ], check=True)
+        ])
     except subprocess.CalledProcessError as e:   # fallback
         print(e, flush=True)
-        print("Failed building numpy-lite (no openblas), faling back to default numpy", flush=True)
-        subprocess.run(["uv", "pip", "install", "numpy"], check=True)
+        fprint("Failed building numpy-lite, faling back to default numpy", color=RED, prefix="")
+        subprocess.run(["uv", "-q", "pip", "install", "numpy"], check=True)
     value = subprocess.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
     if value and int(value):
-        print("Verification failed: numpy after building is still linked to openblas!", flush=True)
-    subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
-
-
-def build_package(package, clang, safe=False):
-    """Build any python C compiled package with custom compiler args to reduce final binary size"""
-    if sys.platform != "linux":
-        return
-    fprint(f"Building {package} with custom compiler args")
-    setup_compiler(clang, safe=safe)
-    subprocess.run(["uv", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
-    try:
-        if sys.platform == "win32":
-            python_interpreter = r".venv\Scripts\python.exe"
-        else:
-            python_interpreter = ".venv/bin/python"
-        subprocess.run([python_interpreter, "-m", "pip", "uninstall", "--yes", package], check=True)
-        subprocess.run([python_interpreter, "-m", "pip", "install", "--no-cache-dir", "--no-binary=:all:", package], check=True)
-    except subprocess.CalledProcessError as e:   # fallback
-        print(e, flush=True)
-        print(f"Failed building {package}, faling back to default prebuilt version", flush=True)
-        subprocess.run(["uv", "pip", "install", package], check=True)
-    subprocess.run(["uv", "pip", "uninstall", "pip"], check=True)
+        iprint("Verification failed: numpy after building is still linked to openblas!", color=RED)
+    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True)
 
 
 def build_cython(clang, mingw):
@@ -689,8 +780,8 @@ def build_cython(clang, mingw):
     )
     for line in process.stdout:
         line_clean = line.rstrip("\n")
-        if len(line_clean) < 100 and not any(s in line_clean for s in ("Cythonizing", "Compiling", "creating", "  warn(")):
-            print(line_clean, flush=True)
+        if len(line_clean) < 100 and not any(s in line_clean for s in ("Cythonizing", "Compiling", "creating", "  warn(", "build_ext")):
+            fprint(line_clean.capitalize(), flush=True)
     process.wait()
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd)
@@ -701,37 +792,25 @@ def build_cython(clang, mingw):
     shutil.rmtree("build")
 
 
-def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
+def build_with_pyinstaller(level, onedir, print_cmd=False):
     """Build with pyinstaller"""
-    if not print_cmd:
-        if check_media_support():
-            pkgname = PKGNAME
-            fprint("Media support is enabled")
-        else:
-            pkgname = f"{PKGNAME}-lite"
-            fprint("Media support is disabled")
-        emoji_path = compress_emoji()
-    else:
-        pkgname = PKGNAME
-        emoji_path = "endcord/emoji.json"
-
+    pkgname = PKGNAME if level == "FULL" else f"{PKGNAME}-{level.lower()}"
+    emoji_path = compress_emoji() if not print_cmd else "endcord/emoji.json"
     mode = "--onedir" if onedir else "--onefile"
     hidden_imports = ["--hidden-import=uuid"]
     exclude_imports = [
         "--exclude-module=cython",
         "--exclude-module=zstandard",
     ]
-    package_data = ["--collect-data=soundcard"]
-
-    # options
-    if nosoundcard:
-        exclude_imports.append("--exclude-module=soundcard")
-        package_data.remove("--collect-data=soundcard")
+    package_data = []
+    if level not in ("MINI", "MICRO"):
+        package_data += ["--collect-data=soundcard"]
 
     # platform-specific
     if sys.platform == "linux":
         options = []
-        hidden_imports += ["--hidden-import=soundcard.pulseaudio"]
+        if level not in ("MINI", "MICRO"):
+            hidden_imports += ["--hidden-import=soundcard.pulseaudio"]
         add_data = [f"--add-data={emoji_path}:."]
     elif sys.platform == "win32":
         options = ["--console"]
@@ -764,7 +843,7 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}", file=sys.stderr)
+        fprint(f"Build failed: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(e.returncode)
 
     # cleanup
@@ -777,35 +856,26 @@ def build_with_pyinstaller(onedir, nosoundcard, print_cmd=False):
     fprint(f"Finished building {pkgname}")
 
 
-def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd=False, experimental=False):
+def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False, windowed=False):
     """Build with nuitka"""
     clang = clang or os.environ.get("CC") == "clang"
+    pkgname = PKGNAME if level == "FULL" else f"{PKGNAME}-{level.lower()}"
+    emoji_path = compress_emoji() if not print_cmd else "endcord/emoji.json"
     if not print_cmd:
-        full = check_media_support()
-        if full:
-            pkgname = PKGNAME
-            fprint("ASCII media support is enabled")
-        else:
-            pkgname = f"{PKGNAME}-lite"
-            fprint("ASCII media support is disabled")
-
-        if compile_deps:
+        if compile_deps and level not in ("MINI", "MICRO"):
             build_numpy_lite(clang)
             if check_venv_file_size("Crypto", "_chacha", 10000):
-                build_package("pycryptodome", clang, safe=True)
+                build_generic_package("pycryptodome", clang, safe=True)
             else:
-                print("Pycryptodome is already compiled locally", flush=True)
-            if full:
+                fprint("Building pycryptodome with custom compiler args")
+                iprint("Pycryptodome is already built locally")
+            if level == "FULL":
                 if check_venv_file_size("pynacl", "_sodium.", 1000000):
-                    build_package("pynacl", clang)
+                    fprint("Building pycryptodome with custom compiler args")
+                    build_generic_package("pynacl", clang)
                 else:
-                    print("PyNaCl is already compiled locally", flush=True)
+                    iprint("PyNaCl is already built locally")
         patch_soundcard()
-        emoji_path = compress_emoji()
-    else:
-        pkgname = PKGNAME
-        emoji_path = "endcord/emoji.json"
-    full = pkgname == PKGNAME
     static_python = False   # might be useful with custom python build
 
     mode = "standalone" if onedir else "onefile"
@@ -821,26 +891,25 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd
         "--nofollow-import-to=tkinter",
         "--nofollow-import-to=zstandard",
     ]
-    package_data = ["--include-package-data=soundcard"]
+    package_data = []
     add_data = [f"--include-data-files={emoji_path}=emoji.json"]
 
     setup_compiler(clang)
 
     # options
-    if nosoundcard:
-        exclude_imports.append("--nofollow-import-to=soundcard")
-        package_data.remove("--include-package-data=soundcard")
-    if full:
+    if level == "FULL":
         hidden_imports += [
             "--include-module=av.sidedata.encparams",
             "--include-module=av.utils",
         ]
+    if level not in ("MINI", "MICRO"):
+        package_data += ["--include-package-data=soundcard"]
 
     # platform-specific
     if sys.platform == "linux":
         options = []
-        if experimental:
-            options.append("--include-package=gi._enum")
+        if windowed:
+            options += ["--include-package=gi._enum"]
             hidden_imports += ["--include-package=ctypes.util"]
     elif sys.platform == "win32":
         options = ["--assume-yes-for-downloads"]
@@ -886,7 +955,7 @@ def build_with_nuitka(onedir, clang, mingw, nosoundcard, compile_deps, print_cmd
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}", file=sys.stderr)
+        fprint(f"Build failed: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(e.returncode)
 
     # cleanup
@@ -903,6 +972,7 @@ def parser():
     parser = argparse.ArgumentParser(
         prog="build.py",
         description=f"build script for {PKGNAME}",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser._positionals.title = "arguments"
     parser.add_argument(
@@ -916,9 +986,19 @@ def parser():
         help="script prefers clang if its installed, set this to not use it, or change CC and LD env vars",
     )
     parser.add_argument(
-        "--lite",
-        action="store_true",
-        help="change environment to build or run endcord-lite, by deleting voice call and media support depenencies",
+        "--level",
+        type=str,
+        default="FULL",
+        choices=["FULL", "MEDIUM", "LITE", "MINI", "MICRO"],
+        help=(
+            'Change environment to build a specified level of endcord.\n'
+            'Options:\n'
+            '  "FULL"   - Has media and voice call support.\n'
+            '  "MEDIUM" - No media and voice call support, but can display images.\n'
+            '  "LITE"   - No image, media, or voice call support.\n'
+            '  "MINI"   - Like LITE minus sound unless paplay/pw-cat commands are available and no voice recording\n'
+            '  "MICRO"  - Max compatibility on legacy/weird systems. Like MICRO minus QR code and email login.'
+        ),
     )
     parser.add_argument(
         "--onedir",
@@ -941,19 +1021,14 @@ def parser():
         help="do not compile dependencies with custom compiler flags (compiled only in nuitka mode)",
     )
     parser.add_argument(
-        "--nosoundcard",
-        action="store_true",
-        help="build without soundcard dependency, for super lightewight build, will enable lite mode, and notifications sound wont work unless pw-cat (pipewire) or paplay (pulseaudio) is installed on linux, and not at all on windows",
-    )
-    parser.add_argument(
         "--mingw",
         action="store_true",
         help="use mingw instead msvc on windows, has no effect on Linux and macOS or with --clang flag",
     )
     parser.add_argument(
-        "--toggle-experimental",
+        "--toggle-windowed",
         action="store_true",
-        help="toggle experimental mode and exit",
+        help="toggle windowed mode and exit",
     )
     parser.add_argument(
         "--freethreaded",
@@ -963,7 +1038,7 @@ def parser():
     parser.add_argument(
         "--safe",
         action="store_true",
-        help=f"Use python 3.{PYTHON_LAST_SAFE} which is known to build endcord without any issues",
+        help=f"Use python 3.{PYTHON_LAST_SAFE} which is known to build endcord without any issues (disables --custom-python)",
     )
     parser.add_argument(
         "--nobuild",
@@ -998,9 +1073,9 @@ if __name__ == "__main__":
 
     if args.print_cmd:
         if args.nuitka:
-            build_with_nuitka(args.onedir, clang, args.mingw, args.nosoundcard, print_cmd=True)
+            build_with_nuitka(args.level, args.onedir, clang, args.mingw, print_cmd=True)
         else:
-            build_with_pyinstaller(args.onedir, args.nosoundcard, print_cmd=True)
+            build_with_pyinstaller(args.level, args.onedir, print_cmd=True)
         sys.exit(0)
 
     if os.path.exists("build"):   # ensure clean build env
@@ -1012,39 +1087,28 @@ if __name__ == "__main__":
     if check_python():
         version, freethreaded = ensure_python(args.freethreaded, args.safe)
         if version:
-            if freethreaded:
-                force_ujson()
-            os.execvp("uv", ["uv", "run", "-p", version, *sys.argv])
+            os.execvp("uv", ["uv", "run", "-p", "--no-sync", version, *sys.argv] + (["--freethreaded"] if freethreaded else []))
         else:
-            os.execvp("uv", ["uv", "run", *sys.argv])
+            os.execvp("uv", ["uv", "run", "--no-sync", *sys.argv])
         sys.exit(0)
 
     if args.freethreaded:
         force_ujson()
 
-    if args.toggle_experimental:
-        toggle_experimental()
+    if args.toggle_windowed:
+        toggle_windowed()
         sys.exit(0)
-    if args.lite or args.nosoundcard:
-        remove_media()
-    else:
-        add_media()
+    setup_dependencies(args.level, not args.nobuild)
 
-    if not args.nobuild:
-        check_dev()
-
-    experimental = toggle_experimental(check_only=True)
-    if experimental:
-        experimental_dependencies = ["pygame-ce", "pyperclip", "pystray"]
-        if sys.platform == "linux":
-            experimental_dependencies += ["pygobject"]
-        subprocess.run(["uv", "pip", "install"] + experimental_dependencies, check=True)
-        fprint("Experimental windowed mode enabled!")
+    windowed = toggle_windowed(check_only=True)
+    if windowed:
+        subprocess.run(["uv", "pip", "install"] + load_build_config().get("windowed_deps", []), check=True)
+        fprint("Windowed mode enabled!")
 
     enable_extensions(enable=(not args.disable_extensions))
 
     if sys.platform not in ("linux", "win32", "darwin"):
-        print(f"This platform is not supported: {sys.platform}", file=sys.stderr)
+        fprint(f"This platform is not supported: {sys.platform}", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
 
     if args.nocython:
@@ -1052,21 +1116,21 @@ if __name__ == "__main__":
         for file in bins:
             os.remove(os.path.join("endcord_cython", file))
         fprint("Deleted compiled cython extensions")
-    else:
+    elif not args.nobuild:
         try:
             build_cython(clang, args.mingw)
         except Exception as e:
             fprint(f"Failed building cython extensions, error: {e}")
 
     if args.build_licenses:
-        exclude = ["ordered-set", "zstandard", "altgraph", "packaging", "pyinstaller-hooks-contrib", "packaging", "setuptools"]
+        exclude = ["cython", "altgraph", "packaging", "pyinstaller", "pyinstaller-hooks-contrib", "packaging", "setuptools"]
         build_third_party_licenses(exclude)
 
     if not args.nobuild:
         if args.nuitka:
-            build_with_nuitka(args.onedir, clang, args.mingw, args.nosoundcard, compile_deps, experimental=experimental)
+            build_with_nuitka(args.level, args.onedir, clang, args.mingw, compile_deps, windowed=windowed)
         else:
-            build_with_pyinstaller(args.onedir, args.nosoundcard)
+            build_with_pyinstaller(args.level, args.onedir)
 
     enable_extensions(enable=True, silent=True)
 

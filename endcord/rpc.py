@@ -10,7 +10,6 @@ import struct
 import sys
 import threading
 import time
-import traceback
 
 if sys.platform == "win32":
     import pywintypes
@@ -349,8 +348,8 @@ class RPC:
                 if status == 2:   # not found
                     self.not_exist.append(app_id)
                 logger.warning("Failed retrieving RPC app data from discord")
-        except BaseException as e:
-            logger.error("".join(traceback.format_exception(e)))
+        except Exception:
+            logger.exception("RPC server error:")
 
         # remove presence from list
         if app_id:

@@ -233,7 +233,7 @@ def parse_time(text):
 
 
 def read_value(text, idx):
-    """Read quited and unquoted value from string index"""
+    """Read quoted and unquoted value from string index"""
     length = len(text)
     # quoted value
     if idx < length and text[idx] == '"':
@@ -498,7 +498,7 @@ def app_command_string(text, my_commands, guild_commands, permitted_guild_comman
 
 def split_command_binding(text):
     """Split string into multiple strings on ";" and ignore whitespace and newline"""
-    # Using null chaacter as placeholder
+    # Using null character as placeholder
     parts = text.replace("\\;", "\x00").split(";")
     return [p.replace("\x00", ";").strip() for p in parts]
 
@@ -871,7 +871,7 @@ def command_string(text):
             cmd_type = 0
             cmd_args = {"value": 1}
 
-    # 47 - TOGGLE_BLOCKED_MESSGAES
+    # 47 - TOGGLE_BLOCKED_MESSAGES
     elif text_lower.startswith("toggle_blocked_messages"):
         cmd_type = 47
 
@@ -883,7 +883,7 @@ def command_string(text):
     elif text_lower.startswith("voice_accept_call"):
         cmd_type = 49
 
-    # 50 - VOICE_LEAVE_VALL
+    # 50 - VOICE_LEAVE_CALL
     elif text_lower.startswith("voice_leave_call"):
         cmd_type = 50
 

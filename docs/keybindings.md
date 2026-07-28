@@ -12,8 +12,10 @@
 ### Input line
 - `Left/Right` - character left/right
 - `Ctrl+Left/Right` - word left/right
-- `Shift+Left/Right` - select left/right
+- `HOME/END` - go to start/end of input line
+- `Shift+Left/Right` - select character left/right
 - `Ctrl+Shift+Left/Right` - select word left/right
+- `Shift+HOME/END` - select to start/end of input line
 - `Ctrl+N` - Insert newline in input line (warning `Shift+Enter` doesn't work in terminals)
 - `Alt+Z` - Undo
 - `Alt+Shift+Z` - Redo
@@ -116,7 +118,7 @@ Some keybindings are used by terminals or OS itself, so they are by default rebo
 - Popup window - select item
 - Member list - view member profile
 - Input line - select a word
-- Tabs (subtitle) line - if tab is temprary (italics) will be made permanent
+- Tabs (subtitle) line - if tab is temporary (italics) will be made permanent
 
 ### Double click in chat on:
 - Message time - start replying to message
@@ -128,11 +130,12 @@ Some keybindings are used by terminals or OS itself, so they are by default rebo
 - User mention - view profile of mentioned user
 - Channel - go to that channel
 - Custom discord emoji - view that emoji in media player
+- Message attachment - download attachment
 - Inline image embed - open / play media
 
 ### Other
 - Scroll up/down in all windows
-- Middle click on chaneel in tree to add it to new tab
+- Middle click on channel in tree to add it to new tab
 - Middle click on tab (in subtitle line) to remove it
 
 On Windows, double click isn't working, use triple click instead.
@@ -145,7 +148,6 @@ Key combinations are saved as custom syntax (very similar to emacs), that can be
 Syntax: `Mod1-Mod2-Mod3-Key`. Mod2 and Mod3 are optional.  
 Modifiers: `C` - Ctrl, `M` - Alt, `S` - Shift. Keys can be uppercase and lowercase, uppercase doesn't indicate shift.  
 Special keys: `UP`/`DOWN`/`LEFT`/`RIGHT` - arrow keys, `"ENTER"`.  
-`Alt+Key` codes are stored as string with format: `"ALT+[KEY]"`, where `[KEY]` is integer.  
 `Ctrl+Shift+Key` combinations are not supported by most terminal emulators, but `Alt+Shift+Key` are.  
 Keybindings can also be chained like this (maximum 2 bindings in chain, separated with space ` `):  
 `"C-y M-e"` which means: press `Ctrl+Y` then `Alt+E`, or `"C-y S-UP"`...  
@@ -164,6 +166,7 @@ Command keybinding is added like this: `"C-x" = "send_message Hello World!"`. Th
 Note that all bindings must be inside quotes, even a single integer. To use same binding as standard keybindings, set standard keybinding to `None`.  
 Alongside commands, standard keybinding names can be used here too. Eg. `"C-x" = "tree_up; tree_up"` will "press" tree_up binding twice.  
 To execute multiple commands in a sequence, type them separated with `;` character. To use actual `;` character in command type it as `\;`.  
+To send raw keycode, prefix it with `*`. Eg. `"tree_down; *C-ENTER; *H; *I; *ENTER"`.  
 Special commands available only for command-bindings are documented in [Commands list](commands.md#command-bindings-only-commands).  
 
 

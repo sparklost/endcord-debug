@@ -49,11 +49,11 @@ def install_extension(url, cli=False, prefer_tag=None, update=False, proxy=None)
                 setup_extension(ext_path)
                 return 1, "Extension installed successfully. Restart endcord to load it"
             if status == 2:
-                return 4, "Error occured. See log for more info"
+                return 4, "Error occurred. See log for more info"
             if status == 3:
                 return 3, "Could not find this extension"
             if status == 4:
-                return 4, "Error occured. See log for more info"
+                return 4, "Error occurred. See log for more info"
             return None, ""
 
         # pull/clone with git command
@@ -85,7 +85,7 @@ def install_extension(url, cli=False, prefer_tag=None, update=False, proxy=None)
         logger.error(e.stderr.decode() if e.stderr else str(e))
     except RuntimeError as e:
         logger.error(f"Install extension error: {e}")
-    return 4, "Error occured. See log for more info"
+    return 4, "Error occurred. See log for more info"
 
 
 def setup_extension(ext_path):
@@ -105,7 +105,7 @@ def ver_to_tuple(v):
 
 
 def check_for_update(current_version, owner, repo, proxy=None):
-    """Chek specified repo for update"""
+    """Check specified repo for update"""
     try:
         connection = peripherals.get_connection("api.github.com", timeout=10, proxy=proxy)
         connection.request("GET", f"/repos/{owner}/{repo}/releases/latest", headers=HEADER)
@@ -194,7 +194,7 @@ def download_gh_repo(owner, repo, save_path, tag=None, proxy=None):
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader("Location")
             if not location:
-                logger.error("Redirect without lcation")
+                logger.error("Redirect without location")
                 return 4
             redirects += 1
             connection.close()

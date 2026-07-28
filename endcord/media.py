@@ -2,7 +2,6 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-import importlib.util
 import logging
 import os
 import re
@@ -15,9 +14,16 @@ import time
 import traceback
 from queue import Queue
 
-import av
-import filetype
 from PIL import Image, ImageEnhance
+
+from endcord import minimagic
+
+try:
+    import av
+    video_support = True
+except ImportError:
+    video_support = False
+
 
 # safely import soundcard, in case there is no sound system
 try:
@@ -38,9 +44,9 @@ match_youtube = re.compile(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch
 
 def get_mime(path):
     """Try to get mime type of the file"""
-    kind = filetype.guess(path)
-    if kind:
-        return kind.mime
+    mime = minimagic.guess(path)
+    if mime:
+        return mime
     return "unknown/unknown"
 
 
@@ -210,12 +216,14 @@ def img_to_term_block_truecolor(data, bg_color, screen_width, screen_height, img
 
 
 # use cython if available, ~5 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.media"):
+try:
     from endcord_cython.media import (
         img_to_term,
         img_to_term_block,
         img_to_term_block_truecolor,
     )
+except ImportError:
+    pass
 
 # get speaker
 if have_soundcard:
@@ -270,7 +278,7 @@ class TerminalMedia():
         self.video_time = 0
         self.video_h, self.video_w = None, None
         self.frame_h, self.frame_w = None, None
-        self.screen_h, self.screen_w = terminal_utils.get_size()
+        self.screen_height, self.screen_width = 0, 0
         self.img = None
         self.ui = ui
         self.ui_line = None
@@ -320,8 +328,27 @@ class TerminalMedia():
         self.frame_h, self.frame_w = height, width
 
 
+    def calculate_image_size_anim(self, img_h, img_w):
+        """Calculate image size for video player so it fits the screen area (image that will be used in img_to_term methods)"""
+        screen_height, screen_width = terminal_utils.get_size()
+        height = screen_height * (2 if self.use_blocks else 1)
+        width = screen_width
+        wpercent = width / (img_w * (self.font_ratio_block if self.use_blocks else self.font_ratio))
+        hsize = int(img_h * wpercent)
+        if hsize > height:
+            hpercent = height / img_h
+            wsize = int(img_w * hpercent * (self.font_ratio_block if self.use_blocks else self.font_ratio))
+            width = wsize
+        else:
+            height = hsize
+        if self.use_blocks:
+            height &= ~1   # must be even height
+        self.screen_height, self.screen_width = screen_height, screen_width
+        self.frame_h, self.frame_w = height, width
+
+
     def pil_img_to_term(self, img, remove_alpha=True):
-        """Convert pillow image to ascii art and display it in terminal with media controls of needed"""
+        """Convert pillow image to ascii art and display it in terminal with media controls if needed"""
         # scale image preserving aspect ratio
         if self.frame_h:
             screen_height, screen_width = self.screen_height, self.screen_width
@@ -402,7 +429,7 @@ class TerminalMedia():
             img = background
 
         if self.truecolor:
-            # ensure ts rgb
+            # ensure its rgb
             img = img.convert("RGB")
         else:
             # apply xterm256 palette
@@ -436,46 +463,64 @@ class TerminalMedia():
 
 
     def play_img(self, img_path):
-        """
-        Convert image to colored ascii art and draw it on terminal.
-        If image is animated (eg apng) send it to play_anim instead.
-        """
+        """Draw any image in terminal. If image is animated (eg apng) send it to play_animated instead. """
         img = Image.open(img_path)
         if hasattr(img, "is_animated") and img.is_animated:
             self.media_type = "gif"
-            self.play_anim(img_path)
+            self.play_animated(img_path)
             return
         self.hide_ui()
         self.pil_img_to_term(img)
         while self.run:
             h, w = terminal_utils.get_size()
-            if self.screen_h != h or self.screen_h != w:
-                self.screen_h, self.screen_w = h, w
+            if self.screen_height != h or self.screen_height != w:
+                self.screen_height, self.screen_width = h, w
                 self.pil_img_to_term(img)
             time.sleep(0.1)
         self.stop_playback()
 
 
-    def play_anim(self, gif_path):
-        """Convert animated image to colored ascii art and draw it in terminal"""
+    def play_animated(self, gif_path):
+        """Draw animated image in terminal"""
         self.hide_ui()
+        self.screen_height, self.screen_width = 0, 0
         gif = Image.open(gif_path)
-        frame = 0
+        img_w, img_h = gif.size
+
+        frame_duration = gif.info.get("duration", 100) / 1000
         loop = bool(gif.info.get("loop", 1))
+        frame = 0
         while self.playing:
+            start_time = time.time()
+
+            h, w = terminal_utils.get_size()
+            if self.screen_height != h or self.screen_width != w:
+                self.calculate_image_size_anim(img_h, img_w)
+                frames = []
+                try:
+                    gif.seek(0)
+                    while True:
+                        frame_canvas = Image.new("RGB", gif.size)
+                        frame_canvas.paste(gif)
+                        frames.append(frame_canvas.resize((self.frame_w, self.frame_h), Image.Resampling.LANCZOS))
+                        gif.seek(gif.tell() + 1)
+                except EOFError:
+                    pass
+                if not frames:
+                    break
+
+            img = frames[frame]
             try:
-                start_time = time.time()
-                frame_duration = gif.info["duration"] / 1000
-                gif.seek(frame)
-                img = Image.new("RGB", gif.size)
-                img.paste(gif)
                 self.pil_img_to_term(img, remove_alpha=False)
-                frame += 1
-                time.sleep(max(frame_duration - (time.time() - start_time), 0))
-            except EOFError:
+            except IndexError:
+                pass
+
+            frame += 1
+            if frame >= len(frames):
                 if loop:
                     break
                 frame = 0
+            time.sleep(max(frame_duration - (time.time() - start_time), 0))
 
 
     def play_audio(self, path, loop=False, loop_delay=0.7, loop_max=60):
@@ -528,6 +573,7 @@ class TerminalMedia():
     def stop_playback(self):
         """Stop all playbacks immediately"""
         self.clear_queues()
+        self.screen_height, self.screen_width = 0, 0
         self.pause = False
         self.run = False
         self.playing = False
@@ -570,7 +616,7 @@ class TerminalMedia():
                 except IndexError:
                     pass
                 h, w = terminal_utils.get_size()
-                if self.screen_h != h or self.screen_w != w:
+                if self.screen_height != h or self.screen_width != w:
                     self.calculate_image_size()
             if audio_queue.qsize() >= 3 or no_audio:
                 time.sleep(max(frame_duration - (time.time() - start_time), 0))
@@ -578,11 +624,15 @@ class TerminalMedia():
                 time.sleep(0.1)
 
 
-    def play_video(self, path):
+    def play_video(self, path, loop=False):
         """Decode video and audio frames and manage queues"""
+        if loop:
+            self.ui = False
         if self.ui:
             self.show_ui()
         self.seek = None
+        self.screen_height, self.screen_width = 0, 0
+        self.clear_queues()
 
         container = av.open(path)
         self.ended = False
@@ -615,36 +665,42 @@ class TerminalMedia():
                 audio_ready.clear()
 
         # prepare video
-        video_thread = threading.Thread(target=self.video_player, args=(self.video_queue, self.audio_queue, frame_duration, not(have_audio)), daemon=True)
+        video_thread = threading.Thread(target=self.video_player, args=(self.video_queue, self.audio_queue, frame_duration, not (have_audio)), daemon=True)
         video_thread.start()
 
-        num = 0
-        for frame in container.decode():
-            if self.seek is not None:
-                container.seek(int(self.seek / video_stream.time_base), stream=video_stream)
-                self.video_time = self.seek
-                self.seek = None
+        while self.playing:
+            num = 0
+            for frame in container.decode():
+                if self.seek is not None:
+                    container.seek(int(self.seek / video_stream.time_base), stream=video_stream)
+                    self.video_time = self.seek
+                    self.seek = None
+                    if self.pause_after_seek:
+                        self.pause_after_seek = False
+                        self.pause = True
+                        self.ui_line = self.build_ui_string()
+                        self.show_ui()
+                    continue
+                if not self.playing:
+                    container.close()
+                    break
+                while self.pause:
+                    time.sleep(0.1)
                 if self.pause_after_seek:
-                    self.pause_after_seek = False
-                    self.pause = True
-                    self.ui_line = self.build_ui_string()
-                    self.show_ui()
-                continue
-            if not self.playing:
-                container.close()
+                    continue
+                if isinstance(frame, av.audio.frame.AudioFrame) and have_audio:
+                    self.audio_queue.put(frame)
+                if isinstance(frame, av.video.frame.VideoFrame):
+                    if num == frame_index:   # limit fps
+                        self.video_queue.put(frame.reformat(height=self.frame_h, width=self.frame_w))
+                        num = 0
+                    num += 1
+                    self.video_time += frame_duration
+            if loop and self.playing:
+                container.seek(0)
+                self.video_time = 0
+            else:
                 break
-            while self.pause:
-                time.sleep(0.1)
-            if self.pause_after_seek:
-                continue
-            if isinstance(frame, av.audio.frame.AudioFrame) and have_audio:
-                self.audio_queue.put(frame)
-            if isinstance(frame, av.video.frame.VideoFrame):
-                if num == frame_index:   # limit fps
-                    self.video_queue.put(frame.reformat(height=self.frame_h, width=self.frame_w))
-                    num = 0
-                num += 1
-                self.video_time += frame_duration
 
         self.audio_queue.put(None)
         self.video_queue.put(None)
@@ -673,11 +729,11 @@ class TerminalMedia():
             logger.warning("Cant play youtube link, yt-dlp path is invalid")
 
 
-    def play(self, path, hint=None):
+    def play(self, path, hint=None, loop=False):
         """Select runner based on file type"""
         if not path:
             return
-        if not os.path.exists(path):
+        if not path.startswith("http") and not os.path.exists(path):
             return
         if os.path.isdir(path):
             return
@@ -695,8 +751,12 @@ class TerminalMedia():
             if yt_match:
                 self.play_youtube(yt_match.group())
             elif "https://" in path:
+                if not video_support:
+                    self.run = False
+                    self.playing = False
+                    return True
                 self.media_type = "video"
-                self.start_ui_thread()
+                self.start_ui_thread(loop)
                 self.play_video(path)
             else:
                 mime = get_mime(path).split("/")
@@ -705,18 +765,26 @@ class TerminalMedia():
                 if mime[0] == "image":
                     if mime[1] == "gif":
                         self.media_type = "gif"
-                        self.play_anim(path)
+                        self.play_animated(path)
                     else:
                         self.media_type = "img"
                         self.play_img(path)
                 elif mime[0] == "video":
+                    if not video_support:
+                        self.run = False
+                        self.playing = False
+                        return True
                     self.media_type = "video"
-                    self.start_ui_thread()
-                    self.play_video(path)
+                    self.start_ui_thread(loop)
+                    self.play_video(path, loop)
                 elif mime[0] == "audio":
+                    if not video_support:
+                        self.run = False
+                        self.playing = False
+                        return True
                     self.media_type = "audio"
-                    self.start_ui_thread()
-                    self.play_audio(path)
+                    self.start_ui_thread(loop)
+                    self.play_audio(path, loop=loop)
                 else:
                     logger.warning(f"Unsupported media format: {mime}")
                     self.run = False
@@ -726,7 +794,7 @@ class TerminalMedia():
             while self.run:   # dont exit when video ends
                 time.sleep(0.2)
         except Exception as e:
-            logger.error("".join(traceback.format_exception(e)))
+            logger.exception("Error playing media:")
             if self.external:
                 print("".join(traceback.format_exception(e)))
         terminal_utils.leave_tui()
@@ -780,9 +848,9 @@ class TerminalMedia():
             self.show_ui()
 
 
-    def start_ui_thread(self):
+    def start_ui_thread(self, init_hidden=True):
         """Start UI drawing thread"""
-        self.ui_thread = threading.Thread(target=self.draw_ui_loop, daemon=True)
+        self.ui_thread = threading.Thread(target=self.draw_ui_loop, daemon=True, args=(init_hidden, ))
         self.ui_thread.start()
 
 
@@ -799,12 +867,12 @@ class TerminalMedia():
         self.ui_timer = 30
 
 
-    def draw_ui_loop(self):
+    def draw_ui_loop(self, init_hidden):
         """Continuously draw UI line at bottom of the screen"""
         if self.media_type == "video":
             self.video_duration = 1
             self.video_time = 0
-            self.ui_timer = 0
+            self.ui_timer = 30 if init_hidden else 0
             while self.run:
                 if self.ui_timer <= 25:
                     self.ui_line = self.build_ui_string()
@@ -842,7 +910,7 @@ class TerminalMedia():
         """Handle input from user"""
         while self.run:
             key = terminal_utils.read_key()
-            if key == 27:   # ESCAPE
+            if key == "ESC":
                 self.control_codes(100)
                 self.run = False
             elif key in self.keybindings["media_pause"]:

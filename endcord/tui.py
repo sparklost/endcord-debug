@@ -3,7 +3,6 @@
 # Redistribution of modified versions is not permitted.
 
 import curses
-import importlib.util
 import logging
 import os
 import re
@@ -14,7 +13,7 @@ import time
 from endcord import acs, keybinding, peripherals, utils
 
 logger = logging.getLogger(__name__)
-uses_pgcurses = hasattr(curses, "PGCURSES")
+uses_gtkcurses = hasattr(curses, "GTKCURSES")
 INPUT_LINE_JUMP = 20   # jump size when moving input line
 MAX_DELTA_STORE = 50   # limit undo size
 MIN_ASSIST_LETTERS = 2
@@ -24,7 +23,7 @@ ALLOWED_BEFORE_ASSIST_EXTRA = (" ", "\n", "+", ":", "=")
 APP_COMMAND_ASSIST_TRIEGGER = "/"
 BUTTON4_PRESSED = getattr(curses, "BUTTON4_PRESSED", 0)
 BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0)
-ALT_SPACE = "⠀"   # U+2800 - braille pattern blank
+ALT_SPACE = " " if uses_gtkcurses else " "   # U+2000 - en quad
 match_word = re.compile(r"\w")
 match_split = re.compile(r"[^\w']")
 match_spaces = re.compile(r" {3,}")
@@ -66,7 +65,7 @@ def set_list_item(input_list, item, index):
 
 
 def trim_with_dash(text, dash=True):
-    """Trim spaces from a line and add '─' if there were spaces prepended"""
+    """Trim spaces from a line and add '─' if there were spaces prefixed"""
     if dash and text and text[0] == " ":
         return "─" + text.strip()
     return text.strip()
@@ -80,7 +79,7 @@ def replace_spaces_dash(text):
 def safe_insch(screen, y, x, character, color):
     """
     Safely insert character into line.
-    This is because curses.insch will throw exception for weird charcters.
+    This is because curses.insch will throw exception for weird characters.
     curses.insstr will not, but is slower.
     """
     try:
@@ -88,6 +87,15 @@ def safe_insch(screen, y, x, character, color):
         screen.insch(y, x, character, color)
     except (OverflowError, UnicodeEncodeError):
         screen.insstr(y, x, character, color)
+
+
+def set_cursor(value):
+    """Set hardware cursor shape: 0 - default, 2 - block, 6 - bar"""
+    if uses_gtkcurses:
+        curses.curs_set(value)
+    else:
+        sys.stdout.write(f"\x1b[{value} q")
+        sys.stdout.flush()
 
 
 def select_word(text, index):
@@ -183,9 +191,11 @@ def draw_chat(win_chat, h, w, chat_buffer, chat_format, chat_index, chat_selecte
 
 
 # use cython if available, ~1.5 times faster
-if importlib.util.find_spec("endcord_cython") and importlib.util.find_spec("endcord_cython.tui") and sys.platform != "win32":
+try:
     # windows curses returns negative value from curses.color_pair() causing crash in draw_chat cython function
     from endcord_cython.tui import draw_chat
+except ImportError:
+    pass
 
 
 class TUI():
@@ -198,18 +208,22 @@ class TUI():
         curses.curs_set(0)   # using custom cursor
         curses.mousemask(curses.ALL_MOUSE_EVENTS)
         curses.mouseinterval(0)
-        sys.stdout.write("\x1b[?2004h")   # enable bracketed paste mode
-        sys.stdout.write("\x1b[?1004h")   # enable terminal focus change reporting
-        sys.stdout.flush()
+        if not uses_gtkcurses:
+            sys.stdout.write("\x1b[?2004h")   # enable bracketed paste mode
+            sys.stdout.write("\x1b[?1004h")   # enable terminal focus change reporting
+            sys.stdout.flush()
         try:
             self.backspace_code = 8 if (curses.erasechar() == 8 or "XTERM_VERSION" in os.environ or sys.platform == "win32") else 127
         except Exception:
             self.backspace_code = 127
-        self.fallback_keybinding_parser = config["fallback_keybinding_parser"]
-        if self.fallback_keybinding_parser or sys.platform == "win32":   # raw parser doesnt work well with windows
+        self.fallback_keybinding_parser = (config["fallback_keybinding_parser"] or sys.platform == "win32") and not uses_gtkcurses
+        if self.fallback_keybinding_parser:
             screen.keypad(True)
             self.get_key = keybinding.get_key_fallback
             self.backspace_code = 263 if self.backspace_code == 127 else 8
+        elif uses_gtkcurses:
+            curses.set_nice_exit(True)
+            self.get_key = keybinding.get_key_passthrough
         else:
             screen.keypad(False)
             self.get_key = keybinding.get_key
@@ -217,7 +231,7 @@ class TUI():
         self.last_free_id = 1   # last free color pair id
         self.color_pairs = {}
         self.attrib_map = [0]   # has 0 so its index starts from 1 to be matched with color pairs
-        self.protected_colors = 25   # first N colors that must not be reused
+        self.protected_colors = 26   # first N colors that must not be reused
         self.init_pair((255, -1))   # white on default
         self.init_pair((233, 255))   # black on white
         self.init_pair(config["color_tree_default"])   # 3
@@ -243,12 +257,16 @@ class TUI():
         self.init_pair(config["color_subtitle_line"])
         self.init_pair(config["color_tree_category"])   # 24
         self.init_pair(config["color_tree_server"])
+        self.init_pair(config["color_scrollbar"])
         curses.init_pair(255, config["color_default"][0], config["color_default"][1])   # temporary
         self.default_color = 255
         self.tree_unread_inherit_color = config["color_tree_unseen"][0] == -2 and config["color_tree_unseen"][1] == -2
         self.role_color_start_id = self.last_free_id   # starting id for role colors
         self.keybindings = keybindings
         self.key_map = keybinding.build_key_map(keybindings)
+        if uses_gtkcurses:   # add ctrl+c if its free
+            if "C-c" not in self.key_map:
+                self.key_map["C-c"] = 34
         self.switch_tab_modifier = keybindings["switch_tab_modifier"][0][:-3]
         self.command_bindings = command_bindings
         self.screen = screen
@@ -280,10 +298,20 @@ class TUI():
         self.corner_dr = config["border_corners"][3]
         self.have_scrollbar = config["draw_scrollbar"] and self.bordered
         self.scrollbar_char = config["scrollbar_character"]
+        self.fine_scrollbar = self.scrollbar_char == "┃" and config["color_scrollbar"] == [-1, -1]   # can be drawn at double resolution with this character
         self.hline = config["tree_drop_down_hline"]
         self.tab_spaces = int(config["tab_spaces"])
         self.vim_mode = config["vim_mode"]
         self.swap_assist = config["assist_swap_binding"]
+
+        # switch thin cursor
+        self.bar_cursor = config["cursor_bar"]
+        if self.bar_cursor:
+            curses.curs_set(0)
+            set_cursor(2 if self.vim_mode else 6)
+            screen.leaveok(True)
+            self.screen_update = self.screen_update_barcursor
+            self.set_cursor_color = self.draw_bar_cursor
 
         # select bordered method
         if self.bordered:
@@ -329,7 +357,6 @@ class TUI():
         self.cursor_pos = 0   # on-screen position of cursor
         self.cursor_on = True
         self.enable_autocomplete = False
-        self.bracket_paste = False
         self.spelling_range = [0, 0]
         self.misspelled = []
         self.delta_store = []
@@ -494,6 +521,7 @@ class TUI():
         """Stop all threads and restore terminal"""
         sys.stdout.write("\x1b[?2004l")   # disable bracketed paste mode
         sys.stdout.write("\x1b[?1004l")   # disable terminal focus change reporting
+        sys.stdout.write("\x1b[0 q")   # restore default cursor shape
         self.run = False
         self.need_update.set()
 
@@ -505,6 +533,19 @@ class TUI():
             # here must be delay, otherwise output gets messed up
             with self.lock:
                 time.sleep(self.screen_update_delay)
+                curses.doupdate()
+                self.need_update.clear()
+
+
+    def screen_update_barcursor(self):
+        """Thread that updates drawn content on physical screen"""
+        while self.run:
+            self.need_update.wait()
+            # here must be delay, otherwise output gets messed up
+            with self.lock:
+                time.sleep(self.screen_update_delay)
+                # must draw inlut line on each update so cursor belongs to it
+                self.win_input_line.noutrefresh()
                 curses.doupdate()
                 self.need_update.clear()
 
@@ -688,6 +729,8 @@ class TUI():
 
     def pause_curses(self):
         """Pause curses and disable drawing, releasing terminal"""
+        if uses_gtkcurses:
+            return
         if self.win_member_list:
             with self.lock:
                 h, w = self.win_member_list.getmaxyx()
@@ -696,6 +739,7 @@ class TUI():
                 self.win_member_list.noutrefresh()
                 self.need_update.set()
         self.disable_drawing = True
+        curses.ungetch(27)
         self.hibernate_cursor = 10
         time.sleep(0.2)   # be sure everything is stopped before pausing
         with self.lock:
@@ -708,13 +752,16 @@ class TUI():
 
     def resume_curses(self):
         """Resume curses and enable drawing, capturing terminal"""
+        if uses_gtkcurses:
+            return
         with self.lock:
             curses.reset_prog_mode()
             curses.curs_set(0)
             curses.flushinp()
-            sys.stdout.write("\x1b[?2004h")   # disable bracketed paste mode
-            sys.stdout.write("\x1b[?1004h")   # enable terminal focus change reporting
-            sys.stdout.flush()
+            if not uses_gtkcurses:
+                sys.stdout.write("\x1b[?2004h")   # enable bracketed paste mode
+                sys.stdout.write("\x1b[?1004h")   # enable terminal focus change reporting
+                sys.stdout.flush()
             self.screen.refresh()
             self.disable_drawing = False
             self.resize(redraw_only=True)
@@ -778,7 +825,7 @@ class TUI():
 
 
     def get_chat_scrolled_top(self):
-        """Check wether chat scrolling hit the top end"""
+        """Check whether chat scrolling hit the top end"""
         return self.chat_scrolled_top
 
 
@@ -802,11 +849,7 @@ class TUI():
         """
         if self.assist_start >= 0:
             if self.assist_start < self.input_index - (MIN_ASSIST_LETTERS - 1):
-                if (
-                    self.assist_start != -1 and
-                    self.assist_start < len(self.input_buffer) and
-                    self.input_buffer[self.assist_start-1] in ASSIST_TRIGGERS
-                ):
+                if self.assist_start < len(self.input_buffer) and self.input_buffer[self.assist_start-1] in ASSIST_TRIGGERS:
                     assist_type = ASSIST_TRIGGERS.index(self.input_buffer[self.assist_start-1]) + 1
                     before_assist = ALLOWED_BEFORE_ASSIST_EXTRA if extended else ALLOWED_BEFORE_ASSIST
                     if self.assist_start != 1 and (self.input_buffer[self.assist_start-2] not in before_assist or self.input_buffer[self.assist_start] in (" ", "\n")):
@@ -821,6 +864,8 @@ class TUI():
             if self.assist_start > self.input_index:
                 self.assist_start = -1
                 return None, 100
+        if self.assist_start == -2:
+            return None, 100
         if self.enable_autocomplete and self.input_buffer:
             return self.input_buffer, 7
         if self.input_buffer and self.input_buffer[0] == APP_COMMAND_ASSIST_TRIEGGER:
@@ -836,8 +881,8 @@ class TUI():
 
 
     def get_focused(self):
-        """Get wether chat is focused or not"""
-        if uses_pgcurses:
+        """Get whether chat is focused or not"""
+        if uses_gtkcurses:
             return curses.focused
         return self.focused and not self.disable_drawing
 
@@ -845,6 +890,7 @@ class TUI():
     def set_selected(self, selected, change_amount=0, scroll=True, draw=True):
         """Set selected line and text scrolling"""
         up = self.chat_selected >= selected
+        selected = min(max(selected, -1), len(self.chat_buffer))
         self.chat_selected = selected
         if scroll:
             if self.chat_selected == -1:
@@ -908,7 +954,7 @@ class TUI():
         1 - unreads
         2 - mention
         """
-        if uses_pgcurses:
+        if uses_gtkcurses:
             curses.set_tray_icon(icon)
 
 
@@ -959,8 +1005,14 @@ class TUI():
 
     def set_vim_insert(self, value):
         """Set insert mode for vim mode"""
-        if self.vim_mode:
-            self.insert_mode = value
+        if not self.vim_mode:
+            return
+        self.insert_mode = value
+        if self.bar_cursor:
+            if value:
+                set_cursor(6)
+            else:
+                set_cursor(2)
 
 
     def set_fun(self, fun_lvl):
@@ -997,7 +1049,7 @@ class TUI():
             curses.init_pair(15, bkp_fg, bkp_bg)
             self.red_list = []
 
-        elif self.fun == 3 and not uses_pgcurses:
+        elif self.fun == 3 and not uses_gtkcurses:
             h, w = self.screen.getmaxyx()
             flakes = []
             while self.run and self.fun == 3:
@@ -1036,7 +1088,7 @@ class TUI():
 
 
     def store_input_selected(self):
-        """Get selected text from imput line"""
+        """Get selected text from input line"""
         input_select_start = self.input_select_start
         input_select_end = self.input_select_end
         if input_select_start > input_select_end:
@@ -1223,7 +1275,7 @@ class TUI():
                     status_txt_r += " "
                     status_txt_l = self.status_txt_l[: max(w - (len(status_txt_r) + 2), 0)]
                     status_txt_l = status_txt_l + " " * (w - len(status_txt_l) - len(status_txt_r))
-                    status_format = self.status_txt_l_format[:]
+                    status_format = []   # no format for now in compact mode
                 status_line = status_txt_l + status_txt_r
                 text_l_len = len(status_txt_l)
                 for tab in self.status_txt_r_format:
@@ -1241,7 +1293,7 @@ class TUI():
                 # add spaces to end of line
                 status_txt_l = self.status_txt_l[:w - 1 - 2*self.bordered]
                 status_line = status_txt_l + " " * (w - len(status_txt_l))
-                status_format = self.status_txt_l_format
+                status_format = []   # no format for now in compact mode
 
             if status_format:
                 draw_formatted_line(self.win_status_line, 0, 0, status_line, status_format, self.default_color if self.bordered else 17, self.attrib_map, self.lock)
@@ -1261,12 +1313,18 @@ class TUI():
             if title_txt_r:
                 title_txt_r = title_txt_r[:w - 2*self.bordered]
             title_txt_l = self.title_txt_l
+            title_txt_l_format = self.title_txt_l_format
 
             if self.tree_width < 10:   # merge title tree with left title
                 if self.bordered:
                     title_tree_txt = replace_spaces_dash(trim_with_dash(self.title_tree_txt[:self.tree_width_conf]))
                     title_tree_txt = title_tree_txt + "─" * (self.tree_width_conf - len(title_tree_txt) - 2) + "─"
                     title_txt_l = title_tree_txt + trim_with_dash(title_txt_l)
+                    new_format_l = []
+                    shift = len(title_tree_txt)
+                    for item in title_txt_l_format:
+                        new_format_l.append((item[0], item[1], item[2] + shift, item[3] + shift))
+                    title_txt_l_format = new_format_l
                 else:
                     title_tree_txt = self.title_tree_txt[:self.tree_width_conf-2]
                     title_tree_txt = title_tree_txt + " " * (self.tree_width_conf-2 - len(title_tree_txt)) + " "
@@ -1280,29 +1338,30 @@ class TUI():
                     title_txt_r = title_txt_r[: max(w - (len(title_txt_l) + 5), 0)] + "─" + self.corner_ur
                     title_txt_l = title_txt_l + "─" * (w - len(title_txt_l) - len(title_txt_r))
                     new_format_l = []
-                    for item in self.title_txt_l_format:
+                    for item in title_txt_l_format:
                         new_format_l.append((item[0], item[1], item[2] + 1, min(item[3] + 1, w - 1)))
-                    self.title_txt_l_format = new_format_l
+                    title_txt_l_format = new_format_l
                 else:
                     title_txt_r = title_txt_r[: max(w - (len(title_txt_r) + 2), 0)] + " "
                     title_txt_l = title_txt_l + " " * (w - len(title_txt_l) - len(title_txt_r))
+                    title_txt_l_format = []   # no format for now in compact mode
                 title_line = title_txt_l + title_txt_r
                 text_l_len = len(title_txt_l)
-                title_format = self.title_txt_l_format
-                for tab in self.title_txt_r_format:
-                    title_format.append((tab[0], tab[1], tab[2] + text_l_len, min(tab[3] + text_l_len, w - 1)))
+                title_format = title_txt_l_format
+                for part in self.title_txt_r_format:
+                    title_format.append((part[0], part[1], part[2] + text_l_len, min(part[3] + text_l_len, w - 1)))
 
             elif self.bordered:
                 title_txt_l = replace_spaces_dash(trim_with_dash(title_txt_l[:w - 1 - 2*self.bordered]))
                 title_line = self.corner_ul + title_txt_l + "─" * (w - len(title_txt_l) - 2) + self.corner_ur
                 title_format = []
-                for item in self.title_txt_l_format:
+                for item in title_txt_l_format:
                     title_format.append((item[0], item[1], item[2] + 1, min(item[3] + 1, w - 1)))
 
             else:
                 title_txt_l = title_txt_l[:w - 1 - 2*self.bordered]
                 title_line = title_txt_l + " " * (w - len(title_txt_l))
-                title_format = self.title_txt_l_format
+                title_format = []   # no format for now in compact mode
 
             if title_format:
                 draw_formatted_line(self.win_title_line, 0, 0, title_line, title_format, self.default_color if self.bordered else 12, self.attrib_map, self.lock)
@@ -1392,13 +1451,19 @@ class TUI():
         if not self.win_member_list or self.member_list_width == 2 or not title_line or (not force and title_line == self.member_list_title_text):
             return
         self.member_list_title_text = title_line
+        _, w = self.win_member_list.getmaxyx()
         y, x = self.win_member_list.getbegyx()
         y -= 1
         x += 1
-        parts = title_line.split(" ")
-        self.screen.addstr(y, x, parts[0], curses.color_pair(color if color else self.default_color))
-        if len(parts) > 1:
-            self.screen.addstr(y, x + len(parts[0]), " " + parts[1], curses.color_pair(self.default_color))
+        if self.bordered:
+            parts = title_line.split(" ")
+            self.screen.addstr(y, x, parts[0], curses.color_pair(color if color else self.default_color))
+            second_text = (" " + parts[1]) if len(parts) >= 2 else ""
+            second_text += "─" * (w - len(title_line) - 2)
+            self.screen.addstr(y, x + len(parts[0]), second_text, curses.color_pair(self.default_color))
+        else:   # no format for now in compact mode
+            title_line = title_line + " " * (w - len(title_line) - 2)
+            self.screen.addstr(y, x, title_line, curses.color_pair(12) | self.attrib_map[12])
         self.screen.noutrefresh()
         self.need_update.set()
 
@@ -1420,13 +1485,13 @@ class TUI():
                     # swap so start is always left side
                     selected_start_screen, selected_end_screen = selected_end_screen, selected_start_screen
 
-            # if not line_text:   # only needed if cursor drawing is disabled
-            #     line_text = " "
+            if self.bar_cursor and not line_text:   # clear previous character
+                line_text = " "
 
             # draw
             character = " "
             pos = 0
-            cursor_drawn = False
+            cursor_drawn = bool(self.bar_cursor)
             for pos, character in enumerate(line_text):
                 # cursor in the string
                 if not cursor_drawn and self.cursor_pos == pos:
@@ -1446,7 +1511,7 @@ class TUI():
                         safe_insch(self.win_input_line, 0, pos, character, curses.color_pair(14) | self.attrib_map[14])
             self.win_input_line.insch(0, pos + 1, "\n", curses.color_pair(0))
             # cursor at the end of string
-            if not cursor_drawn and self.cursor_pos >= len(line_text):
+            if (not cursor_drawn and self.cursor_pos >= len(line_text)) or self.bar_cursor:
                 self.show_cursor()
             self.win_input_line.noutrefresh()
             self.need_update.set()
@@ -1496,7 +1561,7 @@ class TUI():
             abs_x = x + w
             total_lines = len(self.chat_buffer)
 
-            # clculate thumb size and pos
+            # calculate thumb size and pos
             if total_lines <= h:
                 thumb_size = 0
                 thumb_pos = 0
@@ -1515,13 +1580,13 @@ class TUI():
                 # draw thumb and border
                 self.screen.vline(y, abs_x, curses.ACS_VLINE, h, curses.color_pair(self.default_color))
                 if thumb_size > 0:
-                    if self.scrollbar_char == "┃":   # can be drawn at double resolution with this character
+                    if self.fine_scrollbar:
                         start_row = thumb_pos_half // 2
                         is_half_step = (thumb_pos_half % 2 != 0)
                         loop_range = thumb_size + 1 if is_half_step else thumb_size
                         for rel_y in range(loop_range):
                             char = ("╽" if rel_y == 0 else "╿" if rel_y == loop_range - 1 else "┃") if is_half_step else "┃"
-                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(self.default_color))
+                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(26))
                     else:
                         for rel_y in range(thumb_size):
                             self.screen.addch(y + rel_y + thumb_pos, abs_x, self.scrollbar_char, curses.color_pair(self.default_color))
@@ -1569,13 +1634,13 @@ class TUI():
             try:
                 self.screen.vline(y, abs_x, curses.ACS_VLINE, h, curses.color_pair(self.default_color))
                 if thumb_size > 0:
-                    if self.scrollbar_char == "┃":
+                    if self.fine_scrollbar:
                         start_row = thumb_pos_half // 2
                         is_half_step = (thumb_pos_half % 2 != 0)
                         loop_range = thumb_size + 1 if is_half_step else thumb_size
                         for rel_y in range(loop_range):
                             char = ("╽" if rel_y == 0 else "╿" if rel_y == loop_range - 1 else "┃") if is_half_step else "┃"
-                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(self.default_color))
+                            self.screen.addch(y + start_row + rel_y, abs_x, char, curses.color_pair(26))
                     else:
                         for rel_y in range(thumb_size):
                             self.screen.addch(y + rel_y + thumb_pos, abs_x, self.scrollbar_char, curses.color_pair(self.default_color))
@@ -1700,8 +1765,8 @@ class TUI():
                             self.win_tree.addch(y, 4, self.tree_dm_status, curses.color_pair(20))
                 y += 1
                 while y < h:
-                    # curses optimizes scrolling, so large empty sace will cause flickering when scrolling member list
-                    # this is prevented by verically alternating space and alt_space character (U+2800 - braille pattern blank)
+                    # curses optimizes scrolling, so large empty space will cause flickering when scrolling member list
+                    # this is prevented by vertically alternating space and alt_space character (U+2800 - braille pattern blank)
                     self.win_tree.insstr(y, 0, f"{" " if y % 2 else ALT_SPACE}\n", curses.color_pair(1))
                     y += 1
                 while num < len(self.tree_format):   # continue loop to detect mentions bellow visible area
@@ -1719,7 +1784,7 @@ class TUI():
 
 
     def draw_tree_mini(self):
-        """Draw minimised channel tree"""
+        """Draw minimized channel tree"""
         mentions = 0
         for code in self.tree_format:
             if 300 <= code < 499 and (code % 100) // 10 == 2:
@@ -2024,14 +2089,14 @@ class TUI():
                         draw_formatted_line(self.win_member_list, y, 0, line, line_format, self.default_color, self.attrib_map, self.lock)
                 y += 1
                 while y < h:
-                    # curses optimizes scrolling, so large empty sace will cause flickering when scrolling tree
-                    # this is prevented by verically alternating space and alt_space character (U+2800 - braille pattern blank)
+                    # curses optimizes scrolling, so large empty space will cause flickering when scrolling tree
+                    # this is prevented by vertically alternating space and alt_space character (U+2800 - braille pattern blank)
                     self.win_member_list.insstr(y, 0, f"{" " if y % 2 else ALT_SPACE}\n", curses.color_pair(1))
                     y += 1
                 self.win_member_list.noutrefresh()
                 self.need_update.set()
 
-        if uses_pgcurses:   # quick fix but not ideal, find why is tree cleared on derwin
+        if uses_gtkcurses:   # quick fix but not ideal, find why is tree cleared on derwin
             self.draw_tree()
             self.draw_title_tree()
 
@@ -2069,7 +2134,7 @@ class TUI():
                 self.draw_subtitle_line()
                 # self.draw_chat()   # chat will be regenerated and resized in app main loop
 
-        if uses_pgcurses:   # quick fix but not ideal, find why is tree cleared on derwin
+        if uses_gtkcurses:   # quick fix but not ideal, find why is tree cleared on derwin
             self.draw_tree()
             self.draw_title_tree()
 
@@ -2091,6 +2156,18 @@ class TUI():
                     self.win_input_line.addch(0, self.cursor_pos, character, curses.color_pair(color_id) | self.attrib_map[color_id])
                 self.win_input_line.noutrefresh()
                 self.need_update.set()
+
+
+    def draw_bar_cursor(self, color_id):
+        """Draw hardware cursor '|' or block"""
+        with self.lock:
+            w = self.input_hw[1]
+            if self.cursor_pos < w:
+                if uses_gtkcurses:
+                    curses.curs_set((6 if self.insert_mode else 2) if color_id == 15 else 0)
+                else:
+                    curses.curs_set(1 if color_id == 15 else 0)
+                self.win_input_line.move(0, self.cursor_pos)
 
 
     def blink_cursor(self):
@@ -2160,7 +2237,7 @@ class TUI():
 
 
     def update_title_tree(self, text):
-        """Update tree title line tex"""
+        """Update tree title line text"""
         if self.have_title_tree and text != self.title_tree_txt:
             self.title_tree_txt = text
             if not self.disable_drawing:
@@ -2221,7 +2298,6 @@ class TUI():
             self.attrib_map = set_list_item(self.attrib_map, attribute, force_id)
             return force_id
 
-        # 255_curses_bug - reusing same pairs to save ids
         key = (fg & 0x1FF) | ((bg & 0x1FF) << 9) | (attribute << 18)
         if key in self.color_pairs and self.last_free_id > self.protected_colors:
             return self.color_pairs[key]
@@ -2262,8 +2338,7 @@ class TUI():
             format_codes = []
             for num, color in enumerate(format_colors):
                 if num == 0:
-                    # skip fg update for color_format_reply, color_format_reactions, color_chat_edited, color_chat_url
-                    if num_f not in (2, 3, 4, 5):
+                    if num_f in (0, 1, 2) and alt_color[0] != -2:   # update fg onlt for message, message_grouped and newline
                         color[0] = alt_color[0]
                     color[1] = alt_color[1]
                 if color[1] == -2:
@@ -2271,6 +2346,20 @@ class TUI():
                 pair_id = self.init_pair(color[:3])
                 format_codes.append([pair_id, *color[3:]])
             color_codes.append(format_codes)
+        self.role_color_start_id = self.last_free_id
+        return color_codes
+
+
+    def init_colors_code(self, tokens_fg, color_code):
+        """Initialize color pairs for code block syntax highlighting, built from token foreground color and code block background color"""
+        color_codes = []
+        code_bg = color_code[1]
+        for color_fg in tokens_fg:
+            if color_fg >= 0:
+                pair_id = self.init_pair((color_fg, code_bg))
+            else:
+                pair_id = self.init_pair(color_code)
+            color_codes.append(pair_id)
         self.role_color_start_id = self.last_free_id
         return color_codes
 
@@ -2317,7 +2406,7 @@ class TUI():
 
     def spellcheck(self):
         """Spellcheck words visible on screen"""
-        if not self.input_buffer or self.enable_autocomplete or self.bracket_paste:
+        if not self.input_buffer or self.enable_autocomplete:
             return
         w = self.input_hw[1]
         line_start = max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
@@ -2588,11 +2677,10 @@ class TUI():
             self.last_key = None
             self.delta_cache = ""
             self.undo_index = None
-        self.bracket_paste = False
         selected_completion = 0
         self.keybinding_chain = None
         key = -1
-        self.screen.timeout(200)
+        self.screen.timeout(250)
         while self.run:
             while self.disable_drawing:
                 time.sleep(0.2)
@@ -2625,11 +2713,14 @@ class TUI():
                     selected_completion = 0
                 self.add_to_delta_store(key)
                 self.show_cursor()
-                if self.assist and not self.bracket_paste:
+                if self.assist:
                     if key in ASSIST_TRIGGERS:
-                        self.assist_start = self.input_index
-                if not self.bracket_paste:
-                    self.spellcheck()
+                        # stop assist when same trigger is typed while assist is active
+                        if self.assist_start >= 0 and key == self.input_buffer[self.assist_start - 1]:
+                            self.assist_start = -2
+                        else:
+                            self.assist_start = self.input_index
+                self.spellcheck()
                 self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
                 self.cursor_pos = max(self.cursor_pos, 0)
                 self.cursor_pos = min(w - 1, self.cursor_pos)
@@ -2646,7 +2737,7 @@ class TUI():
 
             # switch tab key in normal mode in vim mode
             elif not self.insert_mode and not self.switch_tab_modifier and key.isdigit():
-                self.pressed_num_key = key - 48
+                self.pressed_num_key = int(key[-1:])
                 return self.return_input_code(42)
 
             if key in self.chainable and not self.keybinding_chain:
@@ -2656,35 +2747,26 @@ class TUI():
                 key = f"{self.keybinding_chain} {"SPC" if key == " " else key}"
                 self.keybinding_chain = None
 
+            if key.startswith("PASTE"):
+                self.paste_text(key[6:])
+
+            if key == "QUIT":   # special for gtkcurses window X button
+                return self.return_input_code(34)
+
             key = self.key_map.get(key, key)
 
             # special keys
             if key == keybinding.KEY_ESCAPE:
-                self.screen.nodelay(False)
                 if self.assist_start:
                     self.assist_start = -1
                 if self.vim_mode and self.insert_mode:
                     self.insert_mode = False
+                    if self.bar_cursor:
+                        set_cursor(2)
                     return self.return_input_code(26)
                 return self.return_input_code(5)
 
-            if key == keybinding.KEY_PASTE_START:
-                self.bracket_paste = True
-                self.misspelled = []
-                continue
-            elif key == keybinding.KEY_PASTE_END:
-                self.bracket_paste = False
-                self.spellcheck()
-                self.draw_input_line()
-                continue
-
-            elif key == keybinding.KEY_ENTER and self.bracket_paste:
-                # when pasting, dont return, but insert newline character
-                self.input_buffer = self.input_buffer[:self.input_index] + "\n" + self.input_buffer[self.input_index:]
-                self.input_index += 1
-                self.add_to_delta_store("\n")
-
-            elif key == keybinding.KEY_RESIZE:
+            if key == keybinding.KEY_RESIZE:
                 self.resize()
                 _, w = self.input_hw
             elif key == keybinding.KEY_FOCUS_IN:
@@ -2717,17 +2799,6 @@ class TUI():
                     self.input_buffer = self.input_buffer[:self.input_index] + self.input_buffer[self.input_index+1:]
                     self.add_to_delta_store("DELETE", removed_char)
                     self.show_cursor()
-                self.spellcheck()
-
-            elif key == keybinding.KEY_HOME:
-                self.input_index = 0
-                self.input_line_index = 0
-                self.input_select_start = None
-                self.spellcheck()
-
-            elif key == keybinding.KEY_END:
-                self.input_index = len(self.input_buffer)
-                self.input_select_start = None
                 self.spellcheck()
 
             elif key == keybinding.KEY_TAB:
@@ -2770,7 +2841,10 @@ class TUI():
                 return self.return_input_code(0)
 
             elif key == 504:   # input_left
-                if self.input_index > 0:
+                if self.input_select_start is not None:
+                    self.input_index = min(self.input_select_start, self.input_select_end)
+                    self.show_cursor()
+                elif self.input_index > 0:
                     # if index hits left screen edge, but there is more text to left, move line right
                     if self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index) == 0:
                         self.input_line_index += min(INPUT_LINE_JUMP, w - 3)
@@ -2781,7 +2855,10 @@ class TUI():
                 self.spellcheck()
 
             elif key == 505:   # input_right
-                if self.input_index < len(self.input_buffer):
+                if self.input_select_start is not None:
+                    self.input_index = max(self.input_select_start, self.input_select_end)
+                    self.show_cursor()
+                elif self.input_index < len(self.input_buffer):
                     # if index hits right screen edge, but there is more text to right, move line right
                     if self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) == w:
                         self.input_line_index -= min(INPUT_LINE_JUMP, w - 3)
@@ -2790,6 +2867,138 @@ class TUI():
                     self.show_cursor()
                 self.input_select_start = None
                 self.spellcheck()
+
+            elif key == 506:   # word_left
+                left_len = 0
+                for word in resplit(self.input_buffer[:self.input_index])[::-1]:
+                    if word == "":
+                        left_len += 1
+                    else:
+                        left_len += len(word)
+                        break
+                self.input_index -= left_len
+                self.input_index = max(self.input_index, 0)
+                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+                if input_line_index_diff <= 0:
+                    self.input_line_index -= input_line_index_diff - 4   # diff is negative
+                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == 507:   # word_right
+                left_len = 0
+                for word in resplit(self.input_buffer[self.input_index:]):
+                    if word == "":
+                        left_len += 1
+                    else:
+                        left_len += len(word)
+                        break
+                self.input_index += left_len
+                self.input_index = min(self.input_index, len(self.input_buffer))
+                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) - w
+                if input_line_index_diff >= 0:
+                    self.input_line_index -= input_line_index_diff + 4   # diff is negative
+                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == 526:   # end_left
+                self.input_index = 0
+                self.input_line_index = 0
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == 527:   # end_right
+                self.input_index = len(self.input_buffer)
+                self.input_select_start = None
+                self.spellcheck()
+
+            elif key == 508:   # select_left
+                if self.input_select_start is None:
+                    self.input_select_start = self.input_index
+                if self.input_index > 0:
+                    # if index hits left screen edge, but there is more text to left, move line right
+                    if self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index) == 0:
+                        self.input_line_index += min(INPUT_LINE_JUMP, w - 3)
+                    else:
+                        self.input_index -= 1
+                self.input_select_end = self.input_index
+
+            elif key == 509:   # select_right
+                if self.input_select_start is None:
+                    self.input_select_start = self.input_index
+                if self.input_index < len(self.input_buffer):
+                    # if index hits right screen edge, but there is more text to right, move line right
+                    if self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) == w:
+                        self.input_line_index -= min(INPUT_LINE_JUMP, w - 3)
+                    else:
+                        self.input_index += 1
+                self.input_select_end = self.input_index
+
+            elif key == 510:   # select_word_left
+                if self.input_select_start is None:
+                    self.input_select_end = self.input_select_start = self.input_index
+                left_len = 0
+                for word in resplit(self.input_buffer[:self.input_index])[::-1]:
+                    if word == "":
+                        left_len += 1
+                    else:
+                        left_len += len(word)
+                        break
+                self.input_index -= left_len
+                self.input_index = max(self.input_index, 0)
+                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+                if input_line_index_diff <= 0:
+                    self.input_line_index -= input_line_index_diff - 4   # diff is negative
+                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                if self.input_select_start is not None:
+                    self.input_select_end -= left_len
+                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
+                self.spellcheck()
+
+            elif key == 511:   # select_word_right
+                if self.input_select_start is None:
+                    self.input_select_end = self.input_select_start = self.input_index
+                left_len = 0
+                for word in resplit(self.input_buffer[self.input_index:]):
+                    if word == "":
+                        left_len += 1
+                    else:
+                        left_len += len(word)
+                        break
+                self.input_index += left_len
+                self.input_index = min(self.input_index, len(self.input_buffer))
+                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) - w
+                if input_line_index_diff >= 0:
+                    self.input_line_index -= input_line_index_diff + 4   # diff is negative
+                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                if self.input_select_start is not None:
+                    self.input_select_end += left_len
+                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
+                self.spellcheck()
+
+            elif key == 528:   # select_end_left
+                if self.input_select_start is None:
+                    self.input_select_end = self.input_select_start = self.input_index
+                self.input_index = 0
+                self.input_line_index = 0
+                if self.input_select_start is not None:
+                    self.input_select_end = self.input_index
+                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
+                self.spellcheck()
+
+            elif key == 529:   # select_end_right
+                if self.input_select_start is None:
+                    self.input_select_end = self.input_select_start = self.input_index
+                self.input_index = len(self.input_buffer)
+                if self.input_select_start is not None:
+                    self.input_select_end = self.input_index
+                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
+                self.spellcheck()
+
+            elif key == 515:   # select_all
+                self.input_select_start = 0
+                self.input_select_end = len(self.input_buffer)
 
             elif key == 518:   # delete_word
                 word = ""
@@ -2835,82 +3044,6 @@ class TUI():
                         self.add_to_delta_store("DELETE", char)
                     self.spellcheck()
 
-            elif key == 506:   # word_left
-                left_len = 0
-                for word in resplit(self.input_buffer[:self.input_index])[::-1]:
-                    if word == "":
-                        left_len += 1
-                    else:
-                        left_len += len(word)
-                        break
-                self.input_index -= left_len
-                self.input_index = max(self.input_index, 0)
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                if input_line_index_diff <= 0:
-                    self.input_line_index -= input_line_index_diff - 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
-                self.input_select_start = None
-                self.spellcheck()
-
-            elif key == 507:   # word_right
-                left_len = 0
-                for word in resplit(self.input_buffer[self.input_index:]):
-                    if word == "":
-                        left_len += 1
-                    else:
-                        left_len += len(word)
-                        break
-                self.input_index += left_len
-                self.input_index = min(self.input_index, len(self.input_buffer))
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) - w
-                if input_line_index_diff >= 0:
-                    self.input_line_index -= input_line_index_diff + 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
-                self.input_select_start = None
-                self.spellcheck()
-
-            elif key == 510:   # select_word_left
-                if self.input_select_start is None:
-                    self.input_select_end = self.input_select_start = self.input_index
-                left_len = 0
-                for word in resplit(self.input_buffer[:self.input_index])[::-1]:
-                    if word == "":
-                        left_len += 1
-                    else:
-                        left_len += len(word)
-                        break
-                self.input_index -= left_len
-                self.input_index = max(self.input_index, 0)
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                if input_line_index_diff <= 0:
-                    self.input_line_index -= input_line_index_diff - 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
-                if self.input_select_start is not None:
-                    self.input_select_end -= left_len
-                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
-                self.spellcheck()
-
-            elif key == 511:   # select_word_right
-                if self.input_select_start is None:
-                    self.input_select_end = self.input_select_start = self.input_index
-                left_len = 0
-                for word in resplit(self.input_buffer[self.input_index:]):
-                    if word == "":
-                        left_len += 1
-                    else:
-                        left_len += len(word)
-                        break
-                self.input_index += left_len
-                self.input_index = min(self.input_index, len(self.input_buffer))
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) - w
-                if input_line_index_diff >= 0:
-                    self.input_line_index -= input_line_index_diff + 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
-                if self.input_select_start is not None:
-                    self.input_select_end += left_len
-                    self.input_select_end = min(max(0, self.input_select_end), len(self.input_buffer))
-                self.spellcheck()
-
             elif key == 513:   # undo
                 self.add_to_delta_store("UNDO")
                 if self.undo_index is None:
@@ -2954,32 +3087,6 @@ class TUI():
                         self.input_index = delta_index + 1
                 self.input_select_start = None
                 self.spellcheck()
-
-            elif key == 508:   # select_left
-                if self.input_select_start is None:
-                    self.input_select_start = self.input_index
-                if self.input_index > 0:
-                    # if index hits left screen edge, but there is more text to left, move line right
-                    if self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index) == 0:
-                        self.input_line_index += min(INPUT_LINE_JUMP, w - 3)
-                    else:
-                        self.input_index -= 1
-                self.input_select_end = self.input_index
-
-            elif key == 509:   # select_right
-                if self.input_select_start is None:
-                    self.input_select_start = self.input_index
-                if self.input_index < len(self.input_buffer):
-                    # if index hits right screen edge, but there is more text to right, move line right
-                    if self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) == w:
-                        self.input_line_index -= min(INPUT_LINE_JUMP, w - 3)
-                    else:
-                        self.input_index += 1
-                self.input_select_end = self.input_index
-
-            elif key == 515:   # select_all
-                self.input_select_start = 0
-                self.input_select_end = len(self.input_buffer)
 
             elif key == 516:   # copy
                 if self.input_select_start is not None:
@@ -3032,6 +3139,8 @@ class TUI():
 
             elif self.vim_mode and key == 525:   # insert_mode for vim mode
                 self.insert_mode = True
+                if self.bar_cursor:
+                    set_cursor(6)
                 return self.return_input_code(28)
 
             # keys that only return a value to app.py
@@ -3040,7 +3149,7 @@ class TUI():
                     pass
                 elif self.tree_selected == -1 and key in (1, 2, 3, 8, 9, 10, 17, 18, 30, 31):
                     pass
-                else:
+                elif key < 500:
                     return self.return_input_code(key)
 
             if key in self.command_bindings:
@@ -3278,8 +3387,9 @@ class TUI():
     def drag_extra_window(self):
         """Handle extra window resizing with mouse dragging until mouse is released"""
         curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
-        sys.stdout.write("\x1b[?1003h")   # enable mouse movement reporting
-        sys.stdout.flush()
+        if not uses_gtkcurses:
+            sys.stdout.write("\x1b[?1003h")   # enable mouse movement reporting
+            sys.stdout.flush()
         prev_y = None
         first = True
         try:
@@ -3306,8 +3416,9 @@ class TUI():
     def drag_scrollbar(self):
         """Handle dragging scrollbar with mouse until mouse is released"""
         curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
-        sys.stdout.write("\x1b[?1003h")   # enable mouse movement reporting
-        sys.stdout.flush()
+        if not uses_gtkcurses:
+            sys.stdout.write("\x1b[?1003h")   # enable mouse movement reporting
+            sys.stdout.flush()
         prev_y = None
         first_y = None
         first = True

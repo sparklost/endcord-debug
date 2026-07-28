@@ -32,6 +32,8 @@ elif sys.platform == "win32":
     operating_system = "Windows"
 elif sys.platform == "darwin":
     operating_system = "Mac OS X"
+# elif sys.platform == "android":
+#     operating_system = "Android"
 else:
     operating_system = "Linux"
 
@@ -43,10 +45,10 @@ else:
     system_locale = "en_US"
 
 
-def get_os_version():
+def get_os_version(android):
     """ Get OS version and architecture"""
     arch = "x64"
-    if sys.platform == "linux":
+    if sys.platform == "linux" or (sys.platform == "android" and not android):
         os_version = subprocess.check_output(["uname", "-r"], text=True).strip()
     elif sys.platform == "win32":
         win_ver = sys.getwindowsversion()
@@ -55,6 +57,9 @@ def get_os_version():
         output = subprocess.check_output(["sw_vers"], text=True)
         os_version = output.split("\n")[1].split(":\t")[1]
         arch = "arm64"   # guessing
+    elif android:
+        output = subprocess.run(["getprop", "ro.build.version.sdk"], capture_output=True, text=True, check=False).stdout
+        os_version = output if output else "34"
     else:
         os_version = ""
     return os_version, arch
@@ -91,16 +96,19 @@ def get_anonymous_properties():
     return add_user_agent(data, user_agent)
 
 
-def get_default_properties():
+def get_default_properties(android=False):
     """
     Get default client properties which might look less suspicious to discord.
     This is approximately what desktop client sends.
+    Alternatively convert to android properties.
     """
-    os_version, arch = get_os_version()
-
+    global operating_system
+    os_version, arch = get_os_version(android)
+    if android:
+        operating_system = "Android"
     data = {
         "os": operating_system,
-        "browser": "Discord Client",
+        "browser": "Discord Client" if not android else "Discord Android",
         "release_channel": "stable",
         "os_version": os_version,
         "os_arch": arch,
@@ -127,7 +135,7 @@ def get_default_properties():
 
 
 def generate_launch_signature():
-    """Gebnerate launch singature"""
+    """Generate launch signature"""
     bits = 0b00000000100000000001000000010000000010000001000000001000000000000010000010000001000000000100000000000001000000000000100000000000
     launch_signature = uuid.uuid4().int & (~bits & ((1 << 128) - 1))
     return str(uuid.UUID(int=launch_signature))
@@ -163,7 +171,7 @@ def add_user_agent(data, user_agent):
         if match:
             browser_version = match.group(1)
     elif "Electron" in user_agent:
-        match = re.search(r"Elelctron/([\d\.]+)", user_agent)
+        match = re.search(r"Electron/([\d\.]+)", user_agent)
         if match:
             browser_version = match.group(1)
     else:
@@ -207,9 +215,9 @@ def encode_properties(data):
     return base64.b64encode(json.dumps(data, separators=(",", ":")).encode("utf-8")).decode("utf-8")
 
 
-def get_user_agent(anonymous=False):
+def get_user_agent(anonymous=False, android=False):
     """Get only user agent string"""
     if anonymous:
         return adjust_user_agent_os(USER_AGENT_WEB, sys.platform, None)
-    os_version, _ = get_os_version()
+    os_version, _ = get_os_version(android)
     return adjust_user_agent_os(USER_AGENT_DESKTOP, sys.platform, os_version)

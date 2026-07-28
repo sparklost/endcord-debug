@@ -52,7 +52,7 @@ USER_SETTINGS = {
 }
 
 
-# USER FRECENCY SETINGS
+# USER FRECENCY SETTINGS
 
 FAVORITE_GIF = {
     2: ("src", "string"),

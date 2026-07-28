@@ -8,7 +8,9 @@ import os
 import queue
 import random
 import socket
+import ssl
 import struct
+import sys
 import threading
 import time
 import urllib.parse
@@ -18,11 +20,9 @@ import av
 import dave
 import nacl.bindings
 import numpy as np
-import socks
 import websocket
 
-# import davey   # using dave.py instead
-
+from endcord import socks
 
 # safely import soundcard, in case there is no sound system
 try:
@@ -35,13 +35,12 @@ DISCORD_HOST = "discord.com"
 BASE_SOUND_GAIN = 2.0
 VOICE_FLAGS = 2   # ALLOW_VOICE_RECORDING
 UDP_TIMEOUT = 10
-OPUS_MODE = os.environ.get("ENDCORD_VOICE_OPUS_MODE", "voip")
 OPUS_SILENCE = bytes([0xF8, 0xFF, 0xFE])
 SILENCE_BUFFER = 5
 MAX_SILENCE = 10
+MIXER_BUFFER = 3
 RTCP_SEND_DELAY = 5   # set to 0 to disable RTCP SR
 CODECS = [
-    # pyav depends on ffmpeg, and its usually built without encode for av1 and vp9
     {"name": "opus", "type": "audio", "priority": 1000, "payload_type": 120},
     # video disabled for now
     # {"name": "AV1", "type": "video", "priority": 1000, "payload_type": 101, "rtx_payload_type": 102, "encode": False, "decode": True},
@@ -106,7 +105,7 @@ def detect_silence(data, threshold=0.03):
 class Gateway():
     """Methods for fetching and sending data to Discord voice gateway through websocket"""
 
-    def __init__(self, voice_gateway_data, my_id, volume_input, volume_output, user_agent, proxy=None, custom_mic=None, silence=-30):
+    def __init__(self, voice_gateway_data, my_id, volume_input, volume_output, user_agent, proxy=None, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False):
         self.voice_gateway_data = voice_gateway_data
         self.guild_id = voice_gateway_data["guild_id"]
         self.channel_id = voice_gateway_data["channel_id"]
@@ -116,7 +115,7 @@ class Gateway():
             "Sec-WebSocket-Extensions: permessage-deflate",
             f"User-Agent: {user_agent}",
         ]
-        self.proxy = urllib.parse.urlsplit(proxy)
+        self.proxy = proxy
         self.run = True
         self.state = 0
         self.heartbeat_received = True
@@ -134,15 +133,10 @@ class Gateway():
             group_id=int(self.channel_id),
             self_user_id=str(self.my_id),
         )
-        # self.dave_session = davey.DaveSession(   # fix_davey
-        #     protocol_version=davey.DAVE_PROTOCOL_VERSION,
-        #     user_id=int(self.my_id),
-        #     channel_id=int(self.channel_id),
-        # )
         self.dave_protocol_version = 0   # no dave yet
         self.pending_transition_id = None
         self.known_user_ids = set()
-        self.known_user_ids.add(str(my_id))   # fix_davey - uses int ids everywhere
+        self.known_user_ids.add(str(my_id))
         self.ssrc_cache = set()
 
         self.enable_input = volume_input >= 0
@@ -150,20 +144,17 @@ class Gateway():
         self.volume_output = volume_output
         self.custom_mic = custom_mic
         self.silence_threshold = silence
+        self.opus_mode = opus_mode
+        self.fast_mixer = fast_mixer
 
         self.connect()
 
 
     def create_udp_socket(self):
         """Create udp soocket to the server"""
-        if self.proxy.scheme:
-            if "socks" in self.proxy.scheme.lower():
-                self.udp = socks.socksocket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.udp.set_proxy(
-                    proxy_type=socks.SOCKS5,
-                    addr=self.proxy.hostname,
-                    port=self.proxy.port,
-                )
+        if self.proxy:
+            if self.proxy.startswith("socks"):
+                self.udp = socks.Socks5UDPSocket(self.proxy)
             else:
                 self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 logger.warning("Only SOCKS5 proxy can be used for voice calls. This call will be made without proxy!")
@@ -175,7 +166,7 @@ class Gateway():
 
 
     def send_ip_discovery(self):
-        """Send ip discorvery packet to the server"""
+        """Send ip discovery packet to the server"""
         packet = bytearray(74)
         struct.pack_into(">H", packet, 0, 1)   # type = 1 (request)
         struct.pack_into(">H", packet, 2, 70)   # length = 70
@@ -200,7 +191,7 @@ class Gateway():
             # ssrc = struct.unpack_from(">I", data, 4)[0]
             self.client_ip = data[8:72].split(b"\x00", 1)[0].decode("ascii")
             self.client_port = struct.unpack_from(">H", data, 72)[0]
-            logger.debug("Rceived IP discovery packet")
+            logger.debug("Received IP discovery packet")
         except socket.timeout:
             logger.error(f"Failed to receive IP discovery: timeout after {UDP_TIMEOUT} s")
             self.disconnect()
@@ -220,10 +211,12 @@ class Gateway():
                 self.volume_output,
                 custom_mic=(self.custom_mic if self.enable_input else "OFF"),
                 silence=self.silence_threshold,
+                opus_mode=self.opus_mode,
+                fast_mixer=self.fast_mixer,
             )
             self.voice_handler.start()
 
-        while self.ssrc_cache:   # load cached ssrc-id pairs received before voice handler was initialised
+        while self.ssrc_cache:   # load cached ssrc-id pairs received before voice handler was initialized
             ssrc, user_id = self.ssrc_cache.pop()
             self.voice_handler.add_ssrc_mapping(ssrc, user_id)
 
@@ -239,20 +232,34 @@ class Gateway():
             self.voice_handler = None
 
 
-    def connect(self):
-        """Create initial connection to Discord gateway"""
+    def connect_ws(self):
+        """Connect to websocket"""
         gateway_url = "wss://" + self.voice_gateway_data["endpoint"]
-        self.ws = websocket.WebSocket()
-        if self.proxy.scheme:
+        if sys.platform == "darwin":
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        else:
+            ssl_context = ssl.create_default_context()
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.ws = websocket.WebSocket(sslopt={"context": ssl_context})
+        if self.proxy:
+            proxy = urllib.parse.urlsplit(self.proxy)
+            scheme = proxy.scheme
             self.ws.connect(
                 gateway_url + "/?v=8",
                 header=self.header,
-                proxy_type=self.proxy.scheme,
-                http_proxy_host=self.proxy.hostname,
-                http_proxy_port=self.proxy.port,
+                proxy_type="socks5h" if scheme == "socks5" else "http" if scheme == "https" else scheme,
+                http_proxy_host=proxy.hostname,
+                http_proxy_port=proxy.port,
+                http_proxy_auth=(proxy.username, proxy.password) if proxy.username else None,
             )
         else:
             self.ws.connect(gateway_url + "/?v=8", header=self.header)
+
+
+    def connect(self):
+        """Create initial connection to Discord gateway and start identification"""
+        self.connect_ws()
         self.state = 1
         self.heartbeat_interval = int(json.loads(self.ws.recv())["d"]["heartbeat_interval"])
         self.receiver_thread = threading.Thread(target=self.receiver, daemon=True)
@@ -397,7 +404,6 @@ class Gateway():
                 if "ssrc" in data:
                     if self.voice_handler:
                         self.voice_handler.add_ssrc_mapping(int(data["ssrc"]), int(data["user_id"]))
-                        # self.voice_handler.ssrc_to_userid[ssrc] = int(data["user_id"])   # fix_davey
                     else:   # add to cache until voice_handler object is created
                         self.ssrc_cache.add((int(data["ssrc"]), int(data["user_id"])))
 
@@ -422,11 +428,6 @@ class Gateway():
                         group_id=int(self.channel_id),
                         self_user_id=str(self.my_id),
                     )
-                    # self.dave_session.reinit(   # fix_davey
-                    #     protocol_version=data.get("dave_protocol_version", 1),
-                    #     user_id=int(self.my_id),
-                    #     channel_id=int(self.channel_id),
-                    # )
                     self.send_dave_mls_key_package()
 
             elif opcode == 25:  # DAVE_MLS_EXTERNAL_SENDER_PACKAGE
@@ -437,11 +438,6 @@ class Gateway():
                 result = self.dave_session.process_proposals(response, self.known_user_ids)
                 if result is not None:
                     self.send_dave_mls_commit_welcome(result)
-                # op_type_int = struct.unpack_from(">B", response, 0)[0]   # fix_davey
-                # op_type = davey.ProposalsOperationType.append if op_type_int == 0 else davey.ProposalsOperationType.revoke
-                # result = self.dave_session.process_proposals(op_type, response[1:])
-                # if result is not None:
-                #     self.send_dave_mls_commit_welcome(result.commit, result.welcome)
 
             elif opcode == 29:  # DAVE_MLS_ANNOUNCE_COMMIT_TRANSITION
                 transition_id = struct.unpack_from(">H", response, 0)[0]
@@ -456,13 +452,6 @@ class Gateway():
                         self.voice_handler.update_ratchets(self.dave_session)
                     if transition_id != 0:
                         self.send_dave_ready_for_transition(transition_id)
-                # try:   # fix_davey
-                #     self.dave_session.process_commit(commit)
-                #     self.send_dave_ready_for_transition(transition_id)
-                # except Exception as e:
-                #     logger.warning(f"Invalid commit: {e}")
-                #     self.send_dave_mls_invalid_commit_welcome(transition_id)
-                #     self.send_key_package()
 
             elif opcode == 30:  # DAVE_MLS_WELCOME
                 transition_id = struct.unpack_from(">H", response, 0)[0]
@@ -475,12 +464,6 @@ class Gateway():
                     if self.voice_handler:
                         self.voice_handler.update_ratchets(self.dave_session)
                     self.send_dave_ready_for_transition(transition_id)
-                # try:   # fix_davey
-                #     self.dave_session.process_welcome(response[2:])
-                # except Exception as e:
-                #     logger.warning(f"Invalid welcome: {e}")
-                #     self.send_dave_mls_invalid_commit_welcome(transition_id)
-                #     self.send_key_package()
 
         logger.debug("Receiver stopped")
         self.disconnect()
@@ -536,7 +519,6 @@ class Gateway():
                 "token": self.voice_gateway_data["token"],
                 "video": True,
                 "max_dave_protocol_version": dave.get_max_supported_protocol_version(),
-                # "max_dave_protocol_version": davey.DAVE_PROTOCOL_VERSION,   # fix_davey
                 "streams": [{
                     "type": "video",
                     "rid": "100",
@@ -580,7 +562,6 @@ class Gateway():
     def send_dave_mls_key_package(self):
         """Send DAVE_MLS_KEY_PACKAGE event"""
         key_package = self.dave_session.get_marshalled_key_package()
-        # key_package = self.dave_session.get_serialized_key_package()   # fix_davey
         self.send_binary(26, key_package)
 
 
@@ -693,7 +674,7 @@ class Gateway():
 class VoiceHandler:
     """Voice call sound receiver, transmitter, player and recorder"""
 
-    def __init__(self, gateway, my_id, my_ssrc, udp, secret_key, encryption_mode, volume_input, volume_output, custom_mic=None, silence=-30):
+    def __init__(self, gateway, my_id, my_ssrc, udp, secret_key, encryption_mode, volume_input, volume_output, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False):
         self.gateway = gateway
         self.my_id = my_id
         self.my_ssrc = my_ssrc
@@ -711,27 +692,32 @@ class VoiceHandler:
         self.audio_queue_in = queue.Queue(maxsize=25)   # 0.5s buffer
         self.audio_thread_rec = None
 
+        if opus_mode not in ("voip", "audio", "lowdelay"):
+            opus_mode = "voip"
         self.opus_decoder = av.codec.CodecContext.create("opus", "r")
         self.opus_encoder = av.codec.CodecContext.create("opus", "w")
         self.opus_encoder.sample_rate = 48000
         self.opus_encoder.layout = "stereo"
         self.opus_encoder.format = "flt"
         self.opus_encoder.options = {
-            "application": OPUS_MODE,
-            "vbr": "off" if OPUS_MODE == "audio" else "on",
+            "application": opus_mode,
+            "vbr": "off" if opus_mode == "audio" else "on",
         }
-        if OPUS_MODE != "audio":
+        if opus_mode != "audio":
             self.opus_encoder.bit_rate = 96000
+        self.opus_encoder.open()
 
         self.microphone = init_microphone(custom_mic)
         self.gain_input = volume_to_gain(volume_input, boost=1)
         self.gain_output = volume_to_gain(volume_output, boost=BASE_SOUND_GAIN)
         self.silence_threshold = 10 ** (silence / 20)
+        self.fast_mixer = fast_mixer
 
         self.run = False
         self.recording = False
-        self.pause_mic = False
+        self.mix_mic = False
         self.playing = False
+        self.active_file_queues = []
         self.rtp_sequence = random.randint(0, 0xFFFF)   # must be random per rfc3550
         self.rtp_timestamp = random.randint(0, 0xFFFFFFFF)
         self.transport_counter = 0
@@ -835,7 +821,7 @@ class VoiceHandler:
 
 
     def receiver_loop(self):
-        """Receive data, unpack, transport decrypt, DAVE decrypt, opus decoee, and put it to queue"""
+        """Receive data, unpack, transport decrypt, DAVE decrypt, opus decode, and put it to queue"""
         while self.run:
             # receive
             try:
@@ -904,24 +890,12 @@ class VoiceHandler:
                 if decryptor is None:
                     logger.debug(f"Unknown ssrc {ssrc}")
                     continue
-                # logger.info(("BEFORE DAVE", bytes(payload)))
+                if len(payload) < 12 or not payload.endswith(b"\xfa\xfa"):   # skip empty or non-opus packets
+                    continue
                 decrypted = decryptor.decrypt(dave.MediaType.audio, bytes(payload))
                 if decrypted is None:
                     continue
                 payload = decrypted
-
-            # is_dave_encrypted = len(payload) >= 2 and payload[-2] == 0xFA and payload[-1] == 0xFA   # fix_davey
-            # if self.gateway.dave_protocol_version > 0 and self.dave_session.ready and is_dave_encrypted:
-            #     user_id = self.ssrc_to_userid.get(ssrc)
-            #     if user_id is not None:
-            #         try:
-            #             payload = self.dave_session.decrypt(user_id, davey.MediaType.audio, payload)
-            #         except Exception as e:
-            #             logger.error(f"DAVE decryption failed: {e}")
-            #             continue
-            #     else:
-            #         logger.debug(f"Unknown ssrc {ssrc}")
-            #         continue
 
             # opus
             try:
@@ -939,61 +913,49 @@ class VoiceHandler:
 
     def transmitter_loop(self):
         """Take data from queue, opus encode, DAVE encrypt, transport encrypt, pack and send it"""
-        # speaking = False
         skipped_samples = 0
         silence_counter = 0
         max_silence_packets = MAX_SILENCE + SILENCE_BUFFER
-        next_send_time = time.perf_counter()
         while self.run:
             payload = None
-
-            # wait to send or drop if late, then get data
-            now = time.perf_counter()
-            if now > next_send_time + 0.02:   # drop if late more than one frame
-                next_send_time = now   # resync
-                try:
-                    self.audio_queue_in.get_nowait()
-                except queue.Empty:
-                    pass
-                continue
-            if now < next_send_time:
-                time.sleep(next_send_time - now)
             try:
-                audio_data = self.audio_queue_in.get_nowait()
+                audio_data = self.audio_queue_in.get(timeout=0.02)
                 if audio_data is None:
                     break
             except queue.Empty:
                 payload = OPUS_SILENCE
             if not self.gain_input:
                 payload = OPUS_SILENCE
-            next_send_time += 0.02   # 20ms = 960 samples
 
-            # silence detection
             if (not payload and self.silence_threshold and detect_silence(audio_data, threshold=self.silence_threshold)) or payload == OPUS_SILENCE:
                 if silence_counter > max_silence_packets:
-                    # if speaking:   # seems theres no need to send
-                    #     self.gateway.send_speaking()
                     skipped_samples += 960
-                    continue
+                    continue   # drop packet to save bandwidth
                 silence_counter += 1
                 if silence_counter > SILENCE_BUFFER:   # 3 silence frames in a row = confident silence
                     payload = OPUS_SILENCE
             else:
                 silence_counter = 0
+                if skipped_samples > 0:   # catch up rtp timeline
+                    self.rtp_timestamp += skipped_samples
+                    skipped_samples = 0
 
             # opus
             if payload is None:
-                audio_data *= self.gain_input
-                self.rtp_timestamp += skipped_samples
-                # if not speaking:   # seems theres no need to send
-                #     self.gateway.send_speaking()
+                if audio_data.dtype == np.int16:
+                    audio_float = audio_data.astype("float32") / 32768.0
+                else:
+                    audio_float = audio_data.astype("float32")
+                audio_float *= self.gain_input
+                np.clip(audio_float, -1.0, 1.0, out=audio_float)
                 frame = av.AudioFrame.from_ndarray(
-                    np.expand_dims(audio_data.astype("float32").reshape(-1), axis=0),
+                    np.expand_dims(audio_float.reshape(-1), axis=0),
                     format="flt",
                     layout="stereo",
                 )
                 frame.sample_rate = 48000
-                payload = self.opus_encoder.encode(frame)[0]   # always returns 1 packet
+                payload = self.opus_encoder.encode(frame)[0]   # Always returns 1 packet
+
             opus_payload_size = len(bytes(payload))
 
             # DAVE
@@ -1017,7 +979,7 @@ class VoiceHandler:
             struct.pack_into(">I", header, 4, self.rtp_timestamp)
             struct.pack_into(">I", header, 8, self.my_ssrc)
 
-            # RTP + transport
+            # transport encryption
             self.transport_counter = (self.transport_counter + 1) & 0xFFFFFFFF
             counter = struct.pack(">I", self.transport_counter)
             try:
@@ -1067,24 +1029,24 @@ class VoiceHandler:
             struct.pack_into(">I", payload, 16, self.rtp_timestamp)
             struct.pack_into(">I", payload, 20, self.packets_sent)
             struct.pack_into(">I", payload, 24, self.bytes_sent)
-            # logger.info(("SR", payload))
 
             header = payload[:8]
+            body = payload[8:]
             self.transport_counter = (self.transport_counter + 1) & 0xFFFFFFFF
             counter = struct.pack(">I", self.transport_counter)
             if self.mode == "aead_aes256_gcm_rtpsize":
                 nonce = bytearray(12)
                 nonce[:4] = counter
-                payload = nacl.bindings.crypto_aead_aes256gcm_encrypt(bytes(payload), bytes(header), bytes(nonce), self.secret_key)
+                ciphertext = nacl.bindings.crypto_aead_aes256gcm_encrypt(bytes(body), bytes(header), bytes(nonce), self.secret_key)
             elif self.mode == "aead_xchacha20_poly1305_rtpsize":
                 nonce = bytearray(24)
                 nonce[:4] = counter
-                payload = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(bytes(payload), bytes(header), bytes(nonce), self.secret_key)
+                ciphertext = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(bytes(body), bytes(header), bytes(nonce), self.secret_key)
             else:
                 logger.error(f"Unknown mode: {self.mode}")
                 time.sleep(RTCP_SEND_DELAY)
                 continue
-            payload = bytes(header) + payload + counter
+            payload = bytes(header) + ciphertext + counter
 
             try:
                 self.udp.send(payload)
@@ -1130,7 +1092,6 @@ class VoiceHandler:
         #     pass
 
         if payload[1] == 201:   # RTCP receiver report
-            # logger.info(("RR", payload))
             block_offset = 8   # skip header and sender ssrc
             report_count = payload[0] & 0x1F
             for _ in range(report_count):
@@ -1139,9 +1100,6 @@ class VoiceHandler:
                 lsr = struct.unpack_from(">I", payload, block_offset + 16)[0]
                 dlsr = struct.unpack_from(">I", payload, block_offset + 20)[0]
                 if lsr != 0:
-                    # now_ntp = time.time() + 2208988800
-                    # now_mid = int((now_ntp * 65536)) & 0xFFFFFFFF   # lsr and dlsr are in 1/65536
-                    # self.rtt_ms = ((now_mid - lsr - dlsr) / 65536) * 1000   # RTT = NOW - LSR - DLSR
                     now_unix = time.time()
                     ntp_sec = int(now_unix) + 2208988800
                     ntp_frac = int((now_unix % 1) * (1 << 32))
@@ -1157,40 +1115,62 @@ class VoiceHandler:
                         cum_lost -= 0x1000000
                     jitter = struct.unpack_from(">I", payload, block_offset + 12)[0]
                     jitter_ms = (jitter / 48000) * 1000   # convert from rtp timestamp unit to ms
-                    # logger.info(f"lsr={lsr} dlsr={dlsr} now_mid={now_mid} rtt_units={rtt_units}")
                     logger.debug(
-                        f"RTCP Receiver Report: ssrc={source_ssrc}: "
-                        f"loss={loss_percentage:.1f}% cumulative={cum_lost} "
-                        f"jitter={jitter_ms:.1f}ms "
-                        f"rtt={self.rtt_ms:.1f}ms ",
+                        f"RTCP Receiver Report: ssrc={source_ssrc}:\n"
+                        f"  loss={loss_percentage:.1f}% cumulative={cum_lost}\n"
+                        f"  jitter={jitter_ms:.1f}ms\n"
+                        f"  rtt={self.rtt_ms:.1f}ms\n",
                     )
                 block_offset += 24
 
 
     def audio_player(self, samplerate, channels):
-        """Play audio frames from the queue"""
+        """Play audio frames from the queue with jitter buffering and soft limiting"""
+        peer_buffer = {}
         with speaker.player(samplerate=samplerate, channels=channels, blocksize=960) as stream:
             mixed = np.zeros((960, channels), dtype="float32")
             while self.run:
                 frames_to_mix = []
 
+                # do small buffering to smooth out network jitter
                 with self.audio_queue_out_lock:
-                    for buf in self.audio_queue_out.values():
-                        if buf:
-                            frames_to_mix.append(buf.popleft())
+                    for ssrc, buf in self.audio_queue_out.items():
+                        if not buf:
+                            peer_buffer[ssrc] = True
+                            continue
+                        if peer_buffer.get(ssrc, True):   # jitter buffer
+                            if len(buf) >= MIXER_BUFFER:
+                                peer_buffer[ssrc] = False
+                            else:
+                                continue  # keep buffering
+                        frames_to_mix.append(buf.popleft())
 
+                # mixing
                 if frames_to_mix:
                     mixed.fill(0)
                     for frame in frames_to_mix:
-                        audio = frame.to_ndarray().astype("float32").T
+                        if frame.format.name in ("s16", "s16p"):
+                            audio = frame.to_ndarray().astype("float32") / 32768.0
+                        else:
+                            audio = frame.to_ndarray().astype("float32")
+                        if audio.shape == (2, 960):
+                            audio = audio.T
+                        elif audio.shape == (1, 1920):
+                            audio = audio.reshape(960, 2)
                         mixed += audio * self.gain_output
-                    logger.info(len(frames_to_mix))
-                    # if len(frames_to_mix) > 1:   # normalize if many are talking
-                    #     mixed /= np.sqrt(len(frames_to_mix))
-                    np.clip(mixed, -1.0, 1.0, out=mixed)   # hard limiter
-                    # np.multiply(mixed, 3.0, out=mixed)   # soft limiter (with normalization)
-                    # np.tanh(mixed, out=mixed)
-                    # mixed /= np.tanh(g)
+
+                    # normalization
+                    num_speakers = len(frames_to_mix)
+                    if num_speakers > 1:
+                        if self.fast_mixer:
+                            np.tanh(mixed, out=mixed)
+                        else:
+                            mixed /= np.sqrt(num_speakers)
+                            mixed *= 3.0
+                            np.tanh(mixed, out=mixed)
+                            mixed /= 0.99505   # tanh(3)
+                    else:
+                        np.clip(mixed, -1.0, 1.0, out=mixed)
                 else:
                     mixed.fill(0)  # silence
 
@@ -1202,7 +1182,12 @@ class VoiceHandler:
         with self.microphone.recorder(samplerate=samplerate, channels=channels) as rec:
             while self.run and self.recording:
                 audio_data = rec.record(numframes=960)
-                if self.pause_mic:
+                if self.active_file_queues:
+                    if self.mix_mic:
+                        try:
+                            self.raw_mic_queue.put_nowait(audio_data)
+                        except queue.Full:
+                            pass
                     continue
                 try:
                     self.audio_queue_in.put_nowait(audio_data)
@@ -1216,44 +1201,115 @@ class VoiceHandler:
             self.audio_queue_in.put(None)
 
 
-    def audio_file_player(self, path, mix=False):
-        """Play audio file from specified path. If mic is ON then mix sounds"""
-        self.playing = True
-        container = av.open(path)
-        if not container.streams.audio:
-            return
-        in_stream = container.streams.audio[0]
-        resampler = av.audio.resampler.AudioResampler(format="fltp", layout="stereo", rate=48000)
-        fifo = av.audio.fifo.AudioFifo()
-        frame_duration = 960 / 48000
+    def send_mixer(self):
+        """Mixer loop for file playback and mic integration"""
         next_time = time.perf_counter()
-        if not mix:
-            pass
-        self.pause_mic = True
-
-        for frame in container.decode(in_stream):
-            if not self.playing:
+        while self.run:
+            if not self.active_file_queues:
+                self.send_mixer_thread = None
+                self.mix_mic = False
                 break
+            queues = list(self.active_file_queues)
+            frames_to_mix = []
 
-            for new_frame in resampler.resample(frame):
+            # collect from players
+            for q in queues:
+                try:
+                    frame = q.get(timeout=0.005)
+                    if frame is not None:
+                        frames_to_mix.append(frame)
+                except queue.Empty:
+                    pass
+
+            # collect from mic
+            if self.mix_mic:
+                try:
+                    mic_data = self.raw_mic_queue.get_nowait()
+                    if mic_data.dtype == np.int16:
+                        mic_data = mic_data.astype("float32") / 32768.0
+                    else:
+                        mic_data = mic_data.astype("float32")
+                    if mic_data.shape == (2, 960):
+                        mic_data = mic_data.T
+                    elif mic_data.shape == (1, 1920):
+                        mic_data = mic_data.reshape(960, 2)
+                    frames_to_mix.append(mic_data)
+                except queue.Empty:
+                    pass
+
+            # mixing
+            if frames_to_mix:
+                mixed = np.zeros((960, 2), dtype="float32")
+                for frame in frames_to_mix:
+                    mixed += frame
+                num_signals = len(frames_to_mix)
+                if num_signals > 1:
+                    if self.fast_mixer:
+                        np.tanh(mixed, out=mixed)
+                    else:
+                        mixed /= np.sqrt(num_signals)
+                        mixed *= 3.0
+                        np.tanh(mixed, out=mixed)
+                        mixed /= 0.99505   # tanh(3)
+                else:
+                    np.clip(mixed, -1.0, 1.0, out=mixed)
+                self.audio_queue_in.put(mixed)
+
+            next_time += 0.02
+            sleep_time = next_time - time.perf_counter()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            else:
+                next_time = time.perf_counter()
+
+
+    def audio_file_player(self, path, mix=False):
+        """Play audio file from path. Multi-thread safe with automatic mic handling."""
+        # init
+        if not hasattr(self, "file_players_lock"):
+            self.file_players_lock = threading.Lock()
+            self.send_mixer_thread = None
+            self.raw_mic_queue = queue.Queue(maxsize=10)
+        self.mix_mic = self.mix_mic or mix
+        player_queue = queue.Queue(maxsize=5)
+        with self.file_players_lock:
+            self.active_file_queues.append(player_queue)
+            if self.send_mixer_thread is None:
+                self.send_mixer_thread = threading.Thread(target=self.send_mixer, daemon=True)
+                self.send_mixer_thread.start()
+
+        # player
+        try:
+            container = av.open(path)
+            if not container.streams.audio:
+                return
+            in_stream = container.streams.audio[0]
+            resampler = av.audio.resampler.AudioResampler(format="fltp", layout="stereo", rate=48000)
+            fifo = av.audio.fifo.AudioFifo()
+            self.playing = True
+            for frame in container.decode(in_stream):
                 if not self.playing:
                     break
-                new_frame.pts = None
-                fifo.write(new_frame)
+                for new_frame in resampler.resample(frame):
+                    if not self.playing:
+                        break
+                    new_frame.pts = None
+                    fifo.write(new_frame)
+                    while fifo.samples >= 960 and self.playing:
+                        arr = fifo.read(960).to_ndarray()
+                        if arr.dtype == np.int16:
+                            arr = arr.astype(np.float32) / 32768.0
+                        else:
+                            arr = arr.astype(np.float32)
+                        player_queue.put(arr.T)
+        except Exception as e:
+            logger.error(f"Error while playing audio file {path}: {e}")
 
-                while fifo.samples >= 960 and self.playing:
-                    arr = fifo.read(960).to_ndarray()
-                    if arr.dtype == np.int16:
-                        arr = arr.astype(np.float32) / 32768.0
-                    else:
-                        arr = arr.astype(np.float32)
-                    self.audio_queue_in.put(arr.T)
-
-                    next_time += frame_duration
-                    sleep_time = next_time - time.perf_counter()
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-        self.pause_mic = False
+        # cleanup
+        finally:
+            with self.file_players_lock:
+                if player_queue in self.active_file_queues:
+                    self.active_file_queues.remove(player_queue)
 
 
     def stop_file_playback(self):
@@ -1269,4 +1325,4 @@ class VoiceHandler:
 
     def get_rtt(self):
         """Get rtt value in ms"""
-        # return self.rtt_ms   # disabled until rtcp sr-rr is fixed
+        return self.rtt_ms
