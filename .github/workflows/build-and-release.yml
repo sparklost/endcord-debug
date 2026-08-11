@@ -80,7 +80,7 @@ jobs:
           sudo apt install -y patchelf ccache lld build-essential libssl-dev zlib1g-dev \
             libbz2-dev libreadline-dev libsqlite3-dev wget curl libncursesw5-dev \
             xz-utils tk-dev libffi-dev liblzma-dev \
-            pkg-config libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0 gir1.2-pango-1.0
+            pkg-config libgirepository-2.0-dev libcairo2-dev gir1.2-gtk-3.0 gir1.2-pango-1.0
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows'
