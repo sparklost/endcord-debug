@@ -1,4 +1,4 @@
-from endcord import gtkcurses as curses
+import curses
 
 
 def get_map():

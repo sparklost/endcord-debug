@@ -2,7 +2,7 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-from endcord import gtkcurses as curses
+import curses
 import json
 import logging
 import os

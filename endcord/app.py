@@ -4,7 +4,7 @@
 
 ### "Abandon all hope, ye who enter here." ###
 
-from endcord import gtkcurses as curses
+import curses
 import importlib.util
 import logging
 import os
