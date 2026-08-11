@@ -2,7 +2,7 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-import curses
+from endcord import gtkcurses as curses
 import sys
 
 from endcord import xterm256

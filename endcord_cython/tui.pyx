@@ -4,7 +4,7 @@
 
 # cython: boundscheck=False, wraparound=False, freethreading_compatible=True
 
-import curses
+from endcord import gtkcurses as curses
 import threading
 cimport cython
 

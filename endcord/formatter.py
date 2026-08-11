@@ -2,7 +2,7 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-import curses
+from endcord import gtkcurses as curses
 import logging
 import re
 import shutil
@@ -1446,7 +1446,7 @@ class ChatGenerator:
 
             elif change_type in (2, 20):   # fully delete message / delete when remove pending
                 self.remove_message(change_id)   # change_id is msg_num in this case
-                if change_id != 0 and change_type == 2:   # have to reconstruct the message bellow, to update separator lines
+                if change_id != 0 and change_type == 2:   # have to reconstruct the message below, to update separator lines
                     # skipped when pending because its simple message update
                     message_index = change_id - 1
                     line_index = self.remove_message(message_index, shift_chat_map=False)
@@ -3792,7 +3792,7 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
     # add unsorted guilds
     for num, guild in enumerate(guilds):
         if num not in guilds_used_index:
-            guilds_sorted.append(guild)
+            guilds_sorted.insert(0, guild)
 
     # generator loop
     in_folder = None
@@ -3828,8 +3828,19 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
         else:
             threads_guild = []
 
-        # sort categories and channels
+        # sort categories
         categories = []
+        categories.append({
+            "id": -10,   # pinned, will be removed if empty
+            "name": "--Pinned Channels--",
+            "position": -10,
+            "channels": [],
+            "muted": False,
+            "collapsed": False,
+            "hidden": False,
+            "unseen": False,
+            "ping": 0,
+        })
         for channel in guild["channels"]:
             if channel["type"] == 4:
                 # categories are also hidden if they have no visible channels
@@ -3867,8 +3878,9 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
                 ch_read_state = read_state.get(channel["id"])
                 unseen_ch = is_unseen(ch_read_state)
                 mentioned_ch = len(ch_read_state["mentions"]) if unseen_ch else 0
-                for category in categories:
-                    if channel["parent_id"] == category["id"]:
+                for i, category in enumerate(categories):
+                    pinned = channel.get("pinned")
+                    if channel["parent_id"] == category["id"] or (pinned and i == 0):
                         muted_ch = channel.get("muted", False)
                         hidden_ch = channel.get("hidden", False)
                         # hide restricted channels now because they can be marked as unseen/ping
@@ -3923,6 +3935,8 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
         categories += uncategorized_channels
 
         # sort categories by position key
+        if not categories[0]["channels"]:
+            categories.pop(0)
         categories = sorted(categories, key=lambda x: x["position"])
 
         # add guild to the tree

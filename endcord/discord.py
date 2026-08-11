@@ -143,7 +143,7 @@ class Discord():
         self.connection_pool_lock = threading.Lock()
         self.cdn_connection = None
         self.cdn_connection_lock = threading.Lock()
-        self.cdn_connection_last_use = time.time()
+        self.cdn_connection_last_use = time.monotonic()
         self.total_requests = 0
 
         self.my_id = self.get_my_id(exit_on_error=True)
@@ -230,7 +230,7 @@ class Discord():
         self.total_requests += 1
         entry = None
         connection = None
-        now = int(time.time())
+        now = int(time.monotonic())
 
         # get first free connection or create new one
         with self.connection_pool_lock:
@@ -926,20 +926,12 @@ class Discord():
     def mute_guild(self, mute, guild_id):
         """Mute/unmute guild"""
         guild_id = str(guild_id)
-
-        message_dict = {
-            "guilds": {
-                guild_id: {
-                    "muted": bool(mute),
-                },
-            },
-        }
+        message_dict = {"guilds": {guild_id: {"muted": bool(mute)}}}
         if mute:
             message_dict["guilds"][guild_id]["mute_config"] = {
                 "end_time": None,
                 "selected_time_window": -1,
             }
-
         url = "/api/v9/users/@me/guilds/settings"
         message_data = json.dumps(message_dict)
         data, status = self.request("PATCH", url, message_data, self.header)
@@ -955,25 +947,13 @@ class Discord():
         """Mute/unmute channel or category"""
         channel_id = str(channel_id)
         guild_id = str(guild_id)
-
-        channel_overrides = {
-            channel_id: {
-                "muted": mute,
-            },
-        }
+        channel_overrides = {channel_id: {"muted": mute}}
         if mute:
             channel_overrides[channel_id]["mute_config"] = {
                 "end_time": None,
                 "selected_time_window": -1,
             }
-        message_dict = {
-            "guilds": {
-                guild_id: {
-                    "channel_overrides": channel_overrides,
-                },
-            },
-        }
-
+        message_dict = {"guilds": {guild_id: {"channel_overrides": channel_overrides}}}
         url = "/api/v9/users/@me/guilds/settings"
         message_data = json.dumps(message_dict)
         data, status = self.request("PATCH", url, message_data, self.header)
@@ -988,20 +968,12 @@ class Discord():
     def mute_dm(self, mute, dm_id):
         """Mute/unmute DM"""
         dm_id = str(dm_id)
-
-        message_dict = {
-            "channel_overrides": {
-                dm_id: {
-                    "muted": bool(mute),
-                },
-            },
-        }
+        message_dict = {"channel_overrides": {dm_id: {"muted": bool(mute)}}}
         if mute:
             message_dict["channel_overrides"][dm_id]["mute_config"] = {
                 "end_time": None,
                 "selected_time_window": -1,
             }
-
         url = "/api/v9/users/@me/guilds/%40me/settings"
         message_data = json.dumps(message_dict)
         data, status = self.request("PATCH", url, message_data, self.header)
@@ -1026,14 +998,7 @@ class Discord():
             option = setting
 
         if option:
-            message_dict = {
-                "guilds": {
-                    guild_id: {
-                        option: value,
-                    },
-                },
-            }
-
+            message_dict = {"guilds": {guild_id: {option: value}}}
             url = "/api/v9/users/@me/guilds/settings"
             message_data = json.dumps(message_dict)
             data, status = self.request("PATCH", url, message_data, self.header)
@@ -1057,20 +1022,8 @@ class Discord():
                 if setting == ping_option:
                     value = i
                     break
-
-        channel_overrides = {
-            channel_id: {
-                "message_notifications": value,
-            },
-        }
-        message_dict = {
-            "guilds": {
-                guild_id: {
-                    "channel_overrides": channel_overrides,
-                },
-            },
-        }
-
+        channel_overrides = {channel_id: {"message_notifications": value}}
+        message_dict = {"guilds": {guild_id: {"channel_overrides": channel_overrides}}}
         url = "/api/v9/users/@me/guilds/settings"
         message_data = json.dumps(message_dict)
         data, status = self.request("PATCH", url, message_data, self.header)
@@ -1081,9 +1034,24 @@ class Discord():
         log_api_error(data, status, "set_notification_setting_channel")
 
 
+    def set_channel_flags(self, value, channel_id, guild_id):
+        """Change channel flags value in user guild settings"""
+        channel_id = str(channel_id)
+        guild_id = str(guild_id)
+        message_dict = {"guilds": {guild_id: {"channel_overrides": {channel_id: {"flags": value}}}}}
+        url = "/api/v9/users/@me/guilds/settings"
+        message_data = json.dumps(message_dict)
+        data, status = self.request("PATCH", url, message_data, self.header)
+        if not status:
+            return None
+        if status == 200:
+            return True
+        log_api_error(data, status, "mute_channel")
+
+
     def set_profile(self, setting, value, guild_id=None, profile=False):
         """Change some profile settings: global_name, pronouns, bio, server_nick, server_pronouns"""
-        # WARNING: DISABLED BECAUSE DISCORD WILL LOGOUT USER AND REQUIRE MOBILE VERIFICATION
+        # WARNING: DISABLED BECAUSE DISCORD WILL LOGOUT USER AND REQUEST MOBILE VERIFICATION
         return None
 
         if profile:   # used for: pronouns, bio, banner, accent_color, theme_color, popout_animation_particle_type, emoji_id, profile_effect_id
@@ -1867,12 +1835,14 @@ class Discord():
         return None, etag
 
 
-    def get_stats(self):
+    def get_stats(self, ping=True):
         """Get API stats"""
-        ping_time = time.time()
-        self.get_my_id()
-        ping_time = round(time.time() - ping_time, 3)
-        return self.total_requests, ping_time
+        if ping:
+            ping_time = time.monotonic()
+            self.get_my_id()
+            ping_time = round(time.monotonic() - ping_time, 3)
+            return self.total_requests, ping_time
+        return self.total_requests, None
 
 
     def get_pfp(self, user_id, avatar_id, size=None, img_type="webp", save_path=None, keepalive=False, retry=True):
@@ -2060,7 +2030,7 @@ class Discord():
         """Download file from discord with proper header, using keepalive connection"""
         # get connection and do request
         with self.cdn_connection_lock:
-            now = int(time.time())
+            now = int(time.monotonic())
             if not self.cdn_connection:
                 self.cdn_connection = self.get_connection(host, port, timeout=timeout)
             if now - self.cdn_connection_last_use > MAX_CONNECTION_AGE or self.cdn_connection.sock is None or host != self.cdn_connection.host:
@@ -2069,6 +2039,7 @@ class Discord():
                 except Exception:
                     pass
                 self.cdn_connection = self.get_connection(host, port, timeout=timeout)
+            self.cdn_connection_last_use = time.monotonic()
             try:
                 try:
                     self.cdn_connection.request(method, path, body, headers)

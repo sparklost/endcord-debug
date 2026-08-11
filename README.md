@@ -124,8 +124,9 @@ Manager can be re-opened using `--manager` flag.
 - Scan QR code - note that some terminals may fail to render QR code
 - Token - used to access Discord through your account without logging-in
 - Token as an argument: `endcord -t [YOUR_TOKEN]`, but note that it might get saved in your terminal history file  
+
 Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then you'll have to use token method.  
-If you want to verify what is happening with credentials, look in profile_manager.py and auth.py.  
+If you want to check what is endcord doing with credentials, look in profile_manager.py and auth.py.  
 **Do not share your token!**  
 
 ### Configuring keybindings
@@ -352,6 +353,7 @@ Optional dependencies:
 - `libappindicator-gtk3` - Tray support under wayland, for [windowed mode](#windowed-mode) only.
 - `imagemagick` - To make notification images round; only needed for endcord-lite.
 - `source-highlight` or `python-pygments` - Code block syntax highlighting (Alternatively use [this extension](https://github.com/sparklost/endcord-pygments-syntax)).
+- `rnnoise` - Noise suppression in voice calls (or use `--bundle-rnnoise` build.py arg)
 
 ### Windows
 - Pre-built binaries (built with nuitka) are available in releases
@@ -532,7 +534,7 @@ RAM usage greatly depends on multiple factors:
 - Full binary version uses few MB more than lite.
 - Number of servers and channels: each avg server is ~1MB.
 - If using terminal media player it will permanently increase RAM usage by ~20MB on firs media play.
-- Voice calls will also permanently increase RAM usage by ~5MB on first connected/initialized call (+ ~20MB for media if not already).
+- Voice calls will also permanently increase RAM usage by ~5MB on first connected/initialized call (+ ~20MB for media if not already). With few extra MB if using noise supression with RNNoise.
 
 ### Adding desktop launcher on Linux
 Simply make the launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.

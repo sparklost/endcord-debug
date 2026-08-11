@@ -2,10 +2,11 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-import curses
+from endcord import gtkcurses as curses
 import importlib.util
 import logging
 import os
+import shutil
 import signal
 import sys
 import threading
@@ -19,7 +20,7 @@ else:
 
 from endcord import arg, config, defaults, peripherals, utils
 
-VERSION = "1.5.3"
+VERSION = "1.5.4"
 default_config_path = peripherals.config_path
 log_path = peripherals.log_path
 threading.stack_size(512 * 1024)
@@ -27,8 +28,8 @@ uses_gtkcurses = hasattr(curses, "GTKCURSES")
 log_file_path = os.path.join(os.path.expanduser(log_path), APP_NAME + ".log")
 run = True
 
-# if os.path.exists(log_file_path):
-#     os.rename(log_file_path, log_file_path[:-4] + "-prev.log")
+if os.path.exists(log_file_path):
+    shutil.copy2(log_file_path, log_file_path[:-4] + "-prev.log")
 logger = logging
 logging.basicConfig(
     level="INFO",

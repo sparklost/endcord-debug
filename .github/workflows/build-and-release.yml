@@ -13,7 +13,7 @@ jobs:
     name: Build (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.clang && format(', {0}', matrix.clang-version) || '' }})
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest] #, windows-latest, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -21,6 +21,24 @@ jobs:
             nuitka: true
             clang: true
             clang-version: 22.1.3
+          # - os: windows-latest
+          #   platform: windows
+          #   python-version: 3.14
+          #   nuitka: true
+          #   clang: False   # https://github.com/Nuitka/Nuitka/issues/3621
+          #   clang-version: 21.1.8
+          # - os: macos-15
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
+          # - os: macos-15-intel
+          #   platform: macos
+          #   python-version: 3.14
+          #   nuitka: false
+          #   clang: true
+          #   clang-version: 21.1.8
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -61,7 +79,8 @@ jobs:
           sudo apt update --fix-missing
           sudo apt install -y patchelf ccache lld build-essential libssl-dev zlib1g-dev \
             libbz2-dev libreadline-dev libsqlite3-dev wget curl libncursesw5-dev \
-            xz-utils tk-dev libffi-dev liblzma-dev
+            xz-utils tk-dev libffi-dev liblzma-dev \
+            pkg-config libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0 gir1.2-pango-1.0
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows'
@@ -136,14 +155,36 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Run build lite script
+      # - name: Run build script [FULL]
+      #   shell: bash
+      #   run: |
+      #       if [[ "${{ matrix.platform }}" == "linux" ]]; then
+      #           uv venv --clear --python .cpython/bin/python3
+      #       fi
+      #       args=()
+      #       [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+      #       [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
+      #       [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
+      #       uv run build.py --level=FULL "${args[@]}"
+      #
+      # - name: Run build script [LITE]
+      #   shell: bash
+      #   run: |
+      #       args=()
+      #       [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
+      #       [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
+      #       [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
+      #       uv run build.py --level=LITE "${args[@]}"
+
+      - name: Run build script [WINDOWED]
+        if: matrix.platform == 'linux' || matrix.platform == 'windows'
         shell: bash
         run: |
             args=()
             [[ "${{ matrix.nuitka }}" == "true" ]] && args+=("--nuitka")
             [[ "${{ matrix.clang }}" != "true" ]] && args+=("--noclang")
             [[ "${{ runner.os }}" == "Linux" ]] && args+=("--custom-python")
-            uv run build.py --level=LITE "${args[@]}"
+            uv run build.py --level=FULL "${args[@]}"
 
       - name: Make binaries executable
         if: matrix.platform == 'macos' || matrix.platform == 'linux'
@@ -159,10 +200,9 @@ jobs:
           cp ../README.md ../LICENSE .
           cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
-            tar -czf "endcord-lite-$version-${{ matrix.platform }}.tar.gz" endcord-lite $extra
+            tar -czf "endcord-gui-$version-${{ matrix.platform }}.tar.gz" endcord-gui $extra
           elif [[ "${{ matrix.platform }}" == "windows" ]]; then
-            7z a "endcord-$version-${{ matrix.platform }}.zip" endcord.exe $extra
-            7z a "endcord-lite-$version-${{ matrix.platform }}.zip" endcord-lite.exe $extra
+            7z a "endcord-gui-$version-${{ matrix.platform }}.zip" endcord-gui.exe $extra
           elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
             zip "endcord-$version-${{ matrix.platform }}-x86_64.zip" endcord $extra
             zip "endcord-lite-$version-${{ matrix.platform }}-x86_64.zip" endcord-lite $extra

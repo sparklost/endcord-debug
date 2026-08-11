@@ -2,7 +2,7 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
-import curses
+from endcord import gtkcurses as curses
 import logging
 import os
 import re
@@ -367,7 +367,7 @@ class TUI():
         self.input_select_start = None
         self.input_select_end = None
         self.input_select_text = ""
-        self.typing = time.time()
+        self.typing = time.monotonic()
         self.extra_line_text = ""
         self.extra_line_format = []
         self.extra_window_title = ""
@@ -801,7 +801,7 @@ class TUI():
 
     def get_my_typing(self):
         """Return whether it has been typed in past 3s"""
-        if time.time() - self.typing > 3:
+        if time.monotonic() - self.typing > 3:
             return None
         return True
 
@@ -938,7 +938,7 @@ class TUI():
             self.input_select_start = None
         self.input_buffer = self.input_buffer[:self.input_index] + text + self.input_buffer[self.input_index:]
         self.input_index += len(text)
-        self.typing = int(time.time())
+        self.typing = int(time.monotonic())
         for key in text:
             self.add_to_delta_store(key)
         self.show_cursor()
@@ -1714,7 +1714,7 @@ class TUI():
                             above_mention = True
                         continue
                     y = max(num - skipped - self.tree_index, 0)
-                    if y >= h:   # bellow visible area
+                    if y >= h:   # below visible area
                         break
                     second_digit = (code % 100) // 10
                     color = curses.color_pair(3)
@@ -1769,7 +1769,7 @@ class TUI():
                     # this is prevented by vertically alternating space and alt_space character (U+2800 - braille pattern blank)
                     self.win_tree.insstr(y, 0, f"{" " if y % 2 else ALT_SPACE}\n", curses.color_pair(1))
                     y += 1
-                while num < len(self.tree_format):   # continue loop to detect mentions bellow visible area
+                while num < len(self.tree_format):   # continue loop to detect mentions below visible area
                     if (self.tree_format[num] % 100) // 10 == 2:
                         self.win_tree.insstr(h-1, 0, " Mentions down ".center(w, self.hline), curses.color_pair(8) | self.attrib_map[8])
                         break
@@ -2708,7 +2708,7 @@ class TUI():
                     with self.fun_lock:
                         self.red_list.append(self.input_index)
                 self.input_index += 1
-                self.typing = int(time.time())
+                self.typing = int(time.monotonic())
                 if self.enable_autocomplete:
                     selected_completion = 0
                 self.add_to_delta_store(key)
@@ -2820,7 +2820,7 @@ class TUI():
                     tab_str = " " * self.tab_spaces
                     self.input_buffer = self.input_buffer[:self.input_index] + tab_str + self.input_buffer[self.input_index:]
                     self.input_index += self.tab_spaces
-                    self.typing = int(time.time())
+                    self.typing = int(time.monotonic())
                     self.add_to_delta_store(tab_str)
                     self.show_cursor()
                     self.spellcheck()
@@ -3184,7 +3184,7 @@ class TUI():
             if self.have_scrollbar and x == chat_x + self.chat_hw[1] and y > chat_y and y < chat_y + self.chat_hw[0]:
                 self.drag_scrollbar()
                 return
-            new_click = (time.time(), x, y)
+            new_click = (time.monotonic(), x, y)
             if new_click[0] - self.first_click[0] < 0.5 and new_click[1:] == self.first_click[1:]:
                 self.first_click = (0, 0, 0)
                 return self.mouse_double_click(x, y)

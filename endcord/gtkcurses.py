@@ -10,7 +10,9 @@ import queue
 import sys
 import threading
 import time
+from functools import lru_cache
 
+import cairo
 import gi
 
 from endcord.wide_ranges import WIDE_RANGES
@@ -46,6 +48,8 @@ MAXIMIZED = False
 FONT_SIZE = 12
 FONT_NAME = "Monospace"
 GTK_DARK_THEME = True
+BG_ALPHA = 1.0
+BG_ALPHA_COLOR = 1.0
 try:
     import __main__
     APP_NAME = getattr(__main__, "APP_NAME", "endcord")
@@ -100,6 +104,8 @@ if config_path:
             TRAY_ICON_NORMAL = config.get("tray_icon_normal", TRAY_ICON_NORMAL)
             TRAY_ICON_UNREAD = config.get("tray_icon_unread", TRAY_ICON_UNREAD)
             TRAY_ICON_MENTION = config.get("tray_icon_mention", TRAY_ICON_MENTION)
+            BG_ALPHA = float(config.get("bg_alpha", BG_ALPHA))
+            BG_ALPHA_COLOR = float(config.get("bg_alpha_color", BG_ALPHA_COLOR))
             DEFAULT_PAIR = tuple(tuple(color) for color in config.get("default_color_pair", DEFAULT_PAIR))
             SYSTEM_COLORS = tuple(tuple(color) for color in config.get("color_palette", SYSTEM_COLORS))
 
@@ -115,7 +121,9 @@ if config_path:
             "enable_tray": ENABLE_TRAY,
             "tray_icon_normal": TRAY_ICON_NORMAL,
             "tray_icon_unread": TRAY_ICON_UNREAD,
-            "TRAY_ICON_MENTION": TRAY_ICON_MENTION,
+            "tray_icon_mention": TRAY_ICON_MENTION,
+            "bg_alpha": BG_ALPHA,
+            "bg_alpha_color": BG_ALPHA_COLOR,
             "default_color_pair": DEFAULT_PAIR,
             "color_palette": SYSTEM_COLORS,
         }
@@ -124,7 +132,10 @@ if config_path:
                 json.dump(config, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save config {config_path}: {e}")
-
+if BG_ALPHA >= 1:
+    BG_ALPHA = None
+if BG_ALPHA is None or BG_ALPHA_COLOR >= 1:
+    BG_ALPHA_COLOR = None
 
 # constants
 GTKCURSES = True
@@ -166,11 +177,13 @@ is_quitting = False
 gtk_window = None
 
 
+@lru_cache(maxsize=64)
 def rgb_to_cairo(c):
     """Convert rgb 0-255 to cairo 0.0-1.0"""
     return (c[0] / 255.0, c[1] / 255.0, c[2] / 255.0)
 
 
+@lru_cache(maxsize=64)
 def xterm_to_rgb(x):
     """Convert xterm256 color to RGB tuple"""
     if x < 16:
@@ -219,6 +232,32 @@ try:
     # using same cached wide ranges from formatter, so no need to call init_wide_ranges() here
 except ImportError:
     pass
+
+
+def glib_log_bridge(domain, level, message, user_data=None):   # noqa
+    """Logger bridge for gobject"""
+    if level & GLib.LogLevelFlags.LEVEL_CRITICAL:
+        logger.critical(f"[{domain}] {message}")
+    if level & GLib.LogLevelFlags.LEVEL_ERROR:
+        logger.error(f"[{domain}] {message}")
+    elif level & GLib.LogLevelFlags.LEVEL_WARNING:
+        logger.warning(f"[{domain}] {message}")
+    else:
+        logger.info(f"[{domain}] {message}")
+
+
+def no_log(domain, level, message, user_data=None):   # noqa
+    pass
+
+
+for domain in ("GLib", "GLib-GIO", "Gtk", "Gdk"):
+    GLib.log_set_handler(domain, GLib.LogLevelFlags.LEVEL_MASK | GLib.LogLevelFlags.FLAG_FATAL, glib_log_bridge, None)
+GLib.log_set_handler(
+    "libayatana-appindicator",
+    GLib.LogLevelFlags.LEVEL_MASK | GLib.LogLevelFlags.FLAG_FATAL,
+    glib_log_bridge if logger.getEffectiveLevel() == logging.DEBUG else no_log,
+    None,
+)
 
 
 # tray stuff
@@ -325,11 +364,23 @@ def set_nice_exit(value):
 
 # gtk stuff
 
+
 class GtkTerminalWindow(Gtk.Window):
     """GTK window interface"""
 
     def __init__(self, curses_window):
-        super().__init__(title=APP_NAME)
+        super().__init__()
+        self.set_title(APP_NAME)
+
+        # enable transparency
+        if BG_ALPHA is not None:
+            self.set_app_paintable(True)
+            screen = self.get_screen()
+            visual = screen.get_rgba_visual()
+            if visual and screen.is_composited():
+                self.set_visual(visual)
+
+        # init gtk stuff
         self.curses_window = curses_window
         self.set_default_size(*WINDOW_SIZE)
         self.set_resizable(True)
@@ -357,16 +408,13 @@ class GtkTerminalWindow(Gtk.Window):
         self.scroll_buffer = 0.0   # for touchpad
 
         # calculate font height and width and set it in curses class
-        context = self.drawing_area.get_pango_context()
-        layout = Pango.Layout(context)
+        layout = self.drawing_area.create_pango_layout("▒")
         layout.set_font_description(self.font_desc)
-        layout.set_text("▒", -1)
         _, rect = layout.get_extents()
         self.char_width = rect.width / Pango.SCALE
         self.char_height = rect.height / Pango.SCALE
         self.curses_window.char_width = self.char_width
         self.curses_window.char_height = self.char_height
-
 
 
     def on_configure(self, widget, event):   # noqa
@@ -386,8 +434,16 @@ class GtkTerminalWindow(Gtk.Window):
     def on_draw(self, widget, cr):   # noqa
         """Window draw event"""
         bg = color_map[0][1]
-        cr.set_source_rgb(*rgb_to_cairo(bg))
-        cr.paint()
+
+        if BG_ALPHA is not None:
+            cr.set_operator(cairo.OPERATOR_SOURCE)
+            cr.set_source_rgba(*rgb_to_cairo(bg), BG_ALPHA)
+            cr.paint()
+            cr.set_operator(cairo.OPERATOR_OVER)
+        else:
+            cr.set_source_rgb(*rgb_to_cairo(bg))
+            cr.paint()
+
         layout = PangoCairo.create_layout(cr)
 
         with self.curses_window.buffer_lock:
@@ -427,7 +483,10 @@ class GtkTerminalWindow(Gtk.Window):
 
                     # draw bg
                     if bg_color != bg and text:
-                        cr.set_source_rgb(*rgb_to_cairo(bg_color))
+                        if BG_ALPHA_COLOR is not None:
+                            cr.set_source_rgba(*rgb_to_cairo(bg_color), BG_ALPHA_COLOR)
+                        else:
+                            cr.set_source_rgb(*rgb_to_cairo(bg_color))
                         cr.rectangle(px_x, px_y, bg_px_width, self.char_height)
                         cr.fill()
 
@@ -896,6 +955,8 @@ def wrapper(func, *args, **kwargs):   # noqa
                 Gtk.main_quit()
                 return False
             GLib.idle_add(clean_quit, priority=GLib.PRIORITY_HIGH)
+            time.sleep(0.2)
+            os._exit(0)   # failsafe if gtk.main fails to stop for any reason
 
     threading.Thread(target=user_thread, daemon=True).start()
 
