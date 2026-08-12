@@ -1051,3 +1051,40 @@ ACS_GEQUAL = "≥"
 ACS_PI = "π"
 ACS_NEQUAL = "≠"
 ACS_STERLING = "£"
+
+
+
+# for terminal_utils.py
+
+def query_terminal(query):   # noqa
+    """Assuming it is kitty protocol check"""
+    return "FAILED"   # set to OK to enable image drawing
+
+
+def get_font_size():
+    """Get font size in px"""
+    return gtk_window.char_width, gtk_window.char_height
+
+
+def get_size():
+    """Get window size in character rows/columns"""
+    return gtk_window.curses_window.nlines, gtk_window.curses_window.ncols
+
+
+def read_key():
+    """Blocking get key event"""
+    return event_queue.get()
+
+
+def draw_over_curses(text, y, x):
+    """Currently unimplemented"""
+    pass
+
+
+def draw(text):
+    """Currently unimplemented"""
+    pass
+
+
+def leave_tui(): pass   # noqa
+def enter_tui(): pass   # noqa

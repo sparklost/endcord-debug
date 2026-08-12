@@ -522,11 +522,17 @@ def toggle_windowed(check_only=False):
                 lines[num] = "from endcord import gtkcurses as curses\n"
                 changed = True
                 enable = True
-                break
             elif line.startswith("from endcord import gtkcurses as curses"):
                 lines[num] = "import curses\n"
                 changed = True
                 enable = False
+            elif line.startswith("from endcord import terminal_utils as terminal_utils"):
+                lines[num] = "from endcord import gtkcurses as terminal_utils\n"
+                changed = True
+            elif line.startswith("from endcord import gtkcurses as terminal_utils"):
+                lines[num] = "from endcord import terminal_utils as terminal_utils\n"
+                changed = True
+            if num > 100:
                 break
         if changed and not check_only:
             with open(path, "w", encoding="utf-8") as f:
@@ -1012,7 +1018,6 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--remove-output",
         "--output-dir=dist",
         f"--output-filename={pkgname}",
-        "--trace-execution",
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
