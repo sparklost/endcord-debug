@@ -1012,6 +1012,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--remove-output",
         "--output-dir=dist",
         f"--output-filename={pkgname}",
+        "--trace-execution",
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
