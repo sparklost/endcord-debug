@@ -61,11 +61,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-    env:
-      PYTHON_VERSION: ${{ env.LINUX_PYTHON_VERSION }}
-      CLANG_VERSION: ${{ env.LINUX_CLANG_VERSION }}
-      USE_NUITKA: ${{ env.LINUX_USE_NUITKA }}
-      USE_CLANG: ${{ env.LINUX_USE_CLANG }}
     steps:
       - uses: actions/checkout@v7
 
@@ -83,10 +78,10 @@ jobs:
           sudo apt-get autoremove -y
 
       - name: Install LLVM and Clang
-        if: env.USE_CLANG == 'true'
+        if: env.LINUX_USE_CLANG == 'true'
         shell: bash
         run: |
-          MAJOR_VERSION=$(echo "${CLANG_VERSION}" | cut -d. -f1)
+          MAJOR_VERSION=$(echo "${LINUX_MACOS_INTEL}" | cut -d. -f1)
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh $MAJOR_VERSION
@@ -115,8 +110,8 @@ jobs:
             echo "Error: Could not extract curses_tag from pyproject.toml"
             exit 1
           fi
-          args=("${PYTHON_VERSION}")
-          [[ "${USE_CLANG}" == "true" ]] && args+=("clang")
+          args=("${LINUX_PYTHON_VERSION}")
+          [[ "${LINUX_USE_CLANG}" == "true" ]] && args+=("clang")
           ./tools/build_python.sh "${args[@]}" curses "$CURSES_VERSION"
 
       - name: Install uv
@@ -129,24 +124,24 @@ jobs:
         run: |
           uv venv --clear --python .cpython/bin/python3
           args=("--custom-python")
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
         run: |
           args=("--custom-python")
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
         run: |
           args=("--custom-python")
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --toggle-windowed
           uv run build.py --level=FULL "${args[@]}"
 
@@ -181,11 +176,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-    env:
-      PYTHON_VERSION: ${{ env.WIN_PYTHON_VERSION }}
-      CLANG_VERSION: ${{ env.WIN_CLANG_VERSION }}
-      USE_NUITKA: ${{ env.WIN_USE_NUITKA }}
-      USE_CLANG: ${{ env.WIN_USE_CLANG }}
     steps:
       - uses: actions/checkout@v7
 
@@ -195,14 +185,14 @@ jobs:
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
-        if: env.USE_CLANG == 'true'
+        if: env.WNDOWS_USE_CLANG == 'true'
         with:
-          version: ${{ env.CLANG_VERSION }}
+          version: ${{ env.WINDOWS_MACOS_INTEL }}
 
       - name: Install Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.WINDOWS_PYTHON_VERSION }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -214,24 +204,24 @@ jobs:
         run: |
           uv venv --clear --system-site-packages --python /ucrt64/bin/python.exe
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --toggle-windowed
           uv run build.py --level=FULL "${args[@]}"
 
@@ -263,11 +253,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-    env:
-      PYTHON_VERSION: ${{ env.MAC_ARM_PYTHON_VERSION }}
-      CLANG_VERSION: ${{ env.MAC_ARM_CLANG_VERSION }}
-      USE_NUITKA: ${{ env.MAC_ARM_USE_NUITKA }}
-      USE_CLANG: ${{ env.MAC_ARM_USE_CLANG }}
     steps:
       - uses: actions/checkout@v7
 
@@ -279,14 +264,14 @@ jobs:
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
-        if: env.USE_CLANG == 'true'
+        if: env.MAC_ARM_USE_CLANG == 'true'
         with:
-          version: ${{ env.CLANG_VERSION }}
+          version: ${{ env.MAC_ARM_MACOS_INTEL }}
 
       - name: Install Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.MAC_ARM_PYTHON_VERSION }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -297,16 +282,16 @@ jobs:
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${MAC_ARM_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${MAC_ARM_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${MAC_ARM_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${MAC_ARM_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Make binaries executable
@@ -339,11 +324,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-    env:
-      PYTHON_VERSION: ${{ env.MAC_INTEL_PYTHON_VERSION }}
-      CLANG_VERSION: ${{ env.MAC_INTEL_CLANG_VERSION }}
-      USE_NUITKA: ${{ env.MAC_INTEL_USE_NUITKA }}
-      USE_CLANG: ${{ env.MAC_INTEL_USE_CLANG }}
     steps:
       - uses: actions/checkout@v7
 
@@ -353,10 +333,16 @@ jobs:
           brew install ccache
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        if: env.MAC_INTEL_USE_CLANG == 'true'
+        with:
+          version: ${{ env.MAC_INTEL_MACOS_INTEL }}
+
       - name: Install Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.MAC_INTEL_PYTHON_VERSION }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -367,16 +353,16 @@ jobs:
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${MAC_INTEL_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${MAC_INTEL_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
         run: |
           args=()
-          [[ "${USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${USE_CLANG}" != "true" ]] && args+=("--noclang")
+          [[ "${MAC_INTEL_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${MAC_INTEL_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Make binaries executable
