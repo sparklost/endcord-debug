@@ -187,6 +187,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ccache
             mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-uv
             mingw-w64-ucrt-x86_64-python-gobject
             mingw-w64-ucrt-x86_64-gtk3
 
@@ -195,11 +196,6 @@ jobs:
         shell: msys2 {0}
         run: |
           pacman -S --noconfirm mingw-w64-ucrt-x86_64-clang
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Run build script [FULL]
         shell: msys2 {0}
