@@ -37,7 +37,6 @@ env:
   LINUX_USE_CLANG: "true"
   # Windows
   WIN_PYTHON_VERSION: "3.14"
-  WIN_CLANG_VERSION: "21.1.8"
   WIN_USE_NUITKA: "true"
   WIN_USE_CLANG: "false"   # https://github.com/Nuitka/Nuitka/issues/3621
   # macOS ARM
@@ -101,7 +100,7 @@ jobs:
             sudo sed -i -E 's/(\+[0-9a-f~exp]+[-[0-9a-f~exp\.]*)//g' "$VERSION_FILE"
           fi
 
-      - name: Build Custom Python
+      - name: Build custom Python
         shell: bash
         run: |
           chmod +x ./tools/build_python.sh
@@ -153,10 +152,7 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
-          cd dist
-          mkdir -p docs
-          cp ../README.md ../LICENSE .
-          cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
+          cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           tar -czf "endcord-$version-linux.tar.gz" endcord $extra
           tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
           tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
@@ -179,28 +175,34 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        shell: powershell
-        run: choco install ccache -y
+      - name: Setup MSYS2 and Dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-ccache
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-python-gobject
+            mingw-w64-ucrt-x86_64-gtk3
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        if: env.WNDOWS_USE_CLANG == 'true'
-        with:
-          version: ${{ env.WINDOWS_MACOS_INTEL }}
-
-      - name: Install Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: ${{ env.WINDOWS_PYTHON_VERSION }}
+        if: env.WINDOWS_ARM_USE_CLANG == 'true'
+        shell: msys2 {0}
+        run: |
+          pacman -S --noconfirm mingw-w64-ucrt-x86_64-clang
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: false
 
       - name: Run build script [FULL]
-        shell: bash
+        shell: msys2 {0}
         run: |
           uv venv --clear --system-site-packages --python /ucrt64/bin/python.exe
           args=()
@@ -209,7 +211,7 @@ jobs:
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
-        shell: bash
+        shell: msys2 {0}
         run: |
           args=()
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
@@ -217,7 +219,7 @@ jobs:
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
-        shell: bash
+        shell: msys2 {0}
         run: |
           args=()
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
@@ -225,15 +227,12 @@ jobs:
           uv run build.py --toggle-windowed
           uv run build.py --level=FULL "${args[@]}"
 
-      - name: Archive files
-        shell: bash
+      - name: Archive artifacts
+        shell: msys2 {0}
         run: |
-          version=${GITHUB_REF#refs/tags/}
+          version=$(${GITHUB_REF#refs/tags/})
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
-          cd dist
-          mkdir -p docs
-          cp ../README.md ../LICENSE .
-          cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
+          cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           7z a "endcord-$version-windows.zip" endcord.exe $extra
           7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
           7z a "endcord-gui-$version-windows.zip" endcord-gui.exe $extra
@@ -302,10 +301,7 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
-          cd dist
-          mkdir -p docs
-          cp ../README.md ../LICENSE .
-          cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
+          cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-arm64.zip" endcord $extra
           zip "endcord-lite-$version-macos-arm64.zip" endcord-lite $extra
 
@@ -373,10 +369,7 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
-          cd dist
-          mkdir -p docs
-          cp ../README.md ../LICENSE .
-          cp ../docs/{commands.md,configuration.md,extensions.md,keybindings.md} docs/
+          cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-x86_64.zip" endcord $extra
           zip "endcord-lite-$version-macos-x86_64.zip" endcord-lite $extra
 
@@ -407,7 +400,7 @@ jobs:
           path: ./dist
           merge-multiple: true
 
-      - name: Extract version from tag
+      - name: Extract version from tag/branch
         id: extract_version
         run: |
           version=${GITHUB_REF#refs/tags/}
