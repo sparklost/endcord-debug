@@ -175,39 +175,51 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Setup MSYS2 and Dependencies
-        uses: msys2/setup-msys2@v2
+      - name: Install system dependencies
+        run: choco install ccache -y
+        shell: powershell
+
+      - name: Install Python
+        uses: actions/setup-python@v7
         with:
-          msystem: UCRT64
-          path-type: inherit
-          update: true
-          install: >-
-            base-devel
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-ccache
-            mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-python-pip
-            mingw-w64-ucrt-x86_64-uv
-            mingw-w64-ucrt-x86_64-python-gobject
-            mingw-w64-ucrt-x86_64-gtk3
+          python-version: ${{ env.WINDOWS_PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Install gvsbuild GTK3
+        shell: bash
+        run: |
+          DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/wingtk/gvsbuild/releases/latest" | jq -r '.assets[] | select(.name | startswith("GTK3_Gvsbuild_") and endswith("_x64.zip")) | .browser_download_url')
+          curl -L "$DOWNLOAD_URL" -o gtk3.zip
+          mkdir -p /c/gtk
+          unzip -q gtk3.zip -d /c/gtk
+          PYGOBJECT_WHEEL=$(ls C:/gtk/wheels/PyGObject*.whl)
+          PYCAIRO_WHEEL=$(ls C:/gtk/wheels/pycairo*.whl)
+          echo "C:\gtk\bin" >> $GITHUB_PATH
+          echo "LIB=C:\gtk\lib;$LIB" >> $GITHUB_ENV
+          echo "INCLUDE=C:\gtk\include;C:\gtk\include\cairo;C:\gtk\include\glib-2.0;C:\gtk\include\gobject-introspection-1.0;C:\gtk\lib\glib-2.0\include;$INCLUDE" >> $GITHUB_ENV
+          echo "PYGOBJECT_WHEEL=$PYGOBJECT_WHEEL" >> $GITHUB_ENV
+          echo "PYCAIRO_WHEEL=$PYCAIRO_WHEEL" >> $GITHUB_ENV
 
       - name: Install LLVM and Clang
-        if: env.WINDOWS_ARM_USE_CLANG == 'true'
-        shell: msys2 {0}
-        run: |
-          pacman -S --noconfirm mingw-w64-ucrt-x86_64-clang
+        uses: KyleMayes/install-llvm-action@v2
+        if: env.WINDOWS_USE_CLANG == 'true'
+        with:
+          version: ${{ matrix.clang-version }}
 
       - name: Run build script [FULL]
-        shell: msys2 {0}
+        shell: bash
         run: |
-          uv venv --clear --system-site-packages --python /ucrt64/bin/python.exe
           args=()
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
-        shell: msys2 {0}
+        shell: bash
         run: |
           args=()
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
@@ -215,16 +227,17 @@ jobs:
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
-        shell: msys2 {0}
+        shell: bash
         run: |
           args=()
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --toggle-windowed
+          uv pip install --force-reinstall "$PYGOBJECT_WHEEL" "$PYCAIRO_WHEEL"
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Archive artifacts
-        shell: msys2 {0}
+        shell: bash
         run: |
           version=$(${GITHUB_REF#refs/tags/})
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
