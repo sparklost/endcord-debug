@@ -275,15 +275,14 @@ def ensure_gtk():
             wheels_path = "C:\\gtk\\wheels"   # assumption
         if os.path.exists(wheels_path):
             return wheels_path
+        fprint("GTK3 could not be found on system", color=RED)
+        if gtk_path:
+            iprint(f"Provided GTK_ROOT={gtk_path} does not exist")
         else:
-            fprint("GTK3 could not be found on system", color=RED)
-            if gtk_path:
-                iprint(f"Provided GTK_ROOT={gtk_path} does not exist")
-            else:
-                iprint("Use gvsbuild: https://github.com/wingtk/gvsbuild to install it", color=RED)
-                iprint("Endcord build script expects GTK3 to be installed at 'C:\\gtk'", color=RED)
-                iprint("If it is installed elsewhere, set that path to 'GTK_ROOT' environment variable", color=RED)
-            return False
+            iprint("Use gvsbuild: https://github.com/wingtk/gvsbuild to install it", color=RED)
+            iprint("Endcord build script expects GTK3 to be installed at 'C:\\gtk'", color=RED)
+            iprint("If it is installed elsewhere, set that path to 'GTK_ROOT' environment variable", color=RED)
+        return False
     if sys.platform == "linux":
         try:
             result = subprocess.run(["pkg-config", "--exists", "gtk+-3.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -1244,6 +1243,8 @@ if __name__ == "__main__":
             subprocess.run(["uv", "pip", "install", "git+https://github.com/Nuitka/Nuitka.git"], check=True)
 
         subprocess.run(["uv", "pip", "install"] + load_build_config().get("windowed_deps", []), check=True)
+        if sys.platform == "win32":
+            install_local_wheels(ensure_gtk())
         fprint("Windowed mode enabled!")
 
     enable_extensions(enable=(not args.disable_extensions))
