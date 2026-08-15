@@ -261,6 +261,45 @@ def ensure_python(freethreaded, safe=False):
     return version, have_freethreaded or freethreaded
 
 
+def ensure_gtk():
+    """Check if gtk is installed and properly configured on this system (linux/windows), on windows configure correct wheels"""
+    if sys.platform == "win32":
+        if "gtk\\bin" not in os.environ.get("PATH", ""):
+            fprint("GTK3 could not be found on system", color=RED)
+            iprint("GTK3 could not be found in PATH", color=RED)
+            iprint("Make sure you followed setup instructions provided at https://github.com/wingtk/gvsbuild", color=RED)
+            return False
+        gtk_path = os.environ.get("GTK_ROOT")
+        wheels_path = os.path.join(gtk_path, "wheels")
+        if not wheels_path or not os.path.exists(wheels_path):
+            wheels_path = "C:\\gtk\\wheels"   # assumption
+        if os.path.exists(wheels_path):
+            install_local_wheels(wheels_path)
+        else:
+            fprint("GTK3 could not be found on system", color=RED)
+            if gtk_path:
+                iprint(f"Provided GTK_ROOT={gtk_path} does not exist")
+            else:
+                iprint("Use gvsbuild: https://github.com/wingtk/gvsbuild to install it", color=RED)
+                iprint("Endcord build script expects GTK3 to be installed at 'C:\\gtk'", color=RED)
+                iprint("If it is installed elsewhere, set that path to 'GTK_ROOT' environment variable", color=RED)
+            return False
+        return True
+    if sys.platform == "linux":
+        try:
+            result = subprocess.run(["pkg-config", "--exists", "gtk+-3.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            return result.returncode == 0
+        except FileNotFoundError:
+            try:
+                output = subprocess.check_output(["ldconfig", "-p"], text=True, stderr=subprocess.DEVNULL)
+                return "libgtk-3.so" in output
+            except (subprocess.SubprocessError, FileNotFoundError):
+                fprint("GTK3 could not be found on system", color=RED)
+                iprint("Install GTK3 with your package manager", color=RED)
+                return False
+    return True
+
+
 def check_patchelf():
     """Patchelf is required for nuitka, so check early if its installed"""
     if sys.platform != "linux":
@@ -393,6 +432,16 @@ def check_venv_file_size(lib_name, file_name, min_file_size):
     return os.stat(path).st_size > min_file_size
 
 
+def install_local_wheels(wheels_dir):
+    """Find and install all wheels from specified directory"""
+    if not os.path.exists(wheels_dir):
+        return
+    wheel_files = [os.path.join(wheels_dir, f) for f in os.listdir(wheels_dir) if f.lower().endswith(".whl")]
+    if wheel_files:
+        return
+    subprocess.run(["uv", "pip", "install"] + wheel_files, check=True)
+
+
 def patch_soundcard():
     """
     Search for soundcard/mediafoundation.py in .venv
@@ -502,6 +551,9 @@ def compress_emoji():
 
 def toggle_windowed(check_only=False):
     """Toggle windowed mode"""
+    if not ensure_gtk():
+        return
+
     whitelist = ("endcord" + os.sep, "endcord_cython" + os.sep, "main.py")
     file_list = []
     for path, subdirs, files in os.walk(os.getcwd()):

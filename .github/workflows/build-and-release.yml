@@ -196,13 +196,10 @@ jobs:
           curl -L "$DOWNLOAD_URL" -o gtk3.zip
           mkdir -p /c/gtk
           unzip -q gtk3.zip -d /c/gtk
-          PYGOBJECT_FILE=$(basename /c/gtk/wheels/pygobject*.whl)
-          PYCAIRO_FILE=$(basename /c/gtk/wheels/pycairo*.whl)
           echo 'C:\gtk\bin' >> $GITHUB_PATH
           echo 'LIB=C:\gtk\lib;'$LIB >> $GITHUB_ENV
           echo 'INCLUDE=C:\gtk\include;C:\gtk\include\cairo;C:\gtk\include\glib-2.0;C:\gtk\include\gobject-introspection-1.0;C:\gtk\lib\glib-2.0\include;'$INCLUDE >> $GITHUB_ENV
-          echo "PYGOBJECT_WHEEL=C:/gtk/wheels/$PYGOBJECT_FILE" >> $GITHUB_ENV
-          echo "PYCAIRO_WHEEL=C:/gtk/wheels/$PYCAIRO_FILE" >> $GITHUB_ENV
+          echo "GTK_ROOT=C:\gtk" >> $GITHUB_ENV
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
@@ -233,7 +230,6 @@ jobs:
           [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --toggle-windowed
-          uv pip install --force-reinstall "$PYGOBJECT_WHEEL" "$PYCAIRO_WHEEL"
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Archive artifacts
