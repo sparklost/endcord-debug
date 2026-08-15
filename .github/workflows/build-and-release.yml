@@ -182,7 +182,7 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.WINDOWS_PYTHON_VERSION }}
+          python-version: ${{ env.WIN_PYTHON_VERSION }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -203,7 +203,7 @@ jobs:
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
-        if: env.WINDOWS_USE_CLANG == 'true'
+        if: env.WIN_USE_CLANG == 'true'
         with:
           version: ${{ matrix.clang-version }}
 
@@ -211,7 +211,7 @@ jobs:
       #   shell: bash
       #   run: |
       #     args=()
-      #     [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
       #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
       #     uv run build.py --level=FULL "${args[@]}"
       #
@@ -219,7 +219,7 @@ jobs:
       #   shell: bash
       #   run: |
       #     args=()
-      #     [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
       #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
       #     uv run build.py --level=LITE "${args[@]}"
 
@@ -227,7 +227,7 @@ jobs:
         shell: bash
         run: |
           args=()
-          [[ "${WINDOWS_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --toggle-windowed
           uv run build.py --level=FULL "${args[@]}"
@@ -235,7 +235,8 @@ jobs:
       - name: Archive artifacts
         shell: bash
         run: |
-          version=$(${GITHUB_REF#refs/tags/})
+          version=${GITHUB_REF#refs/tags/}
+          version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           # 7z a "endcord-$version-windows.zip" endcord.exe $extra
@@ -305,6 +306,7 @@ jobs:
         shell: bash
         run: |
           version=${GITHUB_REF#refs/tags/}
+          version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-arm64.zip" endcord $extra
@@ -373,6 +375,7 @@ jobs:
         shell: bash
         run: |
           version=${GITHUB_REF#refs/tags/}
+          version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-x86_64.zip" endcord $extra

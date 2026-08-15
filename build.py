@@ -274,7 +274,7 @@ def ensure_gtk():
         if not wheels_path or not os.path.exists(wheels_path):
             wheels_path = "C:\\gtk\\wheels"   # assumption
         if os.path.exists(wheels_path):
-            install_local_wheels(wheels_path)
+            return wheels_path
         else:
             fprint("GTK3 could not be found on system", color=RED)
             if gtk_path:
@@ -284,7 +284,6 @@ def ensure_gtk():
                 iprint("Endcord build script expects GTK3 to be installed at 'C:\\gtk'", color=RED)
                 iprint("If it is installed elsewhere, set that path to 'GTK_ROOT' environment variable", color=RED)
             return False
-        return True
     if sys.platform == "linux":
         try:
             result = subprocess.run(["pkg-config", "--exists", "gtk+-3.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -551,7 +550,8 @@ def compress_emoji():
 
 def toggle_windowed(check_only=False):
     """Toggle windowed mode"""
-    if not ensure_gtk():
+    have_gtk = ensure_gtk()
+    if not have_gtk:
         return
 
     whitelist = ("endcord" + os.sep, "endcord_cython" + os.sep, "main.py")
@@ -631,6 +631,8 @@ def toggle_windowed(check_only=False):
     if enable:
         subprocess.run(["uv", "pip", "install"] + windowed_deps, check=True)
         patch_pystray()
+        if sys.platform == "win32":
+            install_local_wheels(have_gtk)
         fprint("Windowed mode enabled!")
     else:
         subprocess.run(["uv", "pip", "uninstall"] + windowed_deps, check=True)
