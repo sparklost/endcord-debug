@@ -673,7 +673,11 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
         os.environ["CXXFLAGS"] = CXXFLAGS_OLD
         os.environ["LDFLAGS"] = LDFLAGS_OLD
         return [], [], []
-    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in UNSAFE_FLAGS] if safe else CUSTOM_CFLAGS
+    unsafe_flags = UNSAFE_FLAGS
+    if sys.platform == "win32" and not clang:   # unsupported flags in cl
+        unsafe_flags += ["-g0", "-O3", "-mtune=generic", "-fno-semantic-interposition", "-fno-strict-overflow"]
+        safe = True
+    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags] if safe else CUSTOM_CFLAGS
     cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
     cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
     ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + CUSTOM_LDFLAGS + ldflags
