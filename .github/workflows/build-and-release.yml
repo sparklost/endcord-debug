@@ -196,7 +196,7 @@ jobs:
           curl -L "$DOWNLOAD_URL" -o gtk3.zip
           mkdir -p /c/gtk
           unzip -q gtk3.zip -d /c/gtk
-          PYGOBJECT_FILE=$(basename /c/gtk/wheels/PyGObject*.whl)
+          PYGOBJECT_FILE=$(basename /c/gtk/wheels/pygobject*.whl)
           PYCAIRO_FILE=$(basename /c/gtk/wheels/pycairo*.whl)
           echo 'C:\gtk\bin' >> $GITHUB_PATH
           echo 'LIB=C:\gtk\lib;'$LIB >> $GITHUB_ENV
