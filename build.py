@@ -432,12 +432,10 @@ def check_venv_file_size(lib_name, file_name, min_file_size):
 
 def install_local_wheels(wheels_dir):
     """Find and install all wheels from specified directory"""
-    iprint(f"==============={wheels_dir}==============", color=RED)
     if not os.path.exists(wheels_dir):
         return
     wheel_files = [os.path.join(wheels_dir, f) for f in os.listdir(wheels_dir) if f.lower().endswith(".whl")]
-    iprint(f"==============={wheel_files}==============", color=RED)
-    if wheel_files:
+    if not wheel_files:
         return
     subprocess.run(["uv", "pip", "install"] + wheel_files, check=True)
 
@@ -1250,7 +1248,6 @@ if __name__ == "__main__":
 
         subprocess.run(["uv", "pip", "install"] + load_build_config().get("windowed_deps", []), check=True)
         if sys.platform == "win32":
-            iprint("===============OK==============", color=RED)
             install_local_wheels(ensure_gtk())
         fprint("Windowed mode enabled!")
 
