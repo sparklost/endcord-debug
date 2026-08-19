@@ -176,8 +176,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install system dependencies
-        run: choco install ccache -y
-        shell: powershell
+        shell: bash
+        run: |
+            choco install ccache -y
+            echo UV_LINK_MODE=copy >> $GITHUB_ENV
 
       - name: Install Python
         uses: actions/setup-python@v7

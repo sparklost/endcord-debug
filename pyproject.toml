@@ -24,7 +24,7 @@ dependencies = [
 build = [
     "cython>=3.2.9",
     "nuitka[onefile]>=4.1.3",
-    "pyinstaller>=6.22.0",
+    "pyinstaller>=6.22.1",
     "setuptools>=82.0.0",
 ]
 media = [
@@ -43,4 +43,5 @@ rnnoise_tag = "main"
 mini_exclude_deps = ["numpy", "soundfile", "soundcard"]
 micro_exclude_deps = ["numpy", "soundfile", "soundcard", "orjson", "pycryptodome"]
 medium_deps = ["pillow"]
-windowed_deps = ["pygobject", "pystray"]
+windowed_deps = ["pygobject", "pycairo", "pystray"]
+gvsbuild_release = "2026.8.0"
