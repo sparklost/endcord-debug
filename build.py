@@ -1090,9 +1090,11 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     elif sys.platform == "win32":
         options += ["--assume-yes-for-downloads"]
         if windowed:
-            add_data += ["--include-data-dir=.gtk=gtk"]
-            options += ["--onefile-cache-mode=cached"]
-            # options += ["--windows-console-mode=disable"]
+            add_data += [
+                "--include-data-dir=.gtk/lib=gtk/lib",
+                "--include-raw-dir=.gtk/bin=gtk/bin",
+            ]
+            options += ["--windows-console-mode=hide"]
         hidden_imports += [
             "--include-package=winrt.windows.foundation",
             "--include-package=winrt.windows.ui.notifications",
@@ -1124,7 +1126,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--static-libpython=yes" if static_python else "",
         "--no-deployment-flag=self-execution",   # -c and -m flags are safely handled by argparser
         "--no-prefer-source-code",
-        "--onefile-tempdir-spec={TEMP}/endcord",   # _{PID}",
+        "--onefile-tempdir-spec={TEMP}/endcord_{PID}",
         "--remove-output",
         "--output-dir=dist",
         f"--output-filename={pkgname}",
