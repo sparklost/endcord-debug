@@ -398,10 +398,10 @@ def setup_gvsbuild(gvsbuild_release):
         to_delete = (
             "rsvg", "libcrypto", "gtk-4", "gtkmm", "giomm", "gettext", "xml2", "libssl", "sigc",
             "cairo-script", "glibmm", "gtksourceview", "gdkmm", "pcre2-16", "pcre2-32", "turbojpeg",
-            "atkmm", "pangomm", "cairomm", "girepository-1", "graphene", "pkgconf", "pcre2-posix", 
+            "atkmm", "pangomm", "cairomm", "girepository-1", "graphene", "pkgconf", "pcre2-posix",
             "gailutil", "asprintf", "gthread", "teextstyle", "harfbuzz-cairo", "harfbuzz-gpu"
-            "harfbuzz-subset", "harfbuzz-gobject", "harfbuzz-vector", "harfbuzz-raster", 
-            
+            "harfbuzz-subset", "harfbuzz-gobject", "harfbuzz-vector", "harfbuzz-raster",
+
         )
         for filename in os.listdir(os.path.join(target_dir, "bin")):
             if filename.startswith(to_delete):
@@ -1124,7 +1124,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--static-libpython=yes" if static_python else "",
         "--no-deployment-flag=self-execution",   # -c and -m flags are safely handled by argparser
         "--no-prefer-source-code",
-        "--onefile-tempdir-spec={TEMP}/endcord_{PID}",
+        "--onefile-tempdir-spec={TEMP}/endcord",   # _{PID}",
         "--remove-output",
         "--output-dir=dist",
         f"--output-filename={pkgname}",
