@@ -1,6 +1,6 @@
 Add windows gui build to workflow
-    test build as-is
-    ensure dlls are included by nuitka
+    TEST
+
 Fix emoji redering in gtkcurses
 Add error handler to gtkcurses
 Fix stuttering when using rnnoise
