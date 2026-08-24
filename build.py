@@ -1094,7 +1094,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
                 "--include-data-dir=.gtk/lib=gtk/lib",
                 "--include-raw-dir=.gtk/bin=gtk/bin",
             ]
-            options += ["--windows-console-mode=disable"]
+            # options += ["--windows-console-mode=disable"]
         hidden_imports += [
             "--include-package=winrt.windows.foundation",
             "--include-package=winrt.windows.ui.notifications",
