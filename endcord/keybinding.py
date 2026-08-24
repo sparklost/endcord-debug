@@ -497,23 +497,55 @@ def find_chainable(keybindings, command_bindings):
     return chainable
 
 
-def picker_internal(screen, keybindings, command_bindings, fallback):
+def patch_texts(n):
+    """Ensure there is constant number of spaces to all lines in text constants"""
+    global MESSAGE
+    MESSAGE = "\n".join((" " * n) + line.strip(" ") for line in MESSAGE.split("\n"))
+
+
+def draw_border(screen, corners, color):
+    """Draw border at screen borders with custom corners"""
+    h, w = screen.getmaxyx()
+    try:
+        screen.hline(0, 1, curses.ACS_HLINE, w - 2, curses.color_pair(color))
+        screen.hline(h - 1, 1, curses.ACS_HLINE, w - 2, curses.color_pair(color))
+        screen.vline(1, 0, curses.ACS_VLINE, h - 2, curses.color_pair(color))
+        screen.vline(1, w - 1, curses.ACS_VLINE, h - 2, curses.color_pair(color))
+        screen.addstr(0, 0, corners[0], curses.color_pair(color))
+        screen.addstr(0, w - 1, corners[2], curses.color_pair(color))
+        screen.addstr(h - 1, 0, corners[1], curses.color_pair(color))
+        screen.addstr(h - 1, w - 1, corners[3], curses.color_pair(color))
+    except curses.error:   # errors randomly when resizing
+        pass
+
+
+def picker_internal(screen, keybindings, command_bindings, config):
     """Keybinding picker, prints last pressed key combination"""
     curses.use_default_colors()
     curses.curs_set(0)
-    curses.init_pair(1, -1, -1)
     curses.mousemask(curses.ALL_MOUSE_EVENTS)
     curses.mouseinterval(0)
     sys.stdout.write("\x1b[?2004h")
     sys.stdout.flush()
+
+    fallback = config["fallback_keybinding_parser"]
+    bordered = not (config["compact"])
+    border_corners = config["border_corners"]
+    if config["color_default"] != [-1, -1]:
+        curses.init_pair(1, config["color_default"][0], config["color_default"][1])
+    else:
+        curses.init_pair(1, -1, -1)
+    screen.bkgd(" ", curses.color_pair(1))
+    if bordered:
+        patch_texts(2)
+
     if sys.platform == "win32":
         fallback = True
     if not fallback:
         screen.keypad(False)
     if uses_gtkcurses:
         fallback = False
-    screen.bkgd(" ", curses.color_pair(1))
-    screen.addstr(1, 0, MESSAGE)
+
     command_bindings = [(val, key) for key, val in command_bindings.items()]
     try:
         backspace_code = 8 if (curses.erasechar() == 8 or "XTERM_VERSION" in os.environ or sys.platform == "win32") else 127
@@ -521,6 +553,11 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
         backspace_code = 127
     if fallback:
         backspace_code = 263 if backspace_code == 127 else backspace_code
+
+    screen.bkgd(" ", curses.color_pair(1))
+    screen.addstr(1, 0, MESSAGE, curses.color_pair(1))
+    if bordered:
+        draw_border(screen, border_corners, 1)
     while True:
         if fallback:
             key_code = get_key_fallback(screen, backspace_code)
@@ -531,7 +568,7 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
         if key_code == -1:
             continue
         if key_code == KEY_RESIZE:
-            screen.addstr(1, 0, MESSAGE)
+            screen.addstr(1, 0, MESSAGE, curses.color_pair(1))
         text = f"Keybinding code: {key_code}"
         warning = ""
         for key, value in keybindings.items():
@@ -545,15 +582,15 @@ def picker_internal(screen, keybindings, command_bindings, fallback):
         if key_code in ("C-c", "QUIT"):
             break
         _, w = screen.getmaxyx()
-        screen.addstr(7, 1, text + " " * (w - len(text)))
-        screen.addstr(8, 1, warning + " " * (w - len(warning)))
+        screen.addstr(7, 1 + bordered, text + " " * (w - len(text) - bordered*3), curses.color_pair(1))
+        screen.addstr(8, 1 + bordered, warning + " " * (w - len(warning) - bordered*3), curses.color_pair(1))
         screen.refresh()
 
 
-def picker(keybindings, command_bindings, fallback=False):
+def picker(keybindings, command_bindings, config):
     """Keybinding picker, prints last pressed key combination"""
     try:
-        curses.wrapper(picker_internal, keybindings, command_bindings, fallback)
+        curses.wrapper(picker_internal, keybindings, command_bindings, config)
     except curses.error as e:
         if str(e) != "endwin() returned ERR":
             sys.exit("Curses error")

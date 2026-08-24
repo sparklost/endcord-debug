@@ -10,6 +10,7 @@ import queue
 import sys
 import threading
 import time
+import traceback
 from functools import lru_cache
 
 # support for gvsbuild
@@ -159,6 +160,7 @@ KEY_UP = None
 KEY_LEFT = None
 KEY_RIGHT = None
 KEY_RESIZE = None
+KEY_MOUSE = None
 A_STANDOUT = 0x00010000
 A_UNDERLINE = 0x00020000
 A_BOLD = 0x00200000
@@ -189,6 +191,7 @@ current_icon_index = None
 nice_exit = False
 is_quitting = False
 gtk_window = None
+use_tray = False
 
 
 @lru_cache(maxsize=64)
@@ -275,6 +278,14 @@ GLib.log_set_handler(
 
 
 # tray stuff
+
+def enable_tray():
+    """Enable tray icon setup"""
+    global use_tray
+    use_tray = True
+    if not icon:   # tray not yet initialized
+        threading.Thread(target=tray_thread, daemon=True).start()
+
 
 def load_tray_image(path=None, color=None):
     """Load image from path, fallback to circle drawn with pillow"""
@@ -623,6 +634,21 @@ class GtkTerminalWindow(Gtk.Window):
         if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_KP_Page_Down):
             event_queue.put(mod_prefix + "PGDN")
             return True
+        if keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R):
+            modifiers.append("C")
+            modifiers = ["CTRL" if mod == "C" else "ALT" if mod == "M" else "SHIFT" for mod in ["C", "M", "S"] if mod in modifiers]
+            event_queue.put("-".join(modifiers))
+            return True
+        if keyval in (Gdk.KEY_Alt_L, Gdk.KEY_Alt_R):
+            modifiers.append("M")
+            modifiers = ["CTRL" if mod == "C" else "ALT" if mod == "M" else "SHIFT" for mod in ["C", "M", "S"] if mod in modifiers]
+            event_queue.put("-".join(modifiers))
+            return True
+        if keyval in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R):
+            modifiers.append("S")
+            modifiers = ["CTRL" if mod == "C" else "ALT" if mod == "M" else "SHIFT" for mod in ["C", "M", "S"] if mod in modifiers]
+            event_queue.put("-".join(modifiers))
+            return True
 
         # arrows
         if keyval in ARROW_KEYS:
@@ -743,7 +769,7 @@ class GtkTerminalWindow(Gtk.Window):
         """X button click"""
         global is_quitting, run
 
-        if have_tray and ENABLE_TRAY:
+        if have_tray and use_tray and ENABLE_TRAY:
             self.hide()
             return True
 
@@ -783,6 +809,39 @@ class GtkTerminalWindow(Gtk.Window):
         else:
             self.show()
             self.present()
+
+
+def error_handler(message, unblock_event, report=False):
+    """Spawn GTK window with the error and unblock the thread when closed"""
+    if report:
+        report = "\n\nYou can report this here:\nhttps://github.com/sparklost/endcord/issues"
+    def build_and_show():   # noqa
+        win = Gtk.Window()
+        win.set_title(f"{APP_NAME} Error Report")
+        win.set_default_size(800, 500)
+        win.set_position(Gtk.WindowPosition.CENTER)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        textview = Gtk.TextView()
+        textview.set_editable(False)
+        textview.set_cursor_visible(False)
+        textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        font_desc = Pango.FontDescription("Monospace 11")
+        textview.modify_font(font_desc)
+        buf = textview.get_buffer()
+        buf.set_text(f"{message}{report if report else ""}\n\n[Press any key to exit]")
+        scroll.add(textview)
+        win.add(scroll)
+        def on_key_press(widget, event):   # noqa
+            win.destroy()
+            return True
+        def on_destroy(widget):   # noqa
+            unblock_event.set()
+        win.connect("key-press-event", on_key_press)
+        win.connect("destroy", on_destroy)
+        win.show_all()
+        return False
+    GLib.idle_add(build_and_show)
 
 
 # curses stuff
@@ -923,6 +982,7 @@ class Window:
     def vline(self, y, x, ch, n, attr=0):   # noqa
         for i in range(n):
             self.insch(y + i, x, ch, attr)
+    def erase(self): self.clear()   # noqa
     def render(self): self.refresh()   # noqa
     def redrawwin(self): self.refresh()   # noqa
     def noutrefresh(self): self.refresh()   # noqa
@@ -956,7 +1016,7 @@ def wrapper(func, *args, **kwargs):   # noqa
     global gtk_window
     window = initscr()
 
-    if have_tray and ENABLE_TRAY:
+    if have_tray and use_tray and ENABLE_TRAY:
         threading.Thread(target=tray_thread, daemon=True).start()
     elif tray_error:
         logger.error(f"Failed to start tray: {tray_error}")
@@ -964,8 +1024,20 @@ def wrapper(func, *args, **kwargs):   # noqa
         logger.warning("Pystray not installed")
 
     def user_thread():
+        error_event = threading.Event()
         try:
             func(window, *args, **kwargs)
+        except SystemExit as e:
+            if e.code:
+                exit_message = str(e.code)
+                logger.warning(f"Exit with message: {exit_message}")
+                error_handler(exit_message, error_event)
+                error_event.wait()
+        except Exception as e:
+            error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logger.error(f"Exit with error:\n{error_traceback}")
+            error_handler(error_traceback, error_event, report=True)
+            error_event.wait()
         finally:
             def clean_quit():
                 if gtk_window:
