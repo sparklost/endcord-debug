@@ -197,21 +197,21 @@ jobs:
         with:
           version: ${{ matrix.clang-version }}
 
-      - name: Run build script [FULL]
-        shell: bash
-        run: |
-          args=()
-          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=FULL "${args[@]}"
-
-      - name: Run build script [LITE]
-        shell: bash
-        run: |
-          args=()
-          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=LITE "${args[@]}"
+      # - name: Run build script [FULL]
+      #   shell: bash
+      #   run: |
+      #     args=()
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=FULL "${args[@]}"
+      #
+      # - name: Run build script [LITE]
+      #   shell: bash
+      #   run: |
+      #     args=()
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -229,8 +229,8 @@ jobs:
           version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          7z a "endcord-$version-windows.zip" endcord.exe $extra
-          7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
+          # 7z a "endcord-$version-windows.zip" endcord.exe $extra
+          # 7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
           7z a "endcord-gui-$version-windows.zip" endcord-gui.exe $extra
 
       - name: Upload build artifact
