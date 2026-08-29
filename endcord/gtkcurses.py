@@ -240,12 +240,12 @@ def is_wch(ch):
     return binary_search(codepoint, WIDE_RANGES)
 
 
-# use cython if available, ~? times faster
-try:
-    from endcord_cython.formatter import is_wch
-    # using same cached wide ranges from formatter, so no need to call init_wide_ranges() here
-except ImportError:
-    pass
+# # use cython if available, ~? times faster
+# try:
+#     from endcord_cython.formatter import is_wch
+#     # using same cached wide ranges from formatter, so no need to call init_wide_ranges() here
+# except ImportError:
+#     pass
 
 
 def glib_log_bridge(domain, level, message, user_data=None):   # noqa
@@ -278,7 +278,6 @@ GLib.log_set_handler(
 
 def enable_tray():
     """Enable tray icon setup"""
-    logger.info("ENABLE TRAY")
     global use_tray
     use_tray = True
     if not icon:   # tray not yet initialized
@@ -287,7 +286,6 @@ def enable_tray():
 
 def load_tray_image(path=None, color=None):
     """Load image from path, fallback to circle drawn with pillow"""
-    logger.info("LOAD TRAY ICON")
     if path and os.path.exists(os.path.expanduser(path)):
         return Image.open(os.path.expanduser(path)).convert("RGBA")
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -297,7 +295,6 @@ def load_tray_image(path=None, color=None):
 
 
 if have_tray:
-    logger.info("HAVE TRAY")
     tray_icons = [load_tray_image(path, color) for path, color in (
         (TRAY_ICON_NORMAL, (200, 200, 200, 255)),
         (TRAY_ICON_UNREAD, (255, 120, 0, 255)),
@@ -312,7 +309,6 @@ def set_tray_icon(icon_index):
     1 - unreads
     2 - mention
     """
-    logger.info("SET TRAY ICON")
     global icon, current_icon_index
     if not have_tray or icon is None or current_icon_index == icon_index:
         return
@@ -328,7 +324,6 @@ def set_tray_icon(icon_index):
 
 def tray_toggle(icon=None, item=None):   # noqa
     """Toggle window button in tray"""
-    logger.info("TRAY TOGGLE")
     global toggle_window
     toggle_window = True
     if gtk_window:
@@ -337,7 +332,6 @@ def tray_toggle(icon=None, item=None):   # noqa
 
 def quit_app(icon=None, item=None):   # noqa
     """Exit button in tray"""
-    logger.info("QUIT APP")
     global is_quitting, run
 
     def do_exit():
@@ -374,7 +368,6 @@ def quit_app(icon=None, item=None):   # noqa
 
 def tray_thread():
     """Thread that runs tray icon handler"""
-    logger.info("TRAY THREAD START")
     global icon
     time.sleep(1)   # delay for window to init
     menu = Menu(
@@ -387,7 +380,6 @@ def tray_thread():
 
 def set_nice_exit(value):
     """Set fast exit to true/false"""
-    logger.info("NICE EXIT")
     global nice_exit
     nice_exit = value
 
@@ -399,7 +391,6 @@ class GtkTerminalWindow(Gtk.Window):
     """GTK window interface"""
 
     def __init__(self, curses_window):
-        logger.info("GTK INIT START")
         super().__init__()
         self.set_title(APP_NAME)
 
@@ -437,7 +428,6 @@ class GtkTerminalWindow(Gtk.Window):
         self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME} {FONT_SIZE}")
         self.last_mouse_cell = (None, None)
         self.scroll_buffer = 0.0   # for touchpad
-        logger.info("GTK INIT MID")
 
         # calculate font height and width and set it in curses class
         layout = self.drawing_area.create_pango_layout("▒")
@@ -450,7 +440,6 @@ class GtkTerminalWindow(Gtk.Window):
         self.curses_window.char_height = self.char_height
         self.layout = self.drawing_area.create_pango_layout("")
         PangoCairo.context_set_resolution(self.layout.get_context(), 96)
-        logger.info("GTK INIT END")
 
 
     def on_configure(self, widget, event):   # noqa
@@ -769,13 +758,11 @@ class GtkTerminalWindow(Gtk.Window):
 
     def on_destroy(self, widget):   # noqa
         """Close window"""
-        logger.info("DESTROY")
         quit_app()
 
 
     def on_delete_event(self, widget, event):   # noqa
         """X button click"""
-        logger.info("X CLICK")
         global is_quitting, run
 
         if have_tray and use_tray and ENABLE_TRAY:
@@ -807,14 +794,12 @@ class GtkTerminalWindow(Gtk.Window):
 
     def force_destroy(self):
         """Called by GLib timeout after 2 seconds"""
-        logger.info("FORCE DESTROY")
         self.destroy()
         return False
 
 
     def toggle_visibility(self):
         """Change window visibility"""
-        logger.info("TOGGLE VISIBILITY")
         if self.is_visible():
             self.hide()
         else:
@@ -824,7 +809,6 @@ class GtkTerminalWindow(Gtk.Window):
 
 def error_handler(message, unblock_event, report=False):
     """Spawn GTK window with the error and unblock the thread when closed"""
-    logger.info("ERROR HANDLER START")
     if report:
         report = "\n\nYou can report this here:\nhttps://github.com/sparklost/endcord/issues"
     def build_and_show():   # noqa
@@ -908,35 +892,27 @@ class Window:
 
 
     def insstr(self, y, x, text, attr=0):   # noqa
-        logger.info("INSSTR")
         lines = text.split("\n")
         with self.buffer_lock:
             for i, line in enumerate(lines):
-                logger.info(i)
                 if y + i >= self.nlines:
                     break
-                logger.info("A")
                 line_len = self.ncols - x
                 if line_len <= 0:
                     continue
-                logger.info("B")
                 abs_y = self.begy + y + i
                 abs_x = self.begx + x
                 if abs_y >= len(self.buffer):
                     break
-                logger.info("C")
                 row_buffer = self.buffer[abs_y]
                 max_col = min(abs_x + line_len, len(row_buffer))
                 src_idx = 0
                 col_idx = abs_x
                 source_line_len = len(line)
-                logger.info("D")
                 while src_idx < source_line_len and col_idx < max_col:
-                    logger.info("Da")
                     ch = line[src_idx]
                     src_idx += 1
                     if is_wch(ch):
-                        logger.info("Db")
                         if src_idx < source_line_len and "\ufe00" <= line[src_idx] <= "\ufe0f":
                             ch += line[src_idx]
                             src_idx += 1
@@ -946,17 +922,12 @@ class Window:
                             row_buffer[col_idx] = (" ", attr)
                             col_idx += 1
                     else:
-                        logger.info("Dc")
                         row_buffer[col_idx] = (ch, attr)
                         col_idx += 1
-                        logger.info("De")
-                logger.info("E")
                 if i < len(lines) - 1 and col_idx < max_col:
                     while col_idx < max_col:
                         row_buffer[col_idx] = (" ", attr)
                         col_idx += 1
-                logger.info("Z")
-        logger.info("INSSTR END")
 
 
     def chgat(self, y, x, num, attr=0):   # noqa
@@ -1045,17 +1016,14 @@ def wrapper(func, *args, **kwargs):   # noqa
         threading.Thread(target=tray_thread, daemon=True).start()
     elif tray_error:
         logger.error(f"Failed to start tray: {tray_error}")
-    else:
+    if not have_tray:
         logger.warning("Pystray not installed")
 
     def user_thread():
         error_event = threading.Event()
         try:
-            logger.info("FUNC START")
             func(window, *args, **kwargs)
-            logger.info("FINISHED")
         except SystemExit as e:
-            logger.info("SYSTEM EXIT")
             if e.code:
                 exit_message = str(e.code)
                 logger.warning(f"Exit with message: {exit_message}")
@@ -1082,11 +1050,7 @@ def wrapper(func, *args, **kwargs):   # noqa
         gtk_window.maximize()
     gtk_window.show_all()
     try:
-        logger.info("MAIN START")
         Gtk.main()
-    except Exception as e:
-        error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-        logger.error(f"GTK ERROR:\n{error_traceback}")
     finally:
         os._exit(0)   # forced exit in case there are some threads still running
 
