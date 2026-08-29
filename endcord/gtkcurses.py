@@ -36,17 +36,14 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
+if sys.platform == "linux":
+    gi.require_version("GioUnix", "2.0")
 
 from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo   # noqa
 have_tray = False
 tray_error = None
 if importlib.util.find_spec("pystray"):
     have_tray = True
-    if sys.platform == "linux":
-        if importlib.util.find_spec("gi"):
-            gi.require_version("GioUnix", "2.0")
-        else:
-            have_tray = False
 if have_tray:
     from PIL import Image, ImageDraw
     try:
@@ -281,6 +278,7 @@ GLib.log_set_handler(
 
 def enable_tray():
     """Enable tray icon setup"""
+    logger.info("ENABLE TRAY")
     global use_tray
     use_tray = True
     if not icon:   # tray not yet initialized
@@ -289,6 +287,7 @@ def enable_tray():
 
 def load_tray_image(path=None, color=None):
     """Load image from path, fallback to circle drawn with pillow"""
+    logger.info("LOAD TRAY ICON")
     if path and os.path.exists(os.path.expanduser(path)):
         return Image.open(os.path.expanduser(path)).convert("RGBA")
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -298,6 +297,7 @@ def load_tray_image(path=None, color=None):
 
 
 if have_tray:
+    logger.info("HAVE TRAY")
     tray_icons = [load_tray_image(path, color) for path, color in (
         (TRAY_ICON_NORMAL, (200, 200, 200, 255)),
         (TRAY_ICON_UNREAD, (255, 120, 0, 255)),
@@ -312,6 +312,7 @@ def set_tray_icon(icon_index):
     1 - unreads
     2 - mention
     """
+    logger.info("SET TRAY ICON")
     global icon, current_icon_index
     if not have_tray or icon is None or current_icon_index == icon_index:
         return
@@ -327,6 +328,7 @@ def set_tray_icon(icon_index):
 
 def tray_toggle(icon=None, item=None):   # noqa
     """Toggle window button in tray"""
+    logger.info("TRAY TOGGLE")
     global toggle_window
     toggle_window = True
     if gtk_window:
@@ -335,6 +337,7 @@ def tray_toggle(icon=None, item=None):   # noqa
 
 def quit_app(icon=None, item=None):   # noqa
     """Exit button in tray"""
+    logger.info("QUIT APP")
     global is_quitting, run
 
     def do_exit():
@@ -371,6 +374,7 @@ def quit_app(icon=None, item=None):   # noqa
 
 def tray_thread():
     """Thread that runs tray icon handler"""
+    logger.info("TRAY THREAD START")
     global icon
     time.sleep(1)   # delay for window to init
     menu = Menu(
@@ -383,6 +387,7 @@ def tray_thread():
 
 def set_nice_exit(value):
     """Set fast exit to true/false"""
+    logger.info("NICE EXIT")
     global nice_exit
     nice_exit = value
 
@@ -394,6 +399,7 @@ class GtkTerminalWindow(Gtk.Window):
     """GTK window interface"""
 
     def __init__(self, curses_window):
+        logger.info("GTK INIT START")
         super().__init__()
         self.set_title(APP_NAME)
 
@@ -431,6 +437,7 @@ class GtkTerminalWindow(Gtk.Window):
         self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME} {FONT_SIZE}")
         self.last_mouse_cell = (None, None)
         self.scroll_buffer = 0.0   # for touchpad
+        logger.info("GTK INIT MID")
 
         # calculate font height and width and set it in curses class
         layout = self.drawing_area.create_pango_layout("▒")
@@ -443,6 +450,7 @@ class GtkTerminalWindow(Gtk.Window):
         self.curses_window.char_height = self.char_height
         self.layout = self.drawing_area.create_pango_layout("")
         PangoCairo.context_set_resolution(self.layout.get_context(), 96)
+        logger.info("GTK INIT END")
 
 
     def on_configure(self, widget, event):   # noqa
@@ -455,12 +463,12 @@ class GtkTerminalWindow(Gtk.Window):
         if ncols != self.curses_window.ncols or nlines != self.curses_window.nlines:
             self.curses_window.screen_resize(nlines, ncols)
             event_queue.put("RESIZE")
-
         return False
 
 
     def on_draw(self, widget, cr):   # noqa
         """Window draw event"""
+        logger.info("DRAW START")
         bg = color_map[0][1]
 
         if BG_ALPHA is not None:
@@ -520,12 +528,14 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.fill()
 
                     # draw text
+                    logger.info("DRAW TEXT START")
                     current_desc = self.font_desc.copy()
                     if flags & A_BOLD:
                         current_desc.set_weight(Pango.Weight.BOLD)
                     if flags & A_ITALIC:
                         current_desc.set_style(Pango.Style.ITALIC)
                     layout.set_font_description(current_desc)
+                    logger.info("DRAW TEXT MID")
                     layout.set_text(text, -1)
                     cr.set_source_rgb(*rgb_to_cairo(fg_color))
                     cr.move_to(px_x, px_y)
@@ -535,6 +545,7 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.move_to(px_x, px_y + self.char_height - 2)
                         cr.line_to(px_x + bg_px_width, px_y + self.char_height - 2)
                         cr.stroke()
+                    logger.info("DRAW TEXT END")
 
             # draw cursor
             if cursor_type:
@@ -579,6 +590,7 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.rectangle(cursor_px_x, cursor_px_y, bar_w, self.char_height)
                         cr.fill()
 
+        logger.info("DRAW END")
         return True
 
 
@@ -660,11 +672,11 @@ class GtkTerminalWindow(Gtk.Window):
         unicode_code = Gdk.keyval_to_unicode(keyval)
         if unicode_code != 0:
             ch = chr(unicode_code)
-            if not ctrl and not alt:
-                event_queue.put(ch)
-                return True
             if ch == " ":
                 event_queue.put(mod_prefix + "SPACE")
+                return True
+            if not ctrl and not alt:
+                event_queue.put(ch)
                 return True
             char_mods = []
             if ctrl:
@@ -762,11 +774,13 @@ class GtkTerminalWindow(Gtk.Window):
 
     def on_destroy(self, widget):   # noqa
         """Close window"""
+        logger.info("DESTROY")
         quit_app()
 
 
     def on_delete_event(self, widget, event):   # noqa
         """X button click"""
+        logger.info("X CLICK")
         global is_quitting, run
 
         if have_tray and use_tray and ENABLE_TRAY:
@@ -798,12 +812,14 @@ class GtkTerminalWindow(Gtk.Window):
 
     def force_destroy(self):
         """Called by GLib timeout after 2 seconds"""
+        logger.info("FORCE DESTROY")
         self.destroy()
         return False
 
 
     def toggle_visibility(self):
         """Change window visibility"""
+        logger.info("TOGGLE VISIBILITY")
         if self.is_visible():
             self.hide()
         else:
@@ -813,6 +829,7 @@ class GtkTerminalWindow(Gtk.Window):
 
 def error_handler(message, unblock_event, report=False):
     """Spawn GTK window with the error and unblock the thread when closed"""
+    logger.info("ERROR HANDLER START")
     if report:
         report = "\n\nYou can report this here:\nhttps://github.com/sparklost/endcord/issues"
     def build_and_show():   # noqa
@@ -896,6 +913,7 @@ class Window:
 
 
     def insstr(self, y, x, text, attr=0):   # noqa
+        logger.info("INSSTR")
         lines = text.split("\n")
         with self.buffer_lock:
             for i, line in enumerate(lines):
@@ -1026,6 +1044,7 @@ def wrapper(func, *args, **kwargs):   # noqa
     def user_thread():
         error_event = threading.Event()
         try:
+            logger.info("FUNC START")
             func(window, *args, **kwargs)
             logger.info("FINISHED")
         except SystemExit as e:
@@ -1056,6 +1075,7 @@ def wrapper(func, *args, **kwargs):   # noqa
         gtk_window.maximize()
     gtk_window.show_all()
     try:
+        logger.info("MAIN START")
         Gtk.main()
     except Exception as e:
         error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
