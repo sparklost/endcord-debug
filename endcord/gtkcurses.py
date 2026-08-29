@@ -468,7 +468,6 @@ class GtkTerminalWindow(Gtk.Window):
 
     def on_draw(self, widget, cr):   # noqa
         """Window draw event"""
-        logger.info("DRAW START")
         bg = color_map[0][1]
 
         if BG_ALPHA is not None:
@@ -528,14 +527,12 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.fill()
 
                     # draw text
-                    logger.info("DRAW TEXT START")
                     current_desc = self.font_desc.copy()
                     if flags & A_BOLD:
                         current_desc.set_weight(Pango.Weight.BOLD)
                     if flags & A_ITALIC:
                         current_desc.set_style(Pango.Style.ITALIC)
                     layout.set_font_description(current_desc)
-                    logger.info("DRAW TEXT MID")
                     layout.set_text(text, -1)
                     cr.set_source_rgb(*rgb_to_cairo(fg_color))
                     cr.move_to(px_x, px_y)
@@ -545,7 +542,6 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.move_to(px_x, px_y + self.char_height - 2)
                         cr.line_to(px_x + bg_px_width, px_y + self.char_height - 2)
                         cr.stroke()
-                    logger.info("DRAW TEXT END")
 
             # draw cursor
             if cursor_type:
@@ -590,7 +586,6 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.rectangle(cursor_px_x, cursor_px_y, bar_w, self.char_height)
                         cr.fill()
 
-        logger.info("DRAW END")
         return True
 
 
@@ -917,24 +912,31 @@ class Window:
         lines = text.split("\n")
         with self.buffer_lock:
             for i, line in enumerate(lines):
+                logger.info(i)
                 if y + i >= self.nlines:
                     break
+                logger.info("A")
                 line_len = self.ncols - x
                 if line_len <= 0:
                     continue
+                logger.info("B")
                 abs_y = self.begy + y + i
                 abs_x = self.begx + x
                 if abs_y >= len(self.buffer):
                     break
+                logger.info("C")
                 row_buffer = self.buffer[abs_y]
                 max_col = min(abs_x + line_len, len(row_buffer))
                 src_idx = 0
                 col_idx = abs_x
                 source_line_len = len(line)
+                logger.info("D")
                 while src_idx < source_line_len and col_idx < max_col:
+                    logger.info("Da")
                     ch = line[src_idx]
                     src_idx += 1
                     if is_wch(ch):
+                        logger.info("Db")
                         if src_idx < source_line_len and "\ufe00" <= line[src_idx] <= "\ufe0f":
                             ch += line[src_idx]
                             src_idx += 1
@@ -944,12 +946,17 @@ class Window:
                             row_buffer[col_idx] = (" ", attr)
                             col_idx += 1
                     else:
+                        logger.info("Dc")
                         row_buffer[col_idx] = (ch, attr)
                         col_idx += 1
+                        logger.info("De")
+                logger.info("E")
                 if i < len(lines) - 1 and col_idx < max_col:
                     while col_idx < max_col:
                         row_buffer[col_idx] = (" ", attr)
                         col_idx += 1
+                logger.info("Z")
+        logger.info("INSSTR END")
 
 
     def chgat(self, y, x, num, attr=0):   # noqa
