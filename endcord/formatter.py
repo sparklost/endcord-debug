@@ -1928,8 +1928,6 @@ class ChatGenerator:
                         urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], 0])
                 if embed_type.startswith("gif") and embed_url.startswith("["):
                     pass
-                elif self.placeholder_images and embed_type not in ("article", "link"):
-                    embed_url = ""
                 elif embed["main_url"] == embed_url and self.trim_embed_url_size:
                     embed_url = trim_string(embed_url, self.trim_embed_url_size)
                 embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 9])
@@ -3045,7 +3043,7 @@ def generate_extra_window_profile(user_data, user_roles, presence, colors, max_l
         lines = split_long_line(text, max_len)
         body.extend(lines)
         color_status = 18 if status == "Online" else 19 if status == "Idle" else 20 if status == "DnD" else color_low
-        body_format.extend(([(color_standout, 0, 0, 6), (color_status, 1, 8, len(status) + 8)],), *[None] * (len(lines) - 1))
+        body_format.extend([([(color_standout, 0, 0, 6), (color_status, 1, 8, len(status) + 8)],), *[None] * (len(lines) - 1)])
     else:
         body.append("Status: Offline")
         body_format.append(([(color_standout, 0, 0, 6), (color_low, 1, 8, max_len)]))

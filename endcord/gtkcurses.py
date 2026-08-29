@@ -1027,7 +1027,9 @@ def wrapper(func, *args, **kwargs):   # noqa
         error_event = threading.Event()
         try:
             func(window, *args, **kwargs)
+            logger.info("FINISHED")
         except SystemExit as e:
+            logger.info("SYSTEM EXIT")
             if e.code:
                 exit_message = str(e.code)
                 logger.warning(f"Exit with message: {exit_message}")
@@ -1055,6 +1057,9 @@ def wrapper(func, *args, **kwargs):   # noqa
     gtk_window.show_all()
     try:
         Gtk.main()
+    except Exception as e:
+        error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+        logger.error(f"GTK ERROR:\n{error_traceback}")
     finally:
         os._exit(0)   # forced exit in case there are some threads still running
 
