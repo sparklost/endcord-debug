@@ -285,6 +285,9 @@ def ensure_gtk():
     if sys.platform == "linux":
         try:
             result = subprocess.run(["pkg-config", "--exists", "gtk+-3.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if result.returncode != 0:
+                fprint("GTK3 could not be found on system", color=RED)
+                iprint("Install GTK3 with your package manager", color=RED)
             return result.returncode == 0
         except FileNotFoundError:
             try:
