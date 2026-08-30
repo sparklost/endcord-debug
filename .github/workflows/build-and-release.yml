@@ -80,7 +80,7 @@ jobs:
         if: env.LINUX_USE_CLANG == 'true'
         shell: bash
         run: |
-          MAJOR_VERSION=$(echo "${LINUX_MACOS_INTEL}" | cut -d. -f1)
+          MAJOR_VERSION=$(echo "${LINUX_CLANG_VERSION}" | cut -d. -f1)
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh $MAJOR_VERSION
@@ -118,22 +118,22 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Run build script [FULL]
-        shell: bash
-        run: |
-          uv venv --clear --python .cpython/bin/python3
-          args=("--custom-python")
-          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=FULL "${args[@]}"
-
-      - name: Run build script [LITE]
-        shell: bash
-        run: |
-          args=("--custom-python")
-          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=LITE "${args[@]}"
+      # - name: Run build script [FULL]
+      #   shell: bash
+      #   run: |
+      #     uv venv --clear --python .cpython/bin/python3
+      #     args=("--custom-python")
+      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=FULL "${args[@]}"
+      #
+      # - name: Run build script [LITE]
+      #   shell: bash
+      #   run: |
+      #     args=("--custom-python")
+      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -153,8 +153,8 @@ jobs:
           version=${GITHUB_REF#refs/tags/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          tar -czf "endcord-$version-linux.tar.gz" endcord $extra
-          tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
+          # tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          # tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
           tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
 
       - name: Upload build artifact
@@ -261,7 +261,7 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         if: env.MAC_ARM_USE_CLANG == 'true'
         with:
-          version: ${{ env.MAC_ARM_MACOS_INTEL }}
+          version: ${{ env.MAC_ARM_CLANG_VERSION }}
 
       - name: Install Python
         uses: actions/setup-python@v7
@@ -330,7 +330,7 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         if: env.MAC_INTEL_USE_CLANG == 'true'
         with:
-          version: ${{ env.MAC_INTEL_MACOS_INTEL }}
+          version: ${{ env.MAC_INTEL_CLANG_VERSION }}
 
       - name: Install Python
         uses: actions/setup-python@v7

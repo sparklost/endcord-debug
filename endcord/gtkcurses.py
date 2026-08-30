@@ -322,7 +322,7 @@ def set_tray_icon(icon_index):
         icon.icon = tray_icons[2]
 
 
-def tray_toggle(icon=None, item=None):   # noqa
+def tray_toggle():
     """Toggle window button in tray"""
     global toggle_window
     toggle_window = True
@@ -330,32 +330,38 @@ def tray_toggle(icon=None, item=None):   # noqa
         GLib.idle_add(gtk_window.toggle_visibility)
 
 
-def quit_app(icon=None, item=None):   # noqa
-    """Exit button in tray"""
+def quit_app(instant=False):
+    """Stop GTK and tray and allow wrapper() to return"""
     global is_quitting, run
 
     def do_exit():
         global run
         run = False
-        if have_tray and icon:
-            try:
-                icon.stop()
-            except Exception:
-                pass
-        Gtk.main_quit()
 
-    if is_quitting or not nice_exit:   # second click
+        def stop_tray():
+            if have_tray and globals().get("icon"):
+                try:
+                    globals()["icon"].stop()
+                except Exception:
+                    pass
+        threading.Thread(target=stop_tray, daemon=True).start()
+
+        def stop_gtk():
+            if gtk_window:
+                gtk_window.destroy()
+            if Gtk.main_level() > 0:
+                Gtk.main_quit()
+            return False
+        GLib.idle_add(stop_gtk)
+
+    if is_quitting or not nice_exit or instant:
         do_exit()
         return
-
-    is_quitting = True   # first click
+    is_quitting = True
     event_queue.put("QUIT")
-    event_queue.put("QUIT")   # to be sure
-
     elapsed = 0
 
     def poll_exit():
-        # polling for 2s until main loop finishes
         nonlocal elapsed
         elapsed += 50
         if not run or elapsed >= QUIT_TIMEOUT:
@@ -371,8 +377,8 @@ def tray_thread():
     global icon
     time.sleep(1)   # delay for window to init
     menu = Menu(
-        MenuItem("Toggle Window", tray_toggle),
-        MenuItem(f"Quit {APP_NAME}", quit_app),
+        MenuItem("Toggle Window", lambda x, y: tray_toggle()),   # noqa
+        MenuItem(f"Quit {APP_NAME}", lambda x, y: quit_app()),   # noqa
     )
     icon = Icon(f"{APP_NAME.lower()}-tray", tray_icons[0], APP_NAME, menu)
     icon.run()
@@ -758,37 +764,16 @@ class GtkTerminalWindow(Gtk.Window):
 
     def on_destroy(self, widget):   # noqa
         """Close window"""
-        quit_app()
+        global gtk_window
+        gtk_window = None
 
 
     def on_delete_event(self, widget, event):   # noqa
         """X button click"""
-        global is_quitting, run
-
         if have_tray and use_tray and ENABLE_TRAY:
             self.hide()
             return True
-
-        if is_quitting:   # second click
-            run = False
-            self.destroy()
-            return False
-
-        if not nice_exit:   # instant exit
-            run = False
-            self.destroy()
-            return False
-
-        is_quitting = True   # first click
-        event_queue.put("QUIT")
-
-        def delayed_destroy():
-            global run
-            run = False
-            self.destroy()
-            return False
-
-        GLib.timeout_add(QUIT_TIMEOUT, delayed_destroy)
+        quit_app()
         return True
 
 
@@ -1011,6 +996,7 @@ def initscr():   # noqa
 def wrapper(func, *args, **kwargs):   # noqa
     global gtk_window
     window = initscr()
+    func_result = None
 
     if have_tray and use_tray and ENABLE_TRAY:
         threading.Thread(target=tray_thread, daemon=True).start()
@@ -1020,9 +1006,10 @@ def wrapper(func, *args, **kwargs):   # noqa
         logger.warning("Pystray not installed")
 
     def user_thread():
+        nonlocal func_result
         error_event = threading.Event()
         try:
-            func(window, *args, **kwargs)
+            func_result = func(window, *args, **kwargs)
         except SystemExit as e:
             if e.code:
                 exit_message = str(e.code)
@@ -1035,14 +1022,7 @@ def wrapper(func, *args, **kwargs):   # noqa
             error_handler(error_traceback, error_event, report=True)
             error_event.wait()
         finally:
-            def clean_quit():
-                if gtk_window:
-                    gtk_window.destroy()
-                Gtk.main_quit()
-                return False
-            GLib.idle_add(clean_quit, priority=GLib.PRIORITY_HIGH)
-            time.sleep(0.2)
-            os._exit(0)   # failsafe if gtk.main fails to stop for any reason
+            GLib.idle_add(lambda: quit_app(instant=True))
 
     threading.Thread(target=user_thread, daemon=True).start()
 
@@ -1052,7 +1032,8 @@ def wrapper(func, *args, **kwargs):   # noqa
     try:
         Gtk.main()
     finally:
-        os._exit(0)   # forced exit in case there are some threads still running
+        pass
+    return func_result
 
 
 def ungetch(ch):
