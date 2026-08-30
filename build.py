@@ -282,7 +282,8 @@ def ensure_gtk():
             return wheels_path
         return False
 
-    if sys.platform == "linux":
+    if sys.platform == "linux" and not os.environ.get("SKIP_GTK"):
+        # SKIP_GTK comes from gh workflow that has gi instaalled but not gtk (since gtk is not needed to build)
         def not_installed():
             fprint("GTK3 could not be found on system", color=RED)
             iprint("Install GTK3 with your package manager", color=RED)

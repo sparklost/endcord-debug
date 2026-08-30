@@ -142,6 +142,7 @@ jobs:
           args=("--custom-python")
           [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          echo "SKIP_GTK=1" >> $GITHUB_ENV
           uv run build.py --toggle-windowed
           uv run build.py --level=FULL "${args[@]}"
 
