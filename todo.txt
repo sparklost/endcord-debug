@@ -1,4 +1,7 @@
 Fix gtkcurses crash on windows
+Fix border in color pallete
+Fix gtkcurses not quitting on bots
+
 Fix gtkcurses emoji rendering
 Fix sound stuttering when using rnnoise
 Fix bad received voice call sound

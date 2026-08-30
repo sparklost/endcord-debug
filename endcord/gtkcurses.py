@@ -240,12 +240,12 @@ def is_wch(ch):
     return binary_search(codepoint, WIDE_RANGES)
 
 
-# # use cython if available, ~? times faster
-# try:
-#     from endcord_cython.formatter import is_wch
-#     # using same cached wide ranges from formatter, so no need to call init_wide_ranges() here
-# except ImportError:
-#     pass
+# use cython if available, ~? times faster
+try:
+    import formatter   # noqa   # ensure init_wide_ranges() is called ONLY ONCE before using is_wch
+    from endcord_cython.formatter import is_wch
+except ImportError:
+    pass
 
 
 def glib_log_bridge(domain, level, message, user_data=None):   # noqa
