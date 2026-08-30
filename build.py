@@ -267,6 +267,9 @@ def ensure_python(freethreaded, safe=False):
 
 def ensure_gtk():
     """Check if gtk is installed and properly configured on this system (linux/windows), on windows setup gvsbuild"""
+    if os.environ.get("SKIP_GTK"):
+        return True
+
     if sys.platform == "win32":
         gtk_path = f"{os.path.dirname(os.path.abspath(__file__))}\\.gtk"
         if not os.path.exists(gtk_path):
@@ -282,7 +285,7 @@ def ensure_gtk():
             return wheels_path
         return False
 
-    if sys.platform == "linux" and not os.environ.get("SKIP_GTK"):
+    if sys.platform == "linux":
         # SKIP_GTK comes from gh workflow that has gi instaalled but not gtk (since gtk is not needed to build)
         def not_installed():
             fprint("GTK3 could not be found on system", color=RED)
