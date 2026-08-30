@@ -138,6 +138,7 @@ jobs:
       - name: Run build script [GUI]
         shell: bash
         run: |
+          uv venv --clear --python .cpython/bin/python3
           args=("--custom-python")
           [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
@@ -145,7 +146,8 @@ jobs:
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Make binaries executable
-        run: chmod +x ./dist/endcord ./dist/endcord-lite || true
+        run: |
+            chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
 
       - name: Archive files
         shell: bash
@@ -290,7 +292,7 @@ jobs:
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Make binaries executable
-        run: chmod +x ./dist/endcord ./dist/endcord-lite || true
+        run: chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
 
       - name: Archive files
         shell: bash
@@ -359,7 +361,7 @@ jobs:
           uv run build.py --level=LITE "${args[@]}"
 
       - name: Make binaries executable
-        run: chmod +x ./dist/endcord ./dist/endcord-lite || true
+        run: chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
 
       - name: Archive files
         shell: bash
