@@ -200,21 +200,21 @@ jobs:
         with:
           version: ${{ matrix.clang-version }}
 
-      - name: Run build script [FULL]
-        shell: bash
-        run: |
-          args=()
-          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=FULL "${args[@]}"
-
-      - name: Run build script [LITE]
-        shell: bash
-        run: |
-          args=()
-          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=LITE "${args[@]}"
+      # - name: Run build script [FULL]
+      #   shell: bash
+      #   run: |
+      #     args=()
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=FULL "${args[@]}"
+      #
+      # - name: Run build script [LITE]
+      #   shell: bash
+      #   run: |
+      #     args=()
+      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
