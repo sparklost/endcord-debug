@@ -1193,10 +1193,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     # platform-specific
     if sys.platform == "linux":
         if windowed:
-            options += [
-                "--include-package=gi._enum",
-                "--linux-app-icon=tools/icons/endcord.svg",
-            ]
+            options += ["--include-package=gi._enum"]
             hidden_imports += ["--include-package=ctypes.util"]
     elif sys.platform == "win32":
         options += ["--assume-yes-for-downloads"]
@@ -1242,12 +1239,12 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--no-prefer-source-code",
         "--onefile-tempdir-spec={TEMP}/endcord_{PID}",
         "--company-name=SparkLost",
-        "--product-name=endcord",
+        f"--product-name={APP_NAME}",
         f"--file-version={APP_VERSION}", f"--product-version={APP_VERSION}",
         f"--copyright=Copyright (C) 2025-{datetime.now().year} SparkLost",
         "--remove-output",
         "--output-dir=dist",
-        f"--output-filename={APP_NAME}",
+        f"--output-filename={app_name}",
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
