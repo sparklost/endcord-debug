@@ -82,11 +82,18 @@ Any third party endcord forks may add features that can lead to account ban, con
 - Proxy support
 - Profile manager for multiple accounts
 - Store token in system keyring
-- GTK3 windowed mode with tray icon and transparency
 - Works in termux, with android notifications
-- Auto endcord and extensions check for updates
+- Automatic endcord and extensions check for updates
+- Headless mode
 - Run bots, with interactions
 - Lots of easter eggs
+- Endcord-GUI features
+    - Customizable tray icons, window can be minimized to tray
+    - All bindings work, Ctrl+C, Ctrl+Z, Shift+Enter
+    - Window can be transparent, and background colors can also have alpha value
+    - Uses only 15MB (linux) more RAM (vs most terminals using 20-100MB)
+    - GTK-native pasting and drag n' drop (text and files)
+    - Linux desktop integration: app icon, notification count badge, click on notification
 
 
 ## Configuration
@@ -98,13 +105,9 @@ Settings, logs, state and themes location:
 
 Run `endcord -h` or `endcord --help` to see available command arguments.  
 
-### Providing config
-Custom config path can be provided with `-c [PATH_TO_CONFIG]` flag.  
-If config is not found at that path, default will be written.  
-There can be missing entries in config, they will be filled with defaults.  
-
 ### Config options
 Go to [configuration](docs/configuration.md).
+Go to [keybindings](docs/keybindings.md#configuring-keybindings).
 
 ### Profile manager
 Profile manager is used for login and easier switching between multiple accounts.  
@@ -128,16 +131,6 @@ Manager can be re-opened using `--manager` flag.
 Email or QR code login may fail because captcha is requested by Discord. In that case first login and complete captcha through official client, from same IP address, then try again. If it still fails, then you'll have to use token method.  
 If you want to check what is endcord doing with credentials, look in profile_manager.py and auth.py.  
 **Do not share your token!**  
-
-### Configuring keybindings
-Go to [keybindings](docs/keybindings.md#configuring-keybindings).
-
-### Debug mode
-Debug mode can be enabled with `-d` flag.  
-It will cause extra messages to be written to log file.  
-Endcord will periodically write to drive and log file will quickly grow in size.  
-Log from previous run is renamed to `-prev` on each run and it is replaced.  
-Current log can be accessed with `show_log` command or in config directory.
 
 
 ## Usage
@@ -300,7 +293,7 @@ But there is also setting in config to open media in external app (cross-system,
 
 ### GUI (Windowed) mode
 This mode entirely replaces curses and the need for terminal emulator, using GTK3 window, UI still remains terminal-like.  
-As as dependency, GTK3 must be installed. It is NOT required to run prebuilt binaries ONLY on windows.  
+As as dependency, GTK3 must be installed. It is NOT required ONLY on windows (build script will set everything up when toggling gui mode).  
 Tray icon will be enabled, so closing window will only minimize it to tray.  
 If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.  
 Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All media will be opened in native player.  
@@ -317,7 +310,7 @@ But endcord may crash at any time. Further, each host may have different spam fi
 Whether endcord will work or crash depends on hosts api implementation, the more different from discord it is, greater is the risk of a crash. If endcord crashes - its hosts fault. Do not report bugs related to this.
 
 ### Termux (android)
-Endcord can be run on android through termux app, but ot cant be built.  
+Endcord can be run on android through termux app, but it cant be built.  
 To run it: first install python >= 3.12 and `uv`, then clone this repo, setup env to "MICRO" level: `python --nobuild --level=MICRO` (one time), and run it: `uv run main.py`.  
 Setting up environment for higher levels will probably fail because these dependencies will have to be built for arm architecture.  
 To enable android notifications simply run `pkg install termux-api` and install Termux:API app. Vibration is disabled by default, to enable it: run endcord at least once, then in Termux:Api notification settings enable vibration for endcord notifications.  
@@ -348,7 +341,7 @@ Note: official means installations from these sources are coming from endcord de
 ### Windows
 - Pre-built binaries (built with nuitka) are available in releases
 - [Build](#building) endcord, standalone executable can be found in `./dist/endcord.exe`
-- If youre trying to run endcord-gui (windowed) from source or build it, youll need GTK3. Install it using [gvsbuild](https://github.com/wingtk/gvsbuild).
+- It is recommended to use [endcord-gui](#gui-windowed-mode) on Windows.
 
 Install [WezTerm](https://wezterm.org/) (recommended), [windows terminal](https://github.com/microsoft/terminal), [cmder](https://github.com/cmderdev/cmder), or any other modern terminal. And run exe from there. If built with windowed mode, terminal is not required to use endcord.  
 WezTerm proved to introduce the least drawing issues.  
@@ -482,10 +475,6 @@ Endcord does its best to avoid causing any suspicious activity, so using it as-i
 You can write to Discord Support team: https://dis.gd/request.  
 If you did something particular with endcord that caused the ban, open an issue describing what that is. Maybe that can be prevented or other users can be warned.  
 
-### Debug files
-Anonymized data that might help in debugging is saved in `Debug` directory, see [Configuration](#configuration) for path.  
-All channel and server names, topics, descriptions are replaced. All channel and server IDs are added to random number and hashed, so they are irreversible changed, and will be different on each run.
-
 ### Note on Python performance misconceptions
 Python is slower than languages like C or Rust, but in this use case it does not affect performance. Endcord is event-driven and network-bound, not CPU-bound, so Python’s overhead is negligible (significantly reduced when built with nuitka).  
 All CPU-critical components are implemented in Cython with minimal python calls, resulting in near-C speeds.  
@@ -541,7 +530,7 @@ RAM usage greatly depends on multiple factors:
 - Full binary version uses few MB more than lite.
 - Number of servers and channels: each avg server is ~1MB.
 - If using terminal media player it will permanently increase RAM usage by ~20MB on firs media play.
-- Voice calls will also permanently increase RAM usage by ~5MB on first connected/initialized call (+ ~20MB for media if not already). With few extra MB if using noise supression with RNNoise.
+- Voice calls will also permanently increase RAM usage by ~5MB on first connected/initialized call (+ ~20MB for media if not already). With few extra MB if using noise suppression with RNNoise.
 
 ### Adding desktop launcher on Linux
 Simply make the launcher execute `endcord` or `endcord-lite`, endcord will deal with starting terminal. It will prefer `$TERMINAL` environment variable, then fallback to some most popular terminal emulators.
@@ -555,6 +544,17 @@ If that happens, use [legacy theme](themes/legacy.ini). It is used by default on
 These are false positives. Binaries are built using nuitka, the problem is that its regularly used by other people to distribute malware. So some AVs flag all nuitka-built binaries as malware. [Ref](https://nuitka.net/user-documentation/common-issue-solutions.html#windows-virus-scanners).  
 Its the same with all other python freezing tools, like pyinstaller, cx-freeze...  
 So to run endcord, either allow it in anti-virus/windows-defender or run it from source.  
+
+### Debug mode
+Debug mode can be enabled with `-d` flag.  
+It will cause extra messages to be written to log file (in config directory).  
+Endcord will periodically write to drive and log file will quickly grow in size.  
+Log from previous run is renamed to `-prev` on each run and it is replaced.  
+Live log can be accessed with `show_log`.
+
+### Debug files
+Anonymized data that might help in debugging is saved in `Debug` directory (generated only in debug mode), see [Configuration](#configuration) for path. It is never automatically uploaded.  
+All channel and server names, topics, descriptions are replaced. All channel and server IDs are added to random number and hashed, so they are irreversible changed, and will be different on each run.
 
 ### Support
 Open an issue in [issue tracker](https://github.com/sparklost/endcord/issues).  

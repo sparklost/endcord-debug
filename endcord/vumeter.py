@@ -85,7 +85,7 @@ class VUMeter:
 
         self.threshold_db = config["call_silence_threshold"]
         self.threshold_rms = self.silence_threshold = 10 ** (self.threshold_db / 20)
-        self.do_denoise = config["call_mic_noise_supression"]
+        self.do_denoise = config["call_mic_noise_suppression"]
         self.screen = screen
         self.run = True
         self.rms = 0.0
@@ -130,7 +130,7 @@ class VUMeter:
         if key in (10, "ENTER"):
             from endcord import config
             config.update_config(self.config, "call_silence_threshold", self.threshold_db)
-            config.update_config(self.config, "call_mic_noise_supression", self.do_denoise)
+            config.update_config(self.config, "call_mic_noise_suppression", self.do_denoise)
             self.run = False
 
         elif key in (32, "SPACE") and len(self.mics) > 1:

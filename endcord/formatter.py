@@ -583,7 +583,7 @@ def replace_discord_emoji(text, placeholder=None, *ranges_lists):
 def replace_mentions(text, usernames_ids, *ranges_lists, global_name=False, use_nick=False):
     """
     Transforms mention string into nicer looking one:
-    `<@user_id>` --> `@username`
+    `<@user_id>` --> `@username ` (with whitespace)
     """
     result = []
     mention_ranges = []
@@ -595,14 +595,14 @@ def replace_mentions(text, usernames_ids, *ranges_lists, global_name=False, use_
         user_id = match.group(1)
         for user in usernames_ids:
             if user_id == user["id"]:
-                new_text = f"@{get_global_name(user, use_nick) if global_name else user["username"]}"
+                new_text = f"@{get_global_name(user, use_nick) if global_name else user["username"]} "
                 break
         else:
             new_text = match.group(0)
         result.append(new_text)
 
         new_start = start + offset
-        new_end = new_start + len(new_text)
+        new_end = new_start + len(new_text) - 1
         mention_ranges.append([new_start, new_end, user_id])
 
         diff = len(new_text) - (end - start)
@@ -3043,7 +3043,7 @@ def generate_extra_window_profile(user_data, user_roles, presence, colors, max_l
         lines = split_long_line(text, max_len)
         body.extend(lines)
         color_status = 18 if status == "Online" else 19 if status == "Idle" else 20 if status == "DnD" else color_low
-        body_format.extend([([(color_standout, 0, 0, 6), (color_status, 1, 8, len(status) + 8)],), *[None] * (len(lines) - 1)])
+        body_format.extend([[(color_standout, 0, 0, 6), (color_status, 1, 8, len(status) + 8)], *[None] * (len(lines) - 1)])
     else:
         body.append("Status: Offline")
         body_format.append(([(color_standout, 0, 0, 6), (color_low, 1, 8, max_len)]))

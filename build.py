@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from datetime import datetime
 
 CUSTOM_CFLAGS = [
     "-DNDEBUG",
@@ -47,6 +48,32 @@ if sys.platform.startswith("android"):
     sys.platform = "linux"
 if "bsd" in sys.platform:
     sys.platform = "linux"
+
+
+class Tee:
+    """Class that splits stdout and stderr to terminal stdout and log file"""
+    ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.file = open(filename, "w", encoding="utf-8")
+
+    def write(self, message):   # noqa
+        self.terminal.write(message)
+        clean_message = self.ANSI_ESCAPE.sub("", message)
+        self.file.write(clean_message)
+        self.flush()
+
+    def flush(self):   # noqa
+        self.terminal.flush()
+        self.file.flush()
+
+    def isatty(self):   # noqa
+        return self.terminal.isatty()
+
+
+sys.stdout = Tee("build.log")
+sys.stderr = sys.stdout
 
 
 def load_build_config():
@@ -122,14 +149,14 @@ PYTHON_LAST_SAFE = int(build_config.get("python_last_safe", "3.13").split(".")[1
 CURSES_TAG = build_config.get("curses_tag", "v6_6_20260627")
 WINDOWED_DEPS = load_build_config().get("windowed_deps", [])
 GVSBUILD_RELEASE = load_build_config().get("gvsbuild_release", [])
-PKGNAME = get_app_name()
-PKGVER = get_version_number()
+APP_NAME = get_app_name()
+APP_VERSION = get_version_number()
 USE_COLOR = supports_color()
 if sys.platform == "win32":
     WINDOWED_DEPS = [x for x in WINDOWED_DEPS if ("pygobject" not in x.lower() and "pycairo" not in x.lower())]
 
 
-def fprint(text, color=PURPLE, prefix=f"[{PKGNAME.capitalize()} Build Script]: ", file=sys.stdout):
+def fprint(text, color=PURPLE, prefix=f"[{APP_NAME.capitalize()} Build Script]: ", file=sys.stdout):
     """Print colored text prefixed with text, default is light purple"""
     if USE_COLOR and color:
         print(f"{color}{prefix}{text}\033[0m", file=file, flush=True)
@@ -215,13 +242,6 @@ def check_python():
     if os.environ.get("UV", ""):
         if sys.version_info.minor < 12 or sys.version_info.minor > PYTHON_MAX_MINOR:
             fprint(f'WARNING: Python {sys.version_info.major}.{sys.version_info.minor} is not supported but build may succeed. Run "python build.py" to let uv download and setup recommended temporary python interpreter.', color=RED)
-        else:
-            try:
-                version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
-                fprint(f"Using {version.stdout.strip()}")
-            except Exception:
-                pass
-            fprint(f"Using Python {get_nice_python_version()}")
         if not is_gil_enabled():
             if sys.version_info.minor == PYTHON_FREETHREADED:
                 fprint("WARNING: While endcord works with freethreaded python, final binary is much larger. Nuitka doesnt yet support freethreaded python, so build is likely to fail.", color=RED)
@@ -230,7 +250,7 @@ def check_python():
         return False
 
     try:
-        version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+        subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         fprint(f"uv error: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
@@ -268,6 +288,7 @@ def ensure_python(freethreaded, safe=False):
 def ensure_gtk():
     """Check if gtk is installed and properly configured on this system (linux/windows), on windows setup gvsbuild"""
     if os.environ.get("SKIP_GTK"):
+        # SKIP_GTK comes from gh workflow that has gi instaalled but not gtk (since gtk is not needed to build)
         return True
 
     if sys.platform == "win32":
@@ -286,14 +307,16 @@ def ensure_gtk():
         return False
 
     if sys.platform == "linux":
-        # SKIP_GTK comes from gh workflow that has gi instaalled but not gtk (since gtk is not needed to build)
-        def not_installed():
-            fprint("GTK3 could not be found on system", color=RED)
-            iprint("Install GTK3 with your package manager", color=RED)
+        def not_installed(dependency):
+            fprint(f"{dependency} could not be found on system", color=RED)
+            iprint(f"Install {dependency} with your package manager", color=RED)
         try:
             result = subprocess.run(["pkg-config", "--exists", "gtk+-3.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             if result.returncode != 0:
-                not_installed()
+                not_installed("GTK3")
+            result = subprocess.run(["pkg-config", "--exists", "girepository-2.0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if result.returncode != 0:
+                not_installed("libgirepository")
             return result.returncode == 0
         except FileNotFoundError:
             try:
@@ -305,6 +328,18 @@ def ensure_gtk():
                 not_installed()
                 return False
     return True
+
+
+def generate_ico(source_img):
+    """Generate icon file from png"""
+    if not shutil.which("magick"):
+        return
+    subprocess.run([
+        "magick",
+        source_img,
+        "-define", "icon:auto-resize=256,128,64,48,32,16",
+        os.path.splitext(source_img)[0] + ".ico",
+    ], capture_output=True, text=True, check=True)
 
 
 def check_patchelf():
@@ -325,6 +360,47 @@ def check_patchelf():
             fprint("Patchelf version 0.18.0 is a known buggy release, nuitka will likely refuse to use it! Please upgrade or downgrade it.", color=RED)
     except Exception:
         pass
+
+
+def get_bin_version(binary):
+    """Try to get version of given binary executable"""
+    executable_path = shutil.which(binary)
+    if not executable_path:
+        return "Not installed"
+    try:
+        result = subprocess.run([executable_path, "--version"], capture_output=True, text=True, check=True)
+        return f"{result.stdout.splitlines()[0].strip()} [{executable_path}]"
+    except Exception:
+        return "Failed to query version"
+
+
+def print_env_info():
+    """Print relevant environment information to build process"""
+    import platform
+    fprint("Environment information")
+    iprint(f"OS/Platform  : {platform.system()} {platform.release()}")
+    iprint(f"Architecture : {platform.machine()}")
+    iprint(f"CPU Cores    : {os.cpu_count()}")
+    try:
+        version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+        iprint(f"uv           : {version.stdout.strip().removeprefix("uv ")}")
+    except Exception:
+        iprint("uv           : Not installed", color=RED)
+    iprint(f"Python       : {get_nice_python_version()}")
+    iprint(f"GCC          : {get_bin_version("gcc")}")
+    iprint(f"Clang        : {get_bin_version("clang")}")
+    if platform.system() == "Windows":
+        cl_path = shutil.which("cl")
+        iprint(f"MSVC         : {cl_path if cl_path else "Not in PATH"}")
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+        iprint(f"Git Commit   : {commit}")
+        iprint(f"Git Branch   : {branch}")
+        iprint(f"Modified     : {"Yes" if status else "No"}")
+    except Exception:
+        iprint("Git Info     : Not a git repository or git command missing")
 
 
 def check_deps(*deps):
@@ -684,9 +760,12 @@ def toggle_windowed(check_only=False):
         patch_pystray()
         if sys.platform == "win32":
             install_local_wheels(have_gtk)
+        download_font("https://github.com/adobe-fonts/source-code-pro/blob/release/TTF/SourceCodePro-Regular.ttf", "endcord")
         fprint("Windowed mode enabled!")
     else:
         subprocess.run(["uv", "pip", "uninstall"] + load_build_config().get("windowed_deps", []), check=True)
+        if os.path.exists("./endcord/SourceCodePro-Regular.ttf"):
+            os.remove("./endcord/SourceCodePro-Regular.ttf")
         fprint("Windowed mode disabled!")
     return not enable
 
@@ -713,6 +792,18 @@ def enable_extensions(enable=True, check_only=False, silent=False):
         fprint(f"Extensions are {"enabled" if enable else "disabled"}!")
 
 
+def download_font(url, save_dir):
+    """Download font to current dir from given url"""
+    import urllib.request
+    from urllib.parse import urlparse
+    if "github.com" in url and "/blob/" in url:
+        url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+    parsed_url = urlparse(url)
+    save_path = os.path.join(save_dir, os.path.basename(parsed_url.path))
+    if not os.path.exists(save_path):
+        urllib.request.urlretrieve(url, save_path)
+
+
 def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], cxxflags=[], safe=False, lld=True):
     """Set compiler and its flags in environment variables"""
     if clang:
@@ -729,7 +820,8 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
     if sys.platform == "win32" and not clang:   # unsupported flags in cl
         unsafe_flags += ["-g0", "-O3", "-mtune=generic", "-fno-semantic-interposition", "-fno-strict-overflow"]
         safe = True
-    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags] if safe else CUSTOM_CFLAGS
+    skip_mtune = "-mtune=" in CFLAGS_OLD
+    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags and not (skip_mtune and item.starswith("-mtune"))] if safe else CUSTOM_CFLAGS
     cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
     cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
     ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + CUSTOM_LDFLAGS + ldflags
@@ -876,7 +968,7 @@ def build_numpy_lite(clang):
         iprint("Numpy-lite (no openblas) is already built locally")
         return
     setup_compiler(clang)
-    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True, capture_output=True)   # because uv wont work with --config-settings as it should
     try:
         python = ".venv/bin/python" if sys.platform != "win32" else r".venv\Scripts\python.exe"
         subprocess.run([python, "-m", "pip", "uninstall", "--yes", "numpy"], check=False, capture_output=True)
@@ -895,7 +987,7 @@ def build_numpy_lite(clang):
     value = subprocess.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
     if value and int(value):
         iprint("Verification failed: numpy after building is still linked to openblas!", color=RED)
-    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True)
+    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True, capture_output=True)
 
 
 def build_rnnoise(clang):
@@ -962,9 +1054,9 @@ def build_cython(clang, mingw):
 def build_with_pyinstaller(level, onedir, print_cmd=False):
     """Build with pyinstaller"""
     windowed = toggle_windowed(check_only=True)
-    pkgname = PKGNAME if level == "FULL" else f"{PKGNAME}-{level.lower()}"
+    app_name = APP_NAME if level == "FULL" else f"{APP_NAME}-{level.lower()}"
     if windowed:
-        pkgname = f"{pkgname}-gui"
+        app_name = f"{app_name}-gui"
     emoji_path = compress_emoji() if not print_cmd else "endcord/emoji.json"
     mode = "--onedir" if onedir else "--onefile"
     hidden_imports = ["--hidden-import=uuid"]
@@ -1007,7 +1099,7 @@ def build_with_pyinstaller(level, onedir, print_cmd=False):
         *options,
         "--noconfirm",
         "--clean",
-        f"--name={pkgname}",
+        f"--name={app_name}",
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
@@ -1024,20 +1116,20 @@ def build_with_pyinstaller(level, onedir, print_cmd=False):
     # cleanup
     fprint("Cleaning up")
     try:
-        os.remove(f"{pkgname}.spec")
+        os.remove(f"{app_name}.spec")
         shutil.rmtree("build")
     except FileNotFoundError:
         pass
-    fprint(f"Finished building {pkgname}")
+    fprint(f"Finished building {app_name}")
 
 
 def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False):
     """Build with nuitka"""
     clang = clang or os.environ.get("CC") == "clang"
     windowed = toggle_windowed(check_only=True)
-    pkgname = PKGNAME if level == "FULL" else f"{PKGNAME}-{level.lower()}"
+    app_name = APP_NAME if level == "FULL" else f"{APP_NAME}-{level.lower()}"
     if windowed:
-        pkgname = f"{pkgname}-gui"
+        app_name = f"{app_name}-gui"
     emoji_path = compress_emoji() if not print_cmd else "endcord/emoji.json"
     if not print_cmd:
         if compile_deps and level not in ("MINI", "MICRO"):
@@ -1075,10 +1167,16 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     ]
     package_data = []
     add_data = [f"--include-data-files={emoji_path}=emoji.json"]
+    if windowed:
+        add_data += [
+            "--include-data-files=endcord/SourceCodePro-Regular.ttf=SourceCodePro-Regular.ttf",
+            "--include-data-files=tools/icons/endcord-tray.png=icons/endcord-tray.png",
+            "--include-data-files=tools/icons/endcord-tray-mention.png=icons/endcord-tray-mention.png",
+        ]
 
     rnnoise = get_rnnoise()
     if rnnoise:
-        add_data.append(f"--include-data-files={rnnoise}={rnnoise}")
+        add_data += [f"--include-data-files={rnnoise}={rnnoise}"]
 
     setup_compiler(clang)
 
@@ -1095,10 +1193,16 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     # platform-specific
     if sys.platform == "linux":
         if windowed:
-            options += ["--include-package=gi._enum"]
+            options += [
+                "--include-package=gi._enum",
+                "--linux-app-icon=tools/icons/endcord.svg",
+            ]
             hidden_imports += ["--include-package=ctypes.util"]
     elif sys.platform == "win32":
         options += ["--assume-yes-for-downloads"]
+        generate_ico("tools/icons/endcord.png")
+        if os.path.exists("tools/icons/endcord.ico"):
+            options += ["--windows-icon-from-ico=tools/icons/endcord.ico"]
         if windowed:
             add_data += [
                 "--include-data-dir=.gtk/lib=gtk/lib",
@@ -1116,7 +1220,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         if not windowed:
             options += ["--macos-app-console-mode=force"]
         options += [
-            f"--macos-app-name={PKGNAME}",
+            f"--macos-app-name={APP_NAME}",
             f"--macos-app-version={get_version_number()}",
             "--macos-app-protected-resource=NSMicrophoneUsageDescription:Microphone access for recording voice message.",
         ]
@@ -1137,9 +1241,13 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         "--no-deployment-flag=self-execution",   # -c and -m flags are safely handled by argparser
         "--no-prefer-source-code",
         "--onefile-tempdir-spec={TEMP}/endcord_{PID}",
+        "--company-name=SparkLost",
+        "--product-name=endcord",
+        f"--file-version={APP_VERSION}", f"--product-version={APP_VERSION}",
+        f"--copyright=Copyright (C) 2025-{datetime.now().year} SparkLost",
         "--remove-output",
         "--output-dir=dist",
-        f"--output-filename={pkgname}",
+        f"--output-filename={APP_NAME}",
         "main.py",
     ]
     cmd = [arg for arg in cmd if arg != ""]
@@ -1159,14 +1267,14 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         shutil.rmtree("build")
     except FileNotFoundError:
         pass
-    fprint(f"Finished building {pkgname}")
+    fprint(f"Finished building {app_name}")
 
 
 def parser():
     """Setup argument parser for CLI"""
     parser = argparse.ArgumentParser(
         prog="build.py",
-        description=f"build script for {PKGNAME}",
+        description=f"build script for {APP_NAME}",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser._positionals.title = "arguments"
@@ -1281,6 +1389,12 @@ if __name__ == "__main__":
     if os.path.exists("build"):   # ensure clean build env
         shutil.rmtree("build")
 
+    if not os.environ.get("FIRST_RUN"):
+        print_env_info()
+        os.environ["FIRST_RUN"] = get_nice_python_version()
+    elif os.environ["FIRST_RUN"] != get_nice_python_version():
+        fprint(f"Switched to Python {get_nice_python_version()}")
+
     if clang and not shutil.which("lld"):
         fprint("WARNING: lld is not found on system, consider installing it", color=RED)
 
@@ -1315,6 +1429,11 @@ if __name__ == "__main__":
     if sys.platform not in ("linux", "win32", "darwin"):
         fprint(f"This platform is not supported: {sys.platform}", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
+
+    if CFLAGS_OLD or LDFLAGS_OLD:
+        fprint("System environment variables:")
+        iprint(f'CFLAGS="{CFLAGS_OLD}"')
+        iprint(f'LDFLAGS="{LDFLAGS_OLD}"')
 
     if args.nocython:
         bins = get_cython_bins(directory="endcord_cython")

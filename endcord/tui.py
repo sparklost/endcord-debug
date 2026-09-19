@@ -3,6 +3,7 @@
 # Redistribution of modified versions is not permitted.
 
 import curses
+import json
 import logging
 import os
 import re
@@ -148,7 +149,6 @@ def draw_chat(win_chat, h, w, chat_buffer, chat_format, chat_index, chat_selecte
     """Draw chat with applied color formatting"""
     y = h
     # drawing from down to up
-    chat_format = chat_format[chat_index:]
     for num in range(len(chat_buffer) - chat_index):
         line_idx = chat_index + num
         if line_idx >= len(chat_buffer):
@@ -158,30 +158,30 @@ def draw_chat(win_chat, h, w, chat_buffer, chat_format, chat_index, chat_selecte
             break
 
         line = chat_buffer[line_idx]
-        if num == chat_selected - chat_index and not any(a <= chat_selected <= b for a, b in exclude_selection):
-            fill_len = w - len(line)
-            win_chat.insstr(y, 0, line + (" " * fill_len) + "\n", curses.color_pair(16))
-        else:
-            line_format = chat_format[num]
-            default_color_id = line_format[0][0]
-            # filled with spaces so background is drawn all the way
-            default_color = curses.color_pair(default_color_id) | attrib_map[default_color_id]
-            win_chat.insstr(y, 0, (line[:w]).ljust(w) + "\n", default_color)
-            for format_part in line_format[1:]:
-                color = format_part[0]
-                start = format_part[1]
-                end = min(format_part[2], w)
-                if start >= end:
-                    continue
-                # assuming never to have id > 65536, if value is that large its definitely attribute
-                if color >= 0x00010000:
-                    # using base color because it is in message content anyway
-                    color_ready = curses.color_pair(default_color_id) | color
-                else:
-                    if color > 255:   # set all colors after 255 to default color
-                        color = color_default
-                    color_ready = curses.color_pair(color) | attrib_map[color]
-                win_chat.chgat(y, start, end - start, color_ready)
+        selected = num == chat_selected - chat_index and not any(a <= chat_selected <= b for a, b in exclude_selection)
+        line_format = chat_format[line_idx]
+        default_color_id = line_format[0][0]
+
+        # filled with spaces so background is drawn all the way
+        default_color = curses.color_pair(default_color_id if not selected else 16) | attrib_map[default_color_id]
+        win_chat.insstr(y, 0, (line[:w]).ljust(w), default_color)
+
+        # apply formatting in chunks
+        for format_part in line_format[1:]:
+            color = format_part[0]
+            start = format_part[1]
+            end = min(format_part[2], w)
+            if start >= end:
+                continue
+            # assuming never to have id > 65536, if value is that large its definitely attribute
+            if color >= 0x00010000:
+                # using base color because it is in message content anyway
+                color_ready = curses.color_pair(default_color_id if not selected else 16) | color
+            else:
+                if color > 255:   # set all colors after 255 to default color
+                    color = color_default
+                color_ready = curses.color_pair(color if not selected else 16) | attrib_map[color]
+            win_chat.chgat(y, start, end - start, color_ready)
 
     # fill empty lines with spaces so background is drawn all the way
     y -= 1
@@ -400,6 +400,7 @@ class TUI():
         self.pressed_num_key = None
         self.insert_mode = not self.vim_mode   # leave it true to enable input
         self.inline_media = None
+        self.dropped_paths = None
 
         # lock for thread-safe drawing with curses
         self.lock = threading.RLock()
@@ -829,6 +830,13 @@ class TUI():
         return self.chat_scrolled_top
 
 
+    def get_dropped(self):
+        """Get dropped files from drag-and-drop"""
+        cache = self.dropped_paths
+        self.dropped_paths = None
+        return cache
+
+
     def reset_chat_scrolled_top(self):
         """Force reset state of chat scrolling hit the top end"""
         self.chat_scrolled_top = False
@@ -882,8 +890,6 @@ class TUI():
 
     def get_focused(self):
         """Get whether chat is focused or not"""
-        if uses_gtkcurses:
-            return curses.focused
         return self.focused and not self.disable_drawing
 
 
@@ -2740,17 +2746,27 @@ class TUI():
                 self.pressed_num_key = int(key[-1:])
                 return self.return_input_code(42)
 
+            # deal with chains
             if key in self.chainable and not self.keybinding_chain:
                 self.keybinding_chain = key
                 continue
             if self.keybinding_chain:
-                key = f"{self.keybinding_chain} {"SPC" if key == " " else key}"
+                key = f"{self.keybinding_chain} {"SPACE" if key == " " else key}"
                 self.keybinding_chain = None
 
+            # gtkcurses events
             if key.startswith("PASTE"):
+                if key.startswith("PASTE_FILE"):
+                    self.dropped_paths = json.loads(key[11:])   # list
+                    return self.return_input_code(3000)
+                if key.startswith("PASTE_TEXT"):
+                    self.dropped_paths = key[11:]   # string
+                    return self.return_input_code(3000)
                 self.paste_text(key[6:])
-
-            if key == "QUIT":   # special for gtkcurses window X button
+            if key.startswith("NOTIFY_CLICK"):
+                self.dropped_paths = key[13:]   # reusing interface
+                return self.return_input_code(3001)
+            if key == "QUIT":
                 return self.return_input_code(34)
 
             key = self.key_map.get(key, key)
@@ -3483,3 +3499,47 @@ class TUI():
         new_thumb_pos = max(0, min(max_pos, rel_y - y_in_thumb))
         self.chat_index = int((max_pos - new_thumb_pos) * max_index / max_pos)
         self.draw_chat()
+
+
+class DummyTUI:
+    """Dummy TUI class for headless mode"""
+
+    def __init__(self, config):
+        self.bordered = not (config["compact"])
+        self.inline_media = False
+
+    def init_role_colors(self, all_roles, bg, alt_bg, guild_id=None):   # noqa
+        for guild in all_roles:
+            if guild_id:
+                if guild["guild_id"] != guild_id:
+                    continue
+            for role in guild["roles"]:
+                role["color_id"] = 255
+                role["alt_color_id"] = 255
+            if guild_id:
+                break
+        return all_roles
+
+    def init_colors_formatted(self, colors, alt_color):   # noqa
+        color_codes = []
+        for format_colors in colors:
+            format_codes = []
+            for color in format_colors:
+                format_codes.append([255, *color[3:]])
+            color_codes.append(format_codes)
+        for format_colors in colors:
+            format_codes = []
+            for color in format_colors:
+                format_codes.append([255, *color[3:]])
+            color_codes.append(format_codes)
+        return color_codes
+
+    def init_colors(self, colors): return [255] * len(colors)   # noqa
+    def wait_input(self, *args, **kwargs): time.sleep(60); return "", -1, 0, 999999   # noqa
+    def get_dimensions(self): return ((29, 88), (32, 28), (1, 88))   # noqa
+    def get_chat_selected(self): return (-1, 0)   # noqa
+    def get_tree_selected(self): return 0   # noqa
+    def get_assist(self, *args, **kwargs): return (None, None)   # noqa
+
+    def __getattr__(self, name):   # noqa
+        return lambda *args, **kwargs: None   # noqa

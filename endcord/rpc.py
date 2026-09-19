@@ -231,7 +231,7 @@ class RPC:
             logger.debug(f"RPC app id: {app_id}")
             status, rpc_data = self.discord.get_rpc_app(app_id)
             rpc_assets = self.discord.get_rpc_app_assets(app_id)
-            if rpc_data and rpc_assets:
+            if rpc_data and rpc_assets not in (None, False):
                 logger.info(f"RPC client connected: {rpc_data["name"]}")
                 send_data(connection, 1, self.dispatch)
                 sent_time = time.monotonic() - (GATEWAY_RATE_LIMIT + 1)

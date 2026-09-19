@@ -24,6 +24,7 @@ VERSION = "1.5.4"
 default_config_path = peripherals.config_path
 log_path = peripherals.log_path
 threading.stack_size(512 * 1024)
+threading.excepthook = utils.thread_exception_handler
 uses_gtkcurses = hasattr(curses, "GTKCURSES")
 log_file_path = os.path.join(os.path.expanduser(log_path), APP_NAME + ".log")
 run = True
@@ -56,7 +57,7 @@ def sigint_handler(_signum, _frame):
 
 def main(args):
     """Main function"""
-    if not uses_gtkcurses:
+    if not uses_gtkcurses and not args.headless:
         utils.ensure_terminal()
     config_path = args.config
     theme_path = args.theme
@@ -132,7 +133,7 @@ def main(args):
         except curses.error as e:
             if str(e) != "endwin() returned ERR":
                 logger.error(traceback.format_exc())
-                sys.exit("Curses error, see log for more info")
+                sys.exit("Curses error, see log for more info", file=sys.stderr)
         sys.exit(0)
     elif args.install_extension:
         from endcord import git
@@ -160,7 +161,8 @@ def main(args):
             selected = None
         profiles, selected, proceed = profile_manager.manage(profiles_path, selected, config_data, force_open=args.manager)
         if not profiles:
-            print("Token not provided in profile manager nor as argument")
+            print("Token not provided in profile manager nor as argument", file=sys.stderr)
+            utils.wait_term()
             sys.exit(0)
     if not proceed:
         sys.exit(0)
@@ -168,7 +170,10 @@ def main(args):
     try:
         from endcord import app
         endcord = app.Endcord
-        curses.wrapper(endcord, config_data, keybindings, command_bindings, profiles, VERSION)
+        if args.headless:
+            endcord(None, config_data, keybindings, command_bindings, profiles, VERSION)
+        else:
+            curses.wrapper(endcord, config_data, keybindings, command_bindings, profiles, VERSION)
         if hasattr(app, "target_profile"):
             cmd = utils.get_executable()
             cmd = utils.remove_args(cmd, "-a", "--manager", "-p", "--profile")
@@ -176,7 +181,25 @@ def main(args):
     except curses.error as e:
         if str(e) != "endwin() returned ERR":
             logger.error(traceback.format_exc())
-            sys.exit("Curses error, see log for more info")
+            print("Curses error, see log for more info", file=sys.stderr)
+            utils.wait_term()
+    except SystemExit as e:
+        if e.code:
+            if utils.THREAD_EXCEPTION:
+                exit_message = utils.THREAD_EXCEPTION
+            else:
+                exit_message = str(e.code)
+            if e.code:
+                logger.critical(f"Exit with message: {exit_message}")
+                print(f"{exit_message}\nPlease report this error here:\nhttps://github.com/sparklost/endcord/issues\n", file=sys.stderr)
+            else:
+                logger.info(f"Exit with message: {exit_message}")
+                print(f"{exit_message}", file=sys.stderr)
+    except Exception as e:
+        error = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+        logger.critical(f"Exit with error:\n{error}")
+        print(f"{error}\nPlease report this error here:\nhttps://github.com/sparklost/endcord/issues\n", file=sys.stderr)
+        utils.wait_term()
     sys.exit(0)
 
 

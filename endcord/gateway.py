@@ -12,7 +12,6 @@ import struct
 import sys
 import threading
 import time
-import traceback
 import urllib.parse
 import zlib
 
@@ -32,6 +31,7 @@ from endcord import debug, perms, protobuf, protobuf_schemata
 from endcord.message import is_relevant_message, prepare_message
 
 DISCORD_HOST = "discord.com"
+DISCORD_HOST_GATEWY = "wss://gateway.discord.gg"
 LOCAL_MEMBER_COUNT = 50   # members per guild, CPU-RAM intensive
 LOCAL_VOICE_PRESENCE_LIMIT = 50   # per guild, slightly RAM intensive
 LIMIT_SUBSCRIBED = 5   # channels per guild
@@ -278,10 +278,7 @@ class Gateway():
 
     def connect_ws(self, resume=False):
         """Connect to websocket"""
-        if resume and self.resume_gateway_url:
-            gateway_url = self.resume_gateway_url
-        else:
-            gateway_url = self.gateway_url
+        gateway_url = self.resume_gateway_url if (resume and self.resume_gateway_url) else self.gateway_url
         try:
             if sys.platform == "darwin":
                 import certifi
@@ -329,31 +326,40 @@ class Gateway():
 
     def connect(self):
         """Create initial connection to Discord gateway"""
-        try:
-            header = {"Priority": "u=1", "User-Agent": self.user_agent}
-            connection = peripherals.get_connection(self.host, timeout=3, proxy=self.proxy)
-            connection.request("GET", "/api/v9/gateway", headers=header)   # subscribe works differently in v10
-        except (socket.gaierror, TimeoutError, ConnectionResetError):
-            connection.close()
-            logger.warning("No internet connection. Exiting...")
-            sys.exit("No internet connection. Exiting...")
-        response = connection.getresponse()
-        if response.status == 200:
-            data = response.read()
-            connection.close()
-            self.gateway_url = json.loads(data)["url"]
+        if self.host == DISCORD_HOST:
+            self.gateway_url = DISCORD_HOST_GATEWY
         else:
-            connection.close()
-            logger.error(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
-            sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
+            try:
+                header = {
+                    "Accept": "*/*",
+                    "Content-Type": "application/json",
+                    "Priority": "u=1",
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "cross-site",
+                    "User-Agent": self.user_agent,
+                }
+                connection = peripherals.get_connection(self.host, timeout=3, proxy=self.proxy)
+                connection.request("GET", "/api/v9/gateway", headers=header)   # subscribe works differently in v10
+            except (socket.gaierror, TimeoutError, ConnectionResetError):
+                connection.close()
+                sys.exit("No internet connection. Exiting...")
+            response = connection.getresponse()
+            if response.status == 200:
+                data = response.read()
+                connection.close()
+                self.gateway_url = json.loads(data)["url"]
+                logger.info(self.gateway_url)
+            else:
+                connection.close()
+                sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
 
         error = self.connect_ws()
         if error:
-            logger.error(f"Failed to get gateway url. Error: {error}. Exiting...")
             sys.exit(f"Failed to get gateway url. Error: {error}. Exiting...")
         self.state = 1
         self.heartbeat_interval = int(json.loads(zlib_decompress(self.ws.recv()))["d"]["heartbeat_interval"])
-        self.receiver_thread = threading.Thread(target=self.safe_function_wrapper, daemon=True, args=(self.receiver, ))
+        self.receiver_thread = threading.Thread(target=self.receiver, daemon=True)
         self.receiver_thread.start()
         self.heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         self.heartbeat_thread.start()
@@ -361,24 +367,11 @@ class Gateway():
         self.authenticate()
 
 
-    def safe_function_wrapper(self, function, args=()):
-        """
-        Wrapper for a function running in a thread that captures error and stores it for later use.
-        Error can be accessed from main loop and handled there.
-        """
-        try:
-            function(*args)
-        except SystemExit as e:
-            self.error = str(e)
-        except BaseException as e:
-            self.error = "".join(traceback.format_exception(e))
-
-
     def send(self, request):
         """Send data to gateway"""
         try:
             self.ws.send(json.dumps(request))
-        except websocket._exceptions.WebSocketException:
+        except (websocket._exceptions.WebSocketException, OSError):
             self.reconnect_requested = True
 
 
@@ -451,6 +444,7 @@ class Gateway():
                     self.guilds[guild_num]["channels"][channel_num]["pinned"] = True
             else:
                 hidden = False
+                flags = 0
             self.guilds[guild_num]["channels"][channel_num].update({
                 "message_notifications": channel["message_notifications"],
                 "muted": channel["muted"],
@@ -803,7 +797,6 @@ class Gateway():
                     logger.warning(f"Gateway status code: {status}, reason: {reason}")
                     if self.consecutive_errors >= 2:
                         self.disconnect_ws()
-                        logger.error(f"Failed to connect to gateway, error: {status} - {reason}")
                         sys.exit(f"Failed to connect to gateway, error: {status} - {reason}")
                     self.consecutive_errors += 1
                 self.resumable = status in (4000, 4009)
@@ -1002,6 +995,7 @@ class Gateway():
                             self.my_roles.append({
                                 "guild_id": guild_id,
                                 "roles": roles,
+                                "nick": member["nick"],
                             })
                     self.merged_users = data.get("users", [])   # this is for ready_supplemental
                     time_log_string += f"    roles - {round((time.monotonic() - ready_time_mid) * 1000, 3)} ms\n"
@@ -1499,16 +1493,17 @@ class Gateway():
                 elif optext == "GUILD_MEMBER_UPDATE":
                     if data["user"]["id"] == self.my_id:
                         nick = data.get("nick")
-                        roles_changed = None
+                        changed_guild = None
                         for num, guild in enumerate(self.my_roles):
                             if guild["guild_id"] == data["guild_id"]:
                                 self.my_roles[num]["roles"] = data["roles"]
-                                roles_changed = data["guild_id"]
+                                self.my_roles[num]["nick"] = nick
+                                changed_guild = data["guild_id"]
                                 break
                         self.user_update = ({
                             "id": data["user"]["id"],
                             "nick": nick,
-                        }, roles_changed)
+                        }, changed_guild)
 
                 elif optext == "THREAD_LIST_SYNC":
                     threads = []
@@ -1864,6 +1859,7 @@ class Gateway():
                                 self.my_roles.append({
                                     "guild_id": guild_id,
                                     "roles": member["roles"],
+                                    "nick": member["nick"],
                                 })
                                 break
                         self.guilds_changed = True
@@ -2010,7 +2006,6 @@ class Gateway():
         sleep_time = 0
         while not self.ready:
             if sleep_time >= self.heartbeat_interval / 100:
-                logger.error("Ready event could not be processed in time, probably because of too many servers. Exiting...")
                 sys.exit("Ready event could not be processed in time, probably because of too many servers. Exiting...")
             time.sleep(0.5)
             sleep_time += 5
@@ -2135,7 +2130,7 @@ class Gateway():
             self.wait = False
             # restarting threads
             if not self.receiver_thread.is_alive():
-                self.receiver_thread = threading.Thread(target=self.safe_function_wrapper, daemon=True, args=(self.receiver, ))
+                self.receiver_thread = threading.Thread(target=self.receiver, daemon=True)
                 self.receiver_thread.start()
             if not self.heartbeat_thread.is_alive():
                 self.heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)

@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from functools import lru_cache
 
 # support for gvsbuild
@@ -30,6 +31,7 @@ if sys.platform == "win32":
 import cairo
 import gi
 
+from endcord import peripherals, utils
 from endcord.wide_ranges import WIDE_RANGES
 
 gi.require_version("Gtk", "3.0")
@@ -38,8 +40,8 @@ gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 if sys.platform == "linux":
     gi.require_version("GioUnix", "2.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo   # noqa
 
-from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo   # noqa
 have_tray = False
 tray_error = None
 if importlib.util.find_spec("pystray"):
@@ -58,17 +60,22 @@ logger = logging.getLogger(__name__)
 WINDOW_SIZE = (900, 600)
 MAXIMIZED = False
 FONT_SIZE = 12
-FONT_NAME = "Monospace"
+FONT_NAME = "Source Code Pro"
+MULTIPLE_INSTANCES = True
 GTK_DARK_THEME = True
+BAR_THICKNESS = 0.5   # fraction of character width
 BG_ALPHA = 1.0
 BG_ALPHA_COLOR = 1.0
+APP_NAME = "endcord"
 try:
     import __main__
+    TRUE_APP_NAME = APP_NAME
     APP_NAME = getattr(__main__, "APP_NAME", "endcord")
 except Exception:
-    APP_NAME = "endcord"
+    pass
+APP_ID = f"com.{peripherals.REPO_OWNER}.{TRUE_APP_NAME}"
 
-CTRL_V_PASTE = False   # use Ctrl+V instead Ctrl+Shift+V to paste
+CTRL_SHIFT_V_PASTE = False   # enable Ctrl+Shift+V pasting
 ENABLE_TRAY = True
 TRAY_ICON_NORMAL = None
 TRAY_ICON_UNREAD = None
@@ -109,15 +116,17 @@ if config_path:
             MAXIMIZED = config.get("maximized", MAXIMIZED)
             FONT_SIZE = config.get("font_size", FONT_SIZE)
             FONT_NAME = config.get("font_name", FONT_NAME)
+            MULTIPLE_INSTANCES = config.get("multiple_instances", MULTIPLE_INSTANCES)
             GTK_DARK_THEME = config.get("gtk_dark_theme", GTK_DARK_THEME)
             APP_NAME = config.get("app_name", APP_NAME)
-            CTRL_V_PASTE = config.get("ctrl_v_paste", CTRL_V_PASTE)
+            CTRL_SHIFT_V_PASTE = config.get("ctrl_shift_v_paste", CTRL_SHIFT_V_PASTE)
             ENABLE_TRAY = config.get("enable_tray", ENABLE_TRAY)
             TRAY_ICON_NORMAL = config.get("tray_icon_normal", TRAY_ICON_NORMAL)
             TRAY_ICON_UNREAD = config.get("tray_icon_unread", TRAY_ICON_UNREAD)
             TRAY_ICON_MENTION = config.get("tray_icon_mention", TRAY_ICON_MENTION)
-            BG_ALPHA = float(config.get("bg_alpha", BG_ALPHA))
-            BG_ALPHA_COLOR = float(config.get("bg_alpha_color", BG_ALPHA_COLOR))
+            BAR_THICKNESS = min(1, max(0, config.get("bar_thickness", BAR_THICKNESS)))
+            BG_ALPHA = min(1, max(0, float(config.get("bg_alpha", BG_ALPHA))))
+            BG_ALPHA_COLOR = min(1, max(0, float(config.get("bg_alpha_color", BG_ALPHA_COLOR))))
             DEFAULT_PAIR = tuple(tuple(color) for color in config.get("default_color_pair", DEFAULT_PAIR))
             SYSTEM_COLORS = tuple(tuple(color) for color in config.get("color_palette", SYSTEM_COLORS))
 
@@ -129,11 +138,12 @@ if config_path:
             "font_name": FONT_NAME,
             "gtk_dark_theme": GTK_DARK_THEME,
             "app_name": APP_NAME,
-            "ctrl_v_paste": CTRL_V_PASTE,
+            "ctrl_shift_v_paste": CTRL_SHIFT_V_PASTE,
             "enable_tray": ENABLE_TRAY,
             "tray_icon_normal": TRAY_ICON_NORMAL,
             "tray_icon_unread": TRAY_ICON_UNREAD,
             "tray_icon_mention": TRAY_ICON_MENTION,
+            "bar_thickness": BAR_THICKNESS,
             "bg_alpha": BG_ALPHA,
             "bg_alpha_color": BG_ALPHA_COLOR,
             "default_color_pair": DEFAULT_PAIR,
@@ -188,7 +198,9 @@ current_icon_index = None
 nice_exit = False
 is_quitting = False
 gtk_window = None
+gtk_app = None
 use_tray = False
+desktop_integration = False
 
 
 @lru_cache(maxsize=64)
@@ -248,6 +260,18 @@ except ImportError:
     pass
 
 
+def load_default_font():
+    """Load default font if it can be found"""
+    if not FONT_NAME or FONT_NAME.lower() == "source code pro":
+        path = os.path.join(utils.get_base_path(), "SourceCodePro-Regular.ttf")
+        if os.path.exists(path):
+            try:
+                font_map = PangoCairo.FontMap.get_default()
+                font_map.add_font_file(path)
+            except Exception as e:
+                logger.warning(f"Failed loading builtin font: {e}")
+
+
 def glib_log_bridge(domain, level, message, user_data=None):   # noqa
     """Logger bridge for gobject"""
     if level & GLib.LogLevelFlags.LEVEL_CRITICAL:
@@ -256,8 +280,9 @@ def glib_log_bridge(domain, level, message, user_data=None):   # noqa
         logger.error(f"[{domain}] {message}")
     elif level & GLib.LogLevelFlags.LEVEL_WARNING:
         logger.warning(f"[{domain}] {message}")
-    else:
-        logger.info(f"[{domain}] {message}")
+    # dont need info and debug
+    # else:
+    #     logger.info(f"[{domain}] {message}")
 
 
 def no_log(domain, level, message, user_data=None):   # noqa
@@ -274,6 +299,19 @@ GLib.log_set_handler(
 )
 
 
+def load_svg_with_gtk(path, size=(64, 64)):
+    """Render svg to PIL image using gtk GdkPixbuf loader"""
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    try:
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(os.path.expanduser(path), size[0], size[1], True)
+        mode = "RGBA" if pixbuf.get_has_alpha() else "RGB"
+        wh = (pixbuf.get_width(), pixbuf.get_height())
+        return Image.frombytes(mode, wh, pixbuf.get_pixels(), "raw", mode, pixbuf.get_rowstride())
+    except Exception:
+        return None
+
+
 # tray stuff
 
 def enable_tray():
@@ -281,13 +319,27 @@ def enable_tray():
     global use_tray
     use_tray = True
     if not icon:   # tray not yet initialized
-        threading.Thread(target=tray_thread, daemon=True).start()
+        init_tray()
+
+
+def get_default_tray_icon(filename):
+    """Get builtin tray icon"""
+    icons = os.path.join(utils.get_base_path(), "icons")
+    if os.path.exists(icons):
+        return os.path.join(icons, filename)
+    return os.path.normpath(os.path.join(utils.get_base_path(), "..", "tools", "icons", filename))
+
 
 
 def load_tray_image(path=None, color=None):
     """Load image from path, fallback to circle drawn with pillow"""
     if path and os.path.exists(os.path.expanduser(path)):
-        return Image.open(os.path.expanduser(path)).convert("RGBA")
+        expanded_path = os.path.expanduser(path)
+        if expanded_path.lower().endswith(".svg"):
+            img = load_svg_with_gtk(expanded_path)
+            if img:
+                return img
+        return Image.open(expanded_path).convert("RGBA")
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     dc = ImageDraw.Draw(image)
     dc.ellipse((16, 16, 48, 48), fill=color)
@@ -295,11 +347,17 @@ def load_tray_image(path=None, color=None):
 
 
 if have_tray:
-    tray_icons = [load_tray_image(path, color) for path, color in (
-        (TRAY_ICON_NORMAL, (200, 200, 200, 255)),
-        (TRAY_ICON_UNREAD, (255, 120, 0, 255)),
-        (TRAY_ICON_MENTION, (200, 30, 40, 255)),
-    )]
+    TRAY_ICON_NORMAL = get_default_tray_icon("endcord-tray.png") if not TRAY_ICON_NORMAL else TRAY_ICON_NORMAL
+    TRAY_ICON_UNREAD = get_default_tray_icon("endcord-tray.png") if not TRAY_ICON_UNREAD else TRAY_ICON_UNREAD
+    TRAY_ICON_MENTION = get_default_tray_icon("endcord-tray-mention.png") if not TRAY_ICON_MENTION else TRAY_ICON_MENTION
+    tray_icons = [
+        load_tray_image(path, color)
+        for path, color in (
+            (TRAY_ICON_NORMAL, (200, 200, 200, 255)),
+            (TRAY_ICON_UNREAD, (255, 120, 0, 255)),
+            (TRAY_ICON_MENTION, (200, 30, 40, 255)),
+        )
+    ]
 
 
 def set_tray_icon(icon_index):
@@ -347,10 +405,11 @@ def quit_app(instant=False):
         threading.Thread(target=stop_tray, daemon=True).start()
 
         def stop_gtk():
+            global gtk_window, gtk_app
             if gtk_window:
                 gtk_window.destroy()
-            if Gtk.main_level() > 0:
-                Gtk.main_quit()
+            if gtk_app:
+                gtk_app.quit()
             return False
         GLib.idle_add(stop_gtk)
 
@@ -372,16 +431,16 @@ def quit_app(instant=False):
     GLib.timeout_add(50, poll_exit)
 
 
-def tray_thread():
-    """Thread that runs tray icon handler"""
+def init_tray():
+    """Start tray icon handler"""
     global icon
     time.sleep(1)   # delay for window to init
     menu = Menu(
         MenuItem("Toggle Window", lambda x, y: tray_toggle()),   # noqa
-        MenuItem(f"Quit {APP_NAME}", lambda x, y: quit_app()),   # noqa
+        MenuItem(f"Quit {APP_NAME.capitalize()}", lambda x, y: quit_app()),   # noqa
     )
     icon = Icon(f"{APP_NAME.lower()}-tray", tray_icons[0], APP_NAME, menu)
-    icon.run()
+    icon.run_detached()
 
 
 def set_nice_exit(value):
@@ -393,12 +452,54 @@ def set_nice_exit(value):
 # gtk stuff
 
 
+class GtkDesktopApp(Gtk.Application):
+    """GTK desktop integration"""
+
+    def __init__(self):
+        flags = Gio.ApplicationFlags.NON_UNIQUE if MULTIPLE_INSTANCES else Gio.ApplicationFlags.FLAGS_NONE
+        super().__init__(application_id=APP_ID, flags=flags)
+        GLib.set_prgname(APP_ID)
+
+    def do_startup(self):
+        """Startup GTK application"""
+        global desktop_integration
+        Gtk.Application.do_startup(self)
+        desktop_integration = True
+        if sys.platform == "linux":
+            try:
+                app_info = Gio.DesktopAppInfo.new(f"{APP_ID}.desktop")
+                if not app_info:
+                    logger.warning(f"No .desktop file found for '{APP_ID}', desktop integration will not work")
+                    desktop_integration = False
+            except (TypeError, AttributeError):
+                logger.warning(f"No .desktop file found for '{APP_ID}', desktop integration will not work")
+                desktop_integration = False
+        notify_action = Gio.SimpleAction.new("notify-click", GLib.VariantType.new("s"))
+        notify_action.connect("activate", self.on_notify_clicked)
+        self.add_action(notify_action)
+
+    def on_notify_clicked(self, action, parameter):   # noqa
+        """Catch notification clicks"""
+        if parameter:
+            notification_id = parameter.get_string()
+            event_queue.put(f"NOTIFY_CLICK {notification_id}")
+        global gtk_window
+        if gtk_window:
+            gtk_window.present()
+
+    def do_activate(self):
+        """Activate gtk window"""
+        global gtk_window
+        if gtk_window and gtk_window not in self.get_windows():
+            self.add_window(gtk_window)
+
+
 class GtkTerminalWindow(Gtk.Window):
     """GTK window interface"""
 
     def __init__(self, curses_window):
         super().__init__()
-        self.set_title(APP_NAME)
+        self.set_title(APP_NAME.capitalize())
 
         # enable transparency
         if BG_ALPHA is not None:
@@ -425,13 +526,27 @@ class GtkTerminalWindow(Gtk.Window):
         self.drawing_area.connect("button-press-event", self.on_button_press)
         self.drawing_area.connect("button-release-event", self.on_button_release)
         self.drawing_area.connect("motion-notify-event", self.on_motion_notify)
+        self.drawing_area.drag_dest_set(Gtk.DestDefaults.ALL, [
+            Gtk.TargetEntry.new("text/uri-list", 0, 1),
+            Gtk.TargetEntry.new("UTF8_STRING", 0, 2),
+            Gtk.TargetEntry.new("STRING", 0, 2),
+            Gtk.TargetEntry.new("text/plain", 0, 2),
+        ], Gdk.DragAction.COPY)
+        self.drawing_area.connect("drag-data-received", self.on_drag_data_received)
         self.add(self.drawing_area)
         self.connect("key-press-event", self.on_key_press)
         self.connect("delete-event", self.on_delete_event)
         self.connect("destroy", self.on_destroy)
         self.connect("focus-in-event", lambda *_: event_queue.put("FOCUS_IN"))
         self.connect("focus-out-event", lambda *_: event_queue.put("FOCUS_OUT"))
-        self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME} {FONT_SIZE}")
+
+        # load fonts
+        load_default_font()
+        self.on_windows = sys.platform == "win32"
+        if self.on_windows:
+            self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME}, Segoe UI Symbol, {FONT_SIZE}")
+        else:
+            self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME} {FONT_SIZE}")
         self.last_mouse_cell = (None, None)
         self.scroll_buffer = 0.0   # for touchpad
 
@@ -446,6 +561,9 @@ class GtkTerminalWindow(Gtk.Window):
         self.curses_window.char_height = self.char_height
         self.layout = self.drawing_area.create_pango_layout("")
         PangoCairo.context_set_resolution(self.layout.get_context(), 96)
+        self.emoji_y_offset = self.char_height * 0.2   # windows only
+        self.bar_thickness = self.char_width * BAR_THICKNESS
+        self.half_w, self.half_h = self.char_width / 2.0, self.char_height / 2.0
 
 
     def on_configure(self, widget, event):   # noqa
@@ -502,6 +620,8 @@ class GtkTerminalWindow(Gtk.Window):
                             break   # not grouping emoji because they have slightly wider font
 
                     text = "".join(span_text)
+                    if not text:
+                        continue
                     fg_idx = span_attr & 0xFFFF
                     if fg_idx >= len(color_map):
                         fg_idx = 0
@@ -513,7 +633,7 @@ class GtkTerminalWindow(Gtk.Window):
                     px_y = y * self.char_height
 
                     # draw bg
-                    if bg_color != bg and text:
+                    if bg_color != bg:
                         if BG_ALPHA_COLOR is not None:
                             cr.set_source_rgba(*rgb_to_cairo(bg_color), BG_ALPHA_COLOR)
                         else:
@@ -530,13 +650,37 @@ class GtkTerminalWindow(Gtk.Window):
                     layout.set_font_description(current_desc)
                     layout.set_text(text, -1)
                     cr.set_source_rgb(*rgb_to_cairo(fg_color))
-                    cr.move_to(px_x, px_y)
+                    if self.on_windows and flags & A_EMOJI:
+                        cr.move_to(px_x, px_y + self.emoji_y_offset)
+                    else:
+                        cr.move_to(px_x, px_y)
                     PangoCairo.show_layout(cr, layout)
                     if flags & A_UNDERLINE:
                         cr.set_line_width(1)
                         cr.move_to(px_x, px_y + self.char_height - 2)
                         cr.line_to(px_x + bg_px_width, px_y + self.char_height - 2)
                         cr.stroke()
+
+                    # thicker vertical lines
+                    if "┃" in text or "╽" in text or "╿" in text:
+                        cr.set_line_width(self.bar_thickness)
+                        stroke = False
+                        center_y = px_y + self.half_h
+                        for idx, char in enumerate(text):
+                            if char in ("┃", "╽", "╿"):
+                                stroke = True
+                                center_x = px_x + (idx * self.char_width) + self.half_w
+                                if char == "┃":
+                                    cr.move_to(center_x, px_y)
+                                    cr.line_to(center_x, px_y + self.char_height)
+                                elif char == "╽":
+                                    cr.move_to(center_x, center_y)
+                                    cr.line_to(center_x, px_y + self.char_height)
+                                elif char == "╿":
+                                    cr.move_to(center_x, px_y)
+                                    cr.line_to(center_x, center_y)
+                        if stroke:
+                            cr.stroke()
 
             # draw cursor
             if cursor_type:
@@ -593,7 +737,7 @@ class GtkTerminalWindow(Gtk.Window):
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
 
         # clipboard paste
-        if (ctrl and keyval == Gdk.KEY_v) if CTRL_V_PASTE else (ctrl and shift and keyval == Gdk.KEY_V):
+        if CTRL_SHIFT_V_PASTE and (ctrl and shift and keyval == Gdk.KEY_V):
             clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
             clipboard.request_text(self.on_clipboard_received, None)
             return True
@@ -662,7 +806,7 @@ class GtkTerminalWindow(Gtk.Window):
         unicode_code = Gdk.keyval_to_unicode(keyval)
         if unicode_code != 0:
             ch = chr(unicode_code)
-            if ch == " ":
+            if ch == " " and mod_prefix:
                 event_queue.put(mod_prefix + "SPACE")
                 return True
             if not ctrl and not alt:
@@ -792,13 +936,88 @@ class GtkTerminalWindow(Gtk.Window):
             self.present()
 
 
+    def on_drag_data_received(self, widget, drag_context, x, y, data, info, time):   # noqa
+        """Handle drag-and-dropped files and text"""
+        success = False
+        try:
+            if info == 1:   # file paths
+                uris = data.get_uris()
+                if uris:
+                    paths = []
+                    for uri in uris:
+                        gfile = Gio.File.new_for_uri(uri)
+                        path = gfile.get_path()
+                        if path:
+                            paths.append(path)
+                    if paths:
+                        event_queue.put(f"PASTE_FILE {json.dumps(paths)}")
+                        success = True
+            elif info == 2:   # text
+                text = data.get_text()
+                if text:
+                    event_queue.put(f"PASTE_TEXT {text}")
+                    success = True
+        except Exception as e:
+            logger.error(f"Drag and drop error: {e}")
+        finally:
+            Gtk.drag_finish(drag_context, success, False, time)   # ack the drop
+
+
+def paste_clipboard(save_path=None):
+    """Paste list of file paths, images or text from clipboard"""
+    result = []
+    fetch_event = threading.Event()
+
+    def fetch_on_main_thread():
+        nonlocal result
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+
+        # file paths
+        if clipboard.wait_is_uris_available():
+            uris = clipboard.wait_for_uris()
+            if uris:
+                for uri in uris:
+                    gfile = Gio.File.new_for_uri(uri)
+                    path = gfile.get_path()
+                    if path:
+                        result.append(path)
+
+        # binary image
+        elif clipboard.wait_is_image_available():
+            pixbuf = clipboard.wait_for_image()
+            if pixbuf:
+                if not save_path:
+                    return []
+                try:
+                    file_path = os.path.join(save_path, f"clipboard_image_{int(time.time())}.png")
+                    pixbuf.savev(file_path, "png", [], [])
+                    result = [file_path]
+                except Exception:
+                    pass
+
+        # text
+        elif clipboard.wait_is_text_available():
+            text = clipboard.wait_for_text()
+            if text:
+                result = text
+        fetch_event.set()
+        return False
+
+    GLib.idle_add(fetch_on_main_thread)
+    fetch_event.wait()
+    return result
+
+
 def error_handler(message, unblock_event, report=False):
     """Spawn GTK window with the error and unblock the thread when closed"""
+    if message == 1:
+        message = "Exited with return code 1.\nThere might be more info in the log."
+        report = True
     if report:
         report = "\n\nYou can report this here:\nhttps://github.com/sparklost/endcord/issues"
     def build_and_show():   # noqa
         win = Gtk.Window()
-        win.set_title(f"{APP_NAME} Error Report")
+        win.set_title(f"{APP_NAME.capitalize()} Error Report")
         win.set_default_size(800, 500)
         win.set_position(Gtk.WindowPosition.CENTER)
         scroll = Gtk.ScrolledWindow()
@@ -814,6 +1033,10 @@ def error_handler(message, unblock_event, report=False):
         scroll.add(textview)
         win.add(scroll)
         def on_key_press(widget, event):   # noqa
+            if event.keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R, Gdk.KEY_Shift_L, Gdk.KEY_Shift_R, Gdk.KEY_Alt_L, Gdk.KEY_Alt_R):
+                return False
+            if (event.state & Gdk.ModifierType.CONTROL_MASK) and event.keyval in (Gdk.KEY_c, Gdk.KEY_C):
+                return False
             win.destroy()
             return True
         def on_destroy(widget):   # noqa
@@ -825,7 +1048,67 @@ def error_handler(message, unblock_event, report=False):
     GLib.idle_add(build_and_show)
 
 
+def notify_send(title, message, sound=None, image_path=None, custom_sound=None):
+    """Send simple notification containing title, message and optionally image, with optional custom notification sound, linux only"""
+    if not desktop_integration:
+        if image_path:
+            image_path = os.path.expanduser(image_path)
+            image_path = peripherals.make_round_image(image_path)
+        return peripherals.notify_send(title, message, sound, image_path, custom_sound)
+
+    if image_path:
+        image_path = os.path.expanduser(image_path)
+        image_path = peripherals.make_round_image(image_path)
+
+    if custom_sound:
+        threading.Thread(target=peripherals.play_audio, daemon=True, args=(custom_sound, )).start()
+    elif sound and sys.platform == "linux":
+        if peripherals.no_notify_sound and peripherals.fallback_notification_sound:
+            threading.Thread(target=peripherals.play_audio, daemon=True, args=(peripherals.fallback_notification_sound, )).start()
+        else:
+            path = f"/usr/share/sounds/freedesktop/stereo/{sound}.oga"
+            if os.path.exists(path):
+                threading.Thread(target=peripherals.play_audio, daemon=True, args=(path, )).start()
+
+    try:
+        app = gtk_window.get_application()
+        if not app:
+            raise ValueError("GTK Application instance not found")
+
+        notification = Gio.Notification.new(title)
+        notification.set_body(message)
+
+        if image_path:
+            file = Gio.File.new_for_path(image_path)
+            icon = Gio.FileIcon.new(file)
+            notification.set_icon(icon)
+
+        notification_id = str(uuid.uuid4())
+        notification.set_default_action_and_target("app.notify-click", GLib.Variant.new_string(notification_id))
+        app.send_notification(notification_id, notification)
+        return notification_id
+
+    except (GLib.Error, AttributeError, ValueError) as e:
+        logger.warning(f"GTK notification failed ({e}), using fallback.")
+        return peripherals.notify_send(title, message, sound, image_path, custom_sound)
+
+    except Exception as e:
+        logger.error(f"Failed sending notification: {e}")
+        return None
+
+
+def notify_remove(notification_id):
+    """Remove notification by its id, linux only"""
+    if notification_id:
+        app = gtk_window.get_application()
+        try:
+            app.withdraw_notification(str(notification_id))
+        except GLib.Error:   # fllback
+            peripherals.notify_remove(notification_id)
+
+
 # curses stuff
+
 
 class Window:
     """GTK-Curses window class"""
@@ -837,6 +1120,7 @@ class Window:
         self.ncols = ncols
         self.nlines = nlines
         self.nodelay_state = False
+        self.timeout_s = None
 
         if parent is None:   # root window
             self.buffer = [[(" ", 0) for _ in range(self.ncols)] for _ in range(self.nlines)]
@@ -870,6 +1154,11 @@ class Window:
         if self.nodelay_state:
             try:
                 return event_queue.get_nowait()
+            except queue.Empty:
+                return -1
+        elif self.timeout_s is not None:
+            try:
+                return event_queue.get(timeout=self.timeout_s)
             except queue.Empty:
                 return -1
         else:
@@ -928,8 +1217,8 @@ class Window:
                 row_buffer = self.buffer[abs_y]
                 abs_end = min(abs_end, len(row_buffer))
                 for i in range(abs_x, abs_end):
-                    ch, _ = row_buffer[i]
-                    row_buffer[i] = (ch, attr)
+                    ch, old_attr = row_buffer[i]
+                    row_buffer[i] = (ch, attr | (old_attr & A_EMOJI))
 
 
     def clear(self):   # noqa
@@ -971,7 +1260,8 @@ class Window:
         if gtk_window:
             GLib.idle_add(gtk_window.drawing_area.queue_draw)
     def nodelay(self, flag): self.nodelay_state = flag   # noqa
-    def timeout(self, value): pass   # noqa
+    def timeout(self, value):   # noqa
+        self.timeout_s = value / 1000 if value >= 0 else None
     def keypad(self, x): pass   # noqa
     def bkgd(self, ch, color_id): pass   # noqa
 
@@ -987,19 +1277,20 @@ def init_pair(pair_id, fg, bg):
 
 
 def initscr():   # noqa
-    global gtk_window
+    global gtk_window, gtk_app
     window = Window(0, 0, 0, 0, parent=None)
+    gtk_app = GtkDesktopApp()
     gtk_window = GtkTerminalWindow(window)
     return window
 
 
 def wrapper(func, *args, **kwargs):   # noqa
-    global gtk_window
+    global gtk_window, gtk_app
     window = initscr()
     func_result = None
 
     if have_tray and use_tray and ENABLE_TRAY:
-        threading.Thread(target=tray_thread, daemon=True).start()
+        init_tray()
     elif tray_error:
         logger.error(f"Failed to start tray: {tray_error}")
     if not have_tray:
@@ -1012,13 +1303,20 @@ def wrapper(func, *args, **kwargs):   # noqa
             func_result = func(window, *args, **kwargs)
         except SystemExit as e:
             if e.code:
-                exit_message = str(e.code)
-                logger.warning(f"Exit with message: {exit_message}")
-                error_handler(exit_message, error_event)
+                if utils.THREAD_EXCEPTION:
+                    exit_message = utils.THREAD_EXCEPTION
+                else:
+                    exit_message = str(e.code)
+                if e.code:
+                    logger.critical(f"Exit with message: {exit_message}")
+                    error_handler(exit_message, error_event, report=True)
+                else:
+                    logger.info(f"Exit with message: {exit_message}")
+                    error_handler(exit_message, error_event)
                 error_event.wait()
         except Exception as e:
             error_traceback = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            logger.error(f"Exit with error:\n{error_traceback}")
+            logger.critical(f"Exit with error:\n{error_traceback}")
             error_handler(error_traceback, error_event, report=True)
             error_event.wait()
         finally:
@@ -1029,10 +1327,12 @@ def wrapper(func, *args, **kwargs):   # noqa
     if MAXIMIZED:
         gtk_window.maximize()
     gtk_window.show_all()
+
     try:
-        Gtk.main()
+        gtk_app.run(None)
     finally:
         pass
+
     return func_result
 
 

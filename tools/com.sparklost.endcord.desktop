@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.5.4
+Type=Application
+Name=Endcord
+GenericName=Internet messenger
+Comment=The most feature rich Discord TUI client
+Icon=com.sparklost.endcord
+Exec=endcord
+StartupWMClass=com.sparklost.endcord
+Terminal=false
+Categories=InstantMessaging;Network;

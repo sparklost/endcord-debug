@@ -11,10 +11,10 @@ import sys
 import uuid
 
 # default client properties
-CLIENT_BUILD_NUMBER = None   # 535363   # should only affect experimental features availability
-CLIENT_VERSION = "1.0.143"
+CLIENT_BUILD_NUMBER = None   # 607562   # should only affect experimental features availability
+CLIENT_VERSION = "1.0.156"
 USER_AGENT_WEB = "Mozilla/5.0 (%OS; rv:152.0) Gecko/20100101 Firefox/152.0"
-USER_AGENT_DESKTOP = f"Mozilla/5.0 (%OS) AppleWebKit/537.36 (KHTML, like Gecko) discord/{CLIENT_VERSION} Chrome/138.0.7204.251 Electron/37.6.0 Safari/537.36"
+USER_AGENT_DESKTOP = f"Mozilla/5.0 (%OS) AppleWebKit/537.36 (KHTML, like Gecko) discord/{CLIENT_VERSION} Chrome/148.0.7778.280 Electron/42.9.0 Safari/537.36"
 LINUX_UA_STRING = "X11; Linux x86_64"
 WINDOWS_UA_STRING = "Windows NT %VER; Win64; x64"
 MACOS_UA_STRING = "Machintos; Intel Mac OS X %VER"
@@ -110,6 +110,7 @@ def get_default_properties(android=False):
         "os": operating_system,
         "browser": "Discord Client" if not android else "Discord Android",
         "release_channel": "stable",
+        "client_version": CLIENT_VERSION,
         "os_version": os_version,
         "os_arch": arch,
         "app_arch": arch,

@@ -119,27 +119,26 @@ jobs:
         with:
           enable-cache: false
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     uv venv --clear --python .cpython/bin/python3
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
-      #
-      # - name: Run build script [LITE]
-      #   shell: bash
-      #   run: |
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=LITE "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          uv venv --clear --python .cpython/bin/python3
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [LITE]
+        shell: bash
+        run: |
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
         run: |
-          uv venv --clear --python .cpython/bin/python3
           args=("--custom-python")
           [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
@@ -147,8 +146,7 @@ jobs:
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Make binaries executable
-        run: |
-            chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
+        run: chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
 
       - name: Archive artifacts
         shell: bash
@@ -157,8 +155,9 @@ jobs:
           version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          # tar -czf "endcord-$version-linux.tar.gz" endcord $extra
-          # tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
+          cp ../tools/icons/endcord.svg .
+          tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
           tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
 
       - name: Upload build artifact
@@ -182,7 +181,7 @@ jobs:
       - name: Install system dependencies
         shell: bash
         run: |
-            choco install ccache -y
+            choco install ccache imagemagick -y
             echo UV_LINK_MODE=copy >> $GITHUB_ENV
 
       - name: Install Python
@@ -201,21 +200,21 @@ jobs:
         with:
           version: ${{ matrix.clang-version }}
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
-      #
-      # - name: Run build script [LITE]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=LITE "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [LITE]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -233,8 +232,8 @@ jobs:
           version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          # 7z a "endcord-$version-windows.zip" endcord.exe $extra
-          # 7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
+          7z a "endcord-$version-windows.zip" endcord.exe $extra
+          7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
           7z a "endcord-gui-$version-windows.zip" endcord-gui.exe $extra
 
       - name: Upload build artifact

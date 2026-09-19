@@ -1,7 +1,19 @@
-Fix gtkcurses emoji rendering
+Add executable icon
+Add icon to build.py
+Add version information to binaries
+Fix gateway crash
+Cleanup readme
+
+Make install script more interactive
+# Update aur packages to install icon and .desktop
+# add endcord installer aur package
+
+VOICE CALLS:
+When double click on voice channel switch to that channel chat then ask to join
+Add option to locally mute users in voice call
+Use libopus instead of pyav
+Add voice call normalization option
 Fix sound stuttering when using rnnoise
-Fix bad received voice call sound
-When double click on voice channel ask to confirm to join and switch to that channel chat
 
 CORE:
 Add keybinding configuration UI
@@ -10,17 +22,17 @@ Add commands for other tools
 Add inbox
 Add spellcheck corrections assist
 Automatically convert @name or @role if sent as plaintext
+Fix issues with wide characters in input line
+Allow client to run with invalid token but stay offline
 Provide static binaries built on muslinux
 Make build.py work with and without uv
 Make custom json parser - remove orjson
-Fix issues with wide characters in input line
 Add multiline input line
 Add option to select individual message
 Add video, stage and stream calls
 Add localization
 
 GTKCURSES:
-Add notification floating number to desktop icon to gtkcurses
 Add ascii/block media drawing and inline to gtkcurses
 Optimize gtkcurses
 Add full image viewer and inline to gtkcurses

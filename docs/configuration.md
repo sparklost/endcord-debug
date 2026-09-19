@@ -170,7 +170,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     If disabled, wont be able to receive nor start calls and calls wont ring.
 - `call_silence_threshold = -30`  
     This is silence detection threshold for sound transmitted in voice calls. Value is in dB.  
-    This can be conviniently tuned by using `endcord --vumeter` launch flag.  
+    This can be conveniently tuned by using `endcord --vumeter` launch flag.  
     If system mic volume is too low, actual sound may be detected as silence, so decrease this value until voice can be heard properly.  
     Increase it if endcord is constantly sending noise when its silence. Or decrease mic volume and increase input volume in endcord.  
     Set to `0` to disable silence detection (sound will be constantly sent and will use more bandwidth).  
@@ -180,8 +180,8 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `call_fast_mixer = False`  
     This option only has effect on mixing received audio from multiple users speaking at the same time.  
     If True, call will use faster mixer that uses less CPU but might result in lower audio quality.  
-- `call_mic_noise_supression = False`  
-    Run noise supression on audio recorded from microphone. Audio will be downmixed to mono. To use this, either install rnnoise onthe system, or build endcord with `--bundle-rnnoise` build.py script argument.
+- `call_mic_noise_suppression = False`  
+    Run noise suppression on audio recorded from microphone. Audio will be downmixed to mono. To use this, either install rnnoise on the system, or build endcord with `--bundle-rnnoise` build.py script argument.
 - `downloads_path = None`  
     Path to custom downloads directory. Set to `None` to use system default.
 - `notifications_pfp = True`  
@@ -260,7 +260,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Enable debug mode.
 
 ### Theme
-- `compact = True`  
+- `compact = False`  
     Compact mode that is more space-efficient, has less borders between windows.
 - `tree_width = 32`  
     Width of channel tree in characters.
@@ -589,20 +589,24 @@ Note: everything after `%content` may be pushed to newline.
     Size of the font.
 - `font_name: "Source Code Pro"`  
     Name of the font installed on the system.
-- `gtk_dark_theme = True`  
+- `multiple_instances: true`  
+    Allow for launching multiple instances of same app.
+- `gtk_dark_theme: true`  
     Whether to use dark GTK theme for the window.
 - `app_name: "Endcord"`  
     Only changes title of the window.
-- `ctrl_v_paste: false`  
-    If `true` will use `Ctrl+V` instead `Ctrl+Shift+V` for pasting.
+- `ctrl_shift_v_paste: false`  
+    If `true` will enable `Ctrl+Shift+V` for pasting TEXT ONLY. Ctrl+V is already gtk-natively handling smart-paste.
 - `enable_tray: true`  
     Enable tray icon. closing window will minimize to tray.
 - `tray_icon_normal: null`  
-    Path to tray icon file. Its supposed to be png with size of 32x32 or 64x64, but other formats and sizes should work too. Set to `null` to use default icons.
+    Path to tray icon file. Its supposed to be png with size of 32x32 or 64x64, but other formats should work (svg too). Set to `null` to use default icons.
 - `tray_icon_unread: null`  
     Path to tray icon file shown when there are unread messages. Set to `null` to disable.
 - `tray_icon_unread: null`  
     Path to tray icon file shown when there are unread messages that are mentioning this user. Set to `null` to disable.
+- `bar_thickness: 0.5`  
+    Value representing fraction of horizontal width of character cell, used to draw thicker scrollbar characters (`┃╽╿`).
 - `bg_alpha: 1.0`  
     Alpha value for window background transparency. Set to `1.0` to disable transparency.
 - `bg_alpha_color: 1.0`  

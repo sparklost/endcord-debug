@@ -90,7 +90,7 @@ settings = {
     "call_silence_threshold": -30,
     "call_opus_mode": "voip",
     "call_fast_mixer": False,
-    "call_mic_noise_supression": False,
+    "call_mic_noise_suppression": False,
     "yt_dlp_path": "yt-dlp",
     "yt_dlp_format": 18,
     "mpv_path": "mpv",
