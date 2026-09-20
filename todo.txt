@@ -1,6 +1,3 @@
-Fix llvm setup on macos workflows
-    TEST ON SEPARATE REPO
-
 VOICE CALLS:
 When double click on voice channel switch to that channel chat then ask to join
 Add option to locally mute users in voice call

@@ -1412,7 +1412,7 @@ if __name__ == "__main__":
         os.environ["UV_PYTHON_INSTALL_DIR"] = "./.python"
         os.environ["UV_NO_CACHE"] = "1"
 
-    if clang and not shutil.which("lld"):
+    if clang and not (shutil.which("lld") or shutil.which("lf.lld") or shutil.which("lld")):
         fprint("WARNING: lld is not found on system, consider installing it", color=RED)
 
     if args.custom_python:
