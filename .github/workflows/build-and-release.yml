@@ -47,7 +47,7 @@ env:
   MAC_ARM_USE_CLANG: "true"
   # macOS Intel
   MAC_INTEL_PYTHON_VERSION: "3.14"
-  MAC_INTEL_CLANG_VERSION: "23"
+  MAC_INTEL_CLANG_VERSION: "22"
   MAC_INTEL_USE_NUITKA: "false"
   MAC_INTEL_USE_CLANG: "true"
 
@@ -298,6 +298,8 @@ jobs:
           args=()
           [[ "${MAC_ARM_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${MAC_ARM_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv sync --all-groups
+          uv run setup.py build_ext --inplace
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
