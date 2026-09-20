@@ -298,8 +298,6 @@ jobs:
           args=()
           [[ "${MAC_ARM_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${MAC_ARM_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv sync --all-groups
-          uv run setup.py build_ext --inplace
           uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
