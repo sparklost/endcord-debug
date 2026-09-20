@@ -1,12 +1,5 @@
-Add executable icon
-Add icon to build.py
-Add version information to binaries
-Fix gateway crash
-Cleanup readme
-
-Make install script more interactive
-# Update aur packages to install icon and .desktop
-# add endcord installer aur package
+Fix llvm setup on macos workflows
+    TEST ON SEPARATE REPO
 
 VOICE CALLS:
 When double click on voice channel switch to that channel chat then ask to join

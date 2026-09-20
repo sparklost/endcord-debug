@@ -32,21 +32,22 @@ env:
   PYTHONUNBUFFERED: "1"
   # Linux
   LINUX_PYTHON_VERSION: "3.14.6"
-  LINUX_CLANG_VERSION: "22.1.3"
+  LINUX_CLANG_VERSION: "23.1.0"
   LINUX_USE_NUITKA: "true"
   LINUX_USE_CLANG: "true"
   # Windows
   WIN_PYTHON_VERSION: "3.14"
+  WIN_CLANG_VERSION: "21.1.8"
   WIN_USE_NUITKA: "true"
   WIN_USE_CLANG: "false"   # https://github.com/Nuitka/Nuitka/issues/3621
   # macOS ARM
   MAC_ARM_PYTHON_VERSION: "3.14"
-  MAC_ARM_CLANG_VERSION: "21.1.8"
+  MAC_ARM_CLANG_VERSION: "23"
   MAC_ARM_USE_NUITKA: "false"
   MAC_ARM_USE_CLANG: "true"
   # macOS Intel
   MAC_INTEL_PYTHON_VERSION: "3.14"
-  MAC_INTEL_CLANG_VERSION: "21.1.8"
+  MAC_INTEL_CLANG_VERSION: "23"
   MAC_INTEL_USE_NUITKA: "false"
   MAC_INTEL_USE_CLANG: "true"
 
@@ -167,6 +168,12 @@ jobs:
           path: ./dist/*.tar.gz
           compression-level: 0
 
+      - name: Cancel workflow on failure
+        if: failure() && github.event_name == 'push'
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
 
   build-windows:
     name: Build (Windows)
@@ -198,23 +205,23 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         if: env.WIN_USE_CLANG == 'true'
         with:
-          version: ${{ matrix.clang-version }}
+          version: ${{ env.WIN_CLANG_VERSION }}
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
-      #
-      # - name: Run build script [LITE]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=LITE "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [LITE]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -232,8 +239,8 @@ jobs:
           version=${version#refs/heads/}
           extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          #7z a "endcord-$version-windows.zip" endcord.exe $extra
-          #7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
+          7z a "endcord-$version-windows.zip" endcord.exe $extra
+          7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
           7z a "endcord-gui-$version-windows.zip" endcord-gui.exe $extra
 
       - name: Upload build artifact
@@ -242,6 +249,12 @@ jobs:
           name: dist-windows
           path: ./dist/*.zip
           compression-level: 0
+
+      - name: Cancel workflow on failure
+        if: failure() && github.event_name == 'push'
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
 
   build-macos-arm:
@@ -261,10 +274,13 @@ jobs:
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
         if: env.MAC_ARM_USE_CLANG == 'true'
-        with:
-          version: ${{ env.MAC_ARM_CLANG_VERSION }}
+        run: |
+          brew install "llvm@${MAC_ARM_CLANG_VERSION}"
+          LLVM_PREFIX="$(brew --prefix "llvm@${MAC_ARM_CLANG_VERSION}")"
+          echo "${LLVM_PREFIX}/bin" >> $GITHUB_PATH
+          echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
 
       - name: Install Python
         uses: actions/setup-python@v7
@@ -312,6 +328,12 @@ jobs:
           path: ./dist/*.zip
           compression-level: 0
 
+      - name: Cancel workflow on failure
+        if: failure() && github.event_name == 'push'
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
 
   build-macos-intel:
     name: Build (macOS Intel)
@@ -330,10 +352,13 @@ jobs:
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
         if: env.MAC_INTEL_USE_CLANG == 'true'
-        with:
-          version: ${{ env.MAC_INTEL_CLANG_VERSION }}
+        run: |
+          brew install "llvm@${MAC_INTEL_CLANG_VERSION}"
+          LLVM_PREFIX="$(brew --prefix "llvm@${MAC_INTEL_CLANG_VERSION}")"
+          echo "${LLVM_PREFIX}/bin" >> $GITHUB_PATH
+          echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
 
       - name: Install Python
         uses: actions/setup-python@v7
@@ -380,6 +405,12 @@ jobs:
           name: dist-macos-intel
           path: ./dist/*.zip
           compression-level: 0
+
+      - name: Cancel workflow on failure
+        if: failure() && github.event_name == 'push'
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
 
   draft-release:
