@@ -31,8 +31,8 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   # Linux
-  LINUX_PYTHON_VERSION: "3.14.6"
-  LINUX_CLANG_VERSION: "23.1.0"
+  LINUX_PYTHON_VERSION: "3.14.7"
+  LINUX_CLANG_VERSION: "22.1.3"
   LINUX_USE_NUITKA: "true"
   LINUX_USE_CLANG: "true"
   # Windows
@@ -120,14 +120,14 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Run build script [FULL]
-        shell: bash
-        run: |
-          uv venv --clear --python .cpython/bin/python3
-          args=("--custom-python")
-          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --level=FULL "${args[@]}"
+      # - name: Run build script [FULL]
+      #   shell: bash
+      #   run: |
+      #     uv venv --clear --python .cpython/bin/python3
+      #     args=("--custom-python")
+      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
@@ -136,15 +136,15 @@ jobs:
           [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
-
-      - name: Run build script [GUI]
-        shell: bash
-        run: |
-          args=("--custom-python")
-          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-          uv run build.py --toggle-windowed
-          uv run build.py --level=FULL "${args[@]}"
+      #
+      # - name: Run build script [GUI]
+      #   shell: bash
+      #   run: |
+      #     args=("--custom-python")
+      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+      #     uv run build.py --toggle-windowed
+      #     uv run build.py --level=FULL "${args[@]}"
 
       - name: Make binaries executable
         run: chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
@@ -154,12 +154,12 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           version=${version#refs/heads/}
-          extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
+          extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          cp ../tools/icons/endcord.svg .
-          tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          cp ../tools/com.sparklost.endcord.desktop ../tools/icons/endcord.svg .
+          # tar -czf "endcord-$version-linux.tar.gz" endcord $extra
           tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
-          tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
+          # tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
