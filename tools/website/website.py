@@ -332,7 +332,10 @@ async def load(key):
             path = key[len(REPO):]
             if path.startswith(".github/"):
                 path = path[1:]   # remove the dot
-            response = await fetch(BUNDLE + path)
+            try:
+                response = await fetch(BUNDLE + path)
+            except Exception:   # for example when opened as a local file
+                response = None
         if response is None or not response.ok:   # fallback to download
             response = await fetch(key)
         if not response.ok:
@@ -343,14 +346,26 @@ async def load(key):
         return "# Could not load this page\n\n" + key + "\n\n" + str(ex)
 
 
+def page_from_hash():
+    """Page key named in the url hash, or None"""
+    name = window.location.hash[1:].lower()
+    for title, key in PAGES:
+        if title.strip(" -").lower().replace(" ", "-") == name:
+            return key
+    return None
+
+
 async def go(key, anchor=""):
     """Open page key and scrol to heading anchor"""
     global current_page
     current_page = key
 
-    for t, k in PAGES:
-        if k == key:
-            page.textContent = t.strip(" - ")
+    for title, page_key in PAGES:
+        if page_key == key:
+            page.textContent = title.strip(" - ")
+            clean_title = title.strip(" -").lower().replace(" ", "-")
+            if window.location.hash[1:] != clean_title:
+                window.location.hash = clean_title
             break
     else:
         page.textContent = key.split("/")[-1].replace(".md", "")
@@ -421,6 +436,13 @@ def on_resize(_):
     show(TEXT.get(current_page, "Loading..."))
 
 
+def on_hash_change(_):
+    """Open the page named in the url hash"""
+    key = page_from_hash() or "home"
+    if key != current_page:
+        asyncio.create_task(go(key))
+
+
 try:
     await document.fonts.load("16px 'Source Code Pro'")   # noqa
     await document.fonts.load("700 16px 'Source Code Pro'")   # noqa
@@ -440,5 +462,6 @@ body = document.body
 body.addEventListener("click", create_proxy(on_click))
 body.addEventListener("keydown", create_proxy(on_key))
 document.defaultView.addEventListener("resize", create_proxy(on_resize))
+window.addEventListener("hashchange", create_proxy(on_hash_change))
 
-await go("home")   # noqa
+await go(page_from_hash() or "home")   # noqa
