@@ -37,7 +37,6 @@ def build(version, output, inline, bundle):
     ]
     for root, dirs, files in os.walk(os.path.join(ROOT, "docs")):
         for file in files:
-            print(file)
             if file.endswith(".md"):
                 path = os.path.join(root, file)
                 bundle_files.append((path, os.path.relpath(path, ROOT)))
