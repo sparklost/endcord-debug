@@ -462,6 +462,6 @@ body = document.body
 body.addEventListener("click", create_proxy(on_click))
 body.addEventListener("keydown", create_proxy(on_key))
 document.defaultView.addEventListener("resize", create_proxy(on_resize))
-window.addEventListener("hashchange", create_proxy(on_hash_change))
+body.addEventListener("hashchange", create_proxy(on_hash_change))
 
 await go(page_from_hash() or "home")   # noqa
