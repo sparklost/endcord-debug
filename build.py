@@ -529,9 +529,9 @@ def get_cython_bins(directory="endcord_cython", startswith=None):
     return bins
 
 
-def get_rnnoise(directory="endcord"):
+def get_rplative_lib(name, directory="endcord"):
     """Get relative path of rnnoise library in given directory"""
-    for filename in ("librnnoise.so", "librnnoise.dll", "librnnoise.dylib"):
+    for filename in (f"{name}.so", f"{name}.dll", f"{name}librnnoise.dylib"):
         path = os.path.join(directory, filename)
         if os.path.exists(path):
             return path
@@ -1083,7 +1083,7 @@ def build_with_pyinstaller(level, onedir, print_cmd=False):
         app_name = f"{app_name}-gui"
     emoji_path = compress_emoji() if not print_cmd else "endcord/emoji.json"
     if not print_cmd and level in ("FULL", "MEDIUM"):
-        libopus = build_libopus(clang)
+        build_libopus(clang)
 
     mode = "--onedir" if onedir else "--onefile"
     hidden_imports = ["--hidden-import=uuid"]
@@ -1096,7 +1096,8 @@ def build_with_pyinstaller(level, onedir, print_cmd=False):
     if level not in ("MINI", "MICRO"):
         package_data += ["--collect-data=soundcard"]
 
-    rnnoise = get_rnnoise()
+    rnnoise = get_rplative_lib("rnnoise")
+    libopus = get_rplative_lib("libopus")
     if rnnoise:
         add_data += [f"--add-binary={rnnoise}{";" if sys.platform == "win32" else ":"}endcord"]
     if libopus:
@@ -1176,7 +1177,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
                     fprint("Building pycryptodome with custom compiler args")
                     iprint("PyNaCl is already built locally")
         if level in ("FULL", "MEDIUM"):
-            libopus = build_libopus(clang)
+            build_libopus(clang)
         patch_soundcard()
     static_python = False   # might be useful with custom python build
     if sys.platform == "win32":
@@ -1208,7 +1209,8 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
             "--include-data-files=tools/icons/endcord-tray-mention.png=icons/endcord-tray-mention.png",
         ]
 
-    rnnoise = get_rnnoise()
+    rnnoise = get_rplative_lib("rnnoise")
+    libopus = get_rplative_lib("libopus")
     if rnnoise:
         add_data += [f"--include-data-files={rnnoise}={rnnoise}"]
     if libopus:

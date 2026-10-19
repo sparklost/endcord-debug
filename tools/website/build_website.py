@@ -9,7 +9,7 @@ import shutil
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WEBSITE_DIR = os.path.join(ROOT, "tools", "website")
 ICON = os.path.join(ROOT, "tools", "icons", "endcord.png")
-SCRIPT_TAG = '<script type="py" src="website.py"></script>'
+SCRIPT_TAG = '<script type="mpy" src="website.py"></script>'
 
 
 def build(version, output, inline, bundle):
@@ -23,7 +23,7 @@ def build(version, output, inline, bundle):
     os.makedirs(output, exist_ok=True)
     html = html.replace("{%VERSION}", version.strip("v"))
     if inline:
-        html = html.replace(SCRIPT_TAG, f'<script type="py">\n{script.rstrip()}\n</script>')
+        html = html.replace(SCRIPT_TAG, f'<script type="mpy">\n{script.rstrip()}\n</script>')
     else:
         shutil.copyfile(os.path.join(WEBSITE_DIR, "website.py"), os.path.join(output, "website.py"))
     with open(os.path.join(output, "index.html"), "w", encoding="utf-8") as f:

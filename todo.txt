@@ -1,10 +1,24 @@
 Add website
+    fix slow loading
+    fix type error when it fetches local file
+    handle urls if not too complex
+Fix blinking qrcode in profile manager
+Fix profile manager exitting after qr code scan
+Fix build.py crash with libpous
+Generate vim mode bindings in initial config
 Bump dependencies
-    bump pycryptodome
-    test build with both new pyav and pillow
+    increase all extensions endcord versions
 
+Fix crash when viewing media
 Fix rendering multiple **** in different lines
-Fix vim mode bindings not loaded
+Fix embed name not shown when no inline media
+Fix download command on inline media
+# fix endcord package install conflicts on aur
+
+Fix build.py crash with nuitka
+    nuitka error with curses
+    nuitka erro with custom python
+Fix numpy build without openblas
 
 Add camera and screen recording to video calls
     add voice_start_stream command with source selection (assist, default ?)
