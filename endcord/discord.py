@@ -99,6 +99,14 @@ def build_multipart_body(data):
     return body, content_type, content_len
 
 
+def safe_read(response):
+    """Safely read response"""
+    try:
+        return response.read()
+    except Exception:
+        return None
+
+
 class Discord():
     """Methods for fetching and sending data to Discord using REST API"""
 
@@ -1509,7 +1517,7 @@ class Discord():
                 connection.close()
                 return True
             # discord client is also performing OPTIONS request, idk why, not needed here
-            log_api_error(response.read(), response.status, "upload_attachment")
+            log_api_error(safe_read(response), response.status, "upload_attachment")
             connection.close()
             return False
 
@@ -1776,7 +1784,7 @@ class Discord():
                 regions.append(region["region"])
             self.ranked_voice_regions = regions
             return self.ranked_voice_regions
-        log_api_error(response.read(), response.status, "get_best_voice_region")
+        log_api_error(safe_read(response), response.status, "get_best_voice_region")
         connection.close()
         return self.ranked_voice_regions
 
@@ -1835,7 +1843,7 @@ class Discord():
             current_time = int(time.time()/1000)
             save_path = os.path.expanduser(os.path.join(save_dir, f"detectable_apps_{etag}_{current_time}.ndjson"))
             return save_path, etag
-        log_api_error(response.read(), response.status, "get_detectable_apps")
+        log_api_error(safe_read(response), response.status, "get_detectable_apps")
         connection.close()
         return None, etag
 
@@ -1908,7 +1916,7 @@ class Discord():
                 time.sleep(RETRY_DELAY)
                 return self.get_pfp(user_id, avatar_id, size, img_type, save_path, keepalive, False)
             return destination
-        log_api_error(response.read(), response.status, "get_pfp")
+        log_api_error(safe_read(response), response.status, "get_pfp")
         if not keepalive:
             connection.close()
         return False
@@ -1966,7 +1974,7 @@ class Discord():
                 time.sleep(RETRY_DELAY)
                 return self.get_emoji(emoji_id, size, img_type, cache, keepalive, False)
             return destination
-        log_api_error(response.read(), response.status, "get_emoji")
+        log_api_error(safe_read(response), response.status, "get_emoji")
         if not keepalive:
             connection.close()
         return False
@@ -2025,7 +2033,7 @@ class Discord():
                 time.sleep(RETRY_DELAY)
                 return self.get_file(url, save_path, file_name, cache, keepalive, False)
             return destination
-        log_api_error(response.read(), response.status, "get_file")
+        log_api_error(safe_read(response), response.status, "get_file")
         if not keepalive:
             connection.close()
         return None
@@ -2097,7 +2105,7 @@ class Discord():
 
 
     def bot_update_command(self, command, command_id, guild_id=None, resource=None):
-        """Update command for this bot. This endpoint works ONLY FOR BOTS."""
+        """Update command for this bot. This endpoint works ONLY FOR BOTS!"""
         message_data = json.dumps(command)
         if guild_id:
             url = f"/api/v9/applications/{self.my_id}/guilds/{guild_id}/commands/{command_id}"
@@ -2115,7 +2123,7 @@ class Discord():
 
 
     def bot_delete_command(self, command_id, guild_id=None):
-        """Delete command for this bot. This endpoint works ONLY FOR BOTS."""
+        """Delete command for this bot. This endpoint works ONLY FOR BOTS!"""
         message_data = None
         if guild_id:
             url = f"/api/v9/applications/{self.my_id}/guilds/{guild_id}/commands/{command_id}"
@@ -2131,7 +2139,7 @@ class Discord():
 
 
     def bot_respond_interaction(self, response_type, interaction, interaction_id, interaction_token):
-        """Respond to interaction. This endpoint works ONLY FOR BOTS."""
+        """Respond to interaction. This endpoint works ONLY FOR BOTS!"""
         payload = {"type": response_type}
         if interaction:
             payload["data"] = interaction

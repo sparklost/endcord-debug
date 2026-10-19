@@ -76,6 +76,7 @@ except Exception:
 APP_ID = f"com.{peripherals.REPO_OWNER}.{TRUE_APP_NAME}"
 
 CTRL_SHIFT_V_PASTE = False   # enable Ctrl+Shift+V pasting
+ENABLE_SHIFT_BACKSPACE = False
 ENABLE_TRAY = True
 TRAY_ICON_NORMAL = None
 TRAY_ICON_UNREAD = None
@@ -120,6 +121,7 @@ if config_path:
             GTK_DARK_THEME = config.get("gtk_dark_theme", GTK_DARK_THEME)
             APP_NAME = config.get("app_name", APP_NAME)
             CTRL_SHIFT_V_PASTE = config.get("ctrl_shift_v_paste", CTRL_SHIFT_V_PASTE)
+            ENABLE_SHIFT_BACKSPACE = config.get("enable_shif_backspace", ENABLE_SHIFT_BACKSPACE)
             ENABLE_TRAY = config.get("enable_tray", ENABLE_TRAY)
             TRAY_ICON_NORMAL = config.get("tray_icon_normal", TRAY_ICON_NORMAL)
             TRAY_ICON_UNREAD = config.get("tray_icon_unread", TRAY_ICON_UNREAD)
@@ -549,6 +551,14 @@ class GtkTerminalWindow(Gtk.Window):
             self.font_desc = Pango.FontDescription.from_string(f"{FONT_NAME} {FONT_SIZE}")
         self.last_mouse_cell = (None, None)
         self.scroll_buffer = 0.0   # for touchpad
+        self.font_normal = self.font_desc
+        self.font_bold = self.font_desc.copy()
+        self.font_bold.set_weight(Pango.Weight.BOLD)
+        self.font_italic = self.font_desc.copy()
+        self.font_italic.set_style(Pango.Style.ITALIC)
+        self.font_bold_italic = self.font_desc.copy()
+        self.font_bold_italic.set_weight(Pango.Weight.BOLD)
+        self.font_bold_italic.set_style(Pango.Style.ITALIC)
 
         # calculate font height and width and set it in curses class
         layout = self.drawing_area.create_pango_layout("▒")
@@ -628,6 +638,9 @@ class GtkTerminalWindow(Gtk.Window):
                     fg_color, bg_color = color_map[fg_idx]
                     if flags & A_STANDOUT:
                         fg_color, bg_color = bg_color, fg_color
+                    is_whitespace = text.strip(" ") == ""   # skip whitespace if its same color as global bg
+                    if is_whitespace and bg_color == bg and not (flags & A_UNDERLINE):
+                        continue
                     bg_px_width = (draw_x - span_start_x) * self.char_width
                     px_x = span_start_x * self.char_width
                     px_y = y * self.char_height
@@ -640,14 +653,19 @@ class GtkTerminalWindow(Gtk.Window):
                             cr.set_source_rgb(*rgb_to_cairo(bg_color))
                         cr.rectangle(px_x, px_y, bg_px_width, self.char_height)
                         cr.fill()
+                    if is_whitespace and not (flags & A_UNDERLINE):
+                        continue
 
                     # draw text
-                    current_desc = self.font_desc.copy()
-                    if flags & A_BOLD:
-                        current_desc.set_weight(Pango.Weight.BOLD)
-                    if flags & A_ITALIC:
-                        current_desc.set_style(Pango.Style.ITALIC)
-                    layout.set_font_description(current_desc)
+                    if (flags & A_BOLD) and (flags & A_ITALIC):
+                        desc = self.font_bold_italic
+                    elif flags & A_BOLD:
+                        desc = self.font_bold
+                    elif flags & A_ITALIC:
+                        desc = self.font_italic
+                    else:
+                        desc = self.font_normal
+                    layout.set_font_description(desc)
                     layout.set_text(text, -1)
                     cr.set_source_rgb(*rgb_to_cairo(fg_color))
                     if self.on_windows and flags & A_EMOJI:
@@ -709,12 +727,15 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.rectangle(cursor_px_x, cursor_px_y, cursor_width, self.char_height)
                         cr.fill()
                         if ch:
-                            current_desc = self.font_desc.copy()
-                            if flags & A_BOLD:
-                                current_desc.set_weight(Pango.Weight.BOLD)
-                            if flags & A_ITALIC:
-                                current_desc.set_style(Pango.Style.ITALIC)
-                            layout.set_font_description(current_desc)
+                            if (flags & A_BOLD) and (flags & A_ITALIC):
+                                desc = self.font_bold_italic
+                            elif flags & A_BOLD:
+                                desc = self.font_bold
+                            elif flags & A_ITALIC:
+                                desc = self.font_italic
+                            else:
+                                desc = self.font_normal
+                            layout.set_font_description(desc)
                             layout.set_text(ch, -1)
                             cr.set_source_rgb(*rgb_to_cairo(cursor_fg))
                             cr.move_to(cursor_px_x, cursor_px_y)
@@ -757,6 +778,8 @@ class GtkTerminalWindow(Gtk.Window):
             event_queue.put(mod_prefix + "ENTER")
             return True
         if keyval == Gdk.KEY_BackSpace:
+            if not ENABLE_SHIFT_BACKSPACE and mod_prefix == "S-":
+                event_queue.put("BACKSPACE")
             event_queue.put(mod_prefix + "BACKSPACE")
             return True
         if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
@@ -1014,7 +1037,7 @@ def error_handler(message, unblock_event, report=False):
         message = "Exited with return code 1.\nThere might be more info in the log."
         report = True
     if report:
-        report = "\n\nYou can report this here:\nhttps://github.com/sparklost/endcord/issues"
+        report = "\n\nPlease report this here:\nhttps://github.com/sparklost/endcord/issues"
     def build_and_show():   # noqa
         win = Gtk.Window()
         win.set_title(f"{APP_NAME.capitalize()} Error Report")

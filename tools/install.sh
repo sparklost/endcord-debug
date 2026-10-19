@@ -94,6 +94,15 @@ EOF
 }
 
 
+open_url() {
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "$1"
+    elif command -v open &>/dev/null; then
+        open "$1"
+    fi
+}
+
+
 # argparser
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -103,7 +112,7 @@ while [[ $# -gt 0 ]]; do
         --binary) METHOD=1 ;;
         --source) METHOD=2 ;;
         --installed-path) INSTALLED_PATH="$2"; shift ;;
-        --mode|--level) MODE="${2^^}"; shift ;;
+        --mode|--level) MODE="$(echo "$2" | tr '[:lower:]' '[:upper:]')"; shift ;;
         --version) TARGET_VERSION="$2"; shift ;;
         --ref) GIT_REF="$2"; shift ;;
         --nuitka) b_nuitka="x" ;;
@@ -197,15 +206,15 @@ if [[ -z "$ACTION" ]]; then
         echo -e "${CYAN}==>${NC} Select what to do. Found ${#FOUND_BINS[@]} existing installation${multiple}:"
 
         for i in "${!FOUND_BINS[@]}"; do
-            OUTPUT=$("${FOUND_BINS[$i]}" -v 2>/dev/null || true)
-            BIN_VERSION=$(echo "$OUTPUT" | awk '{print $NF}')
+            BIN_PATH="${FOUND_BINS[$i]}"
+            BIN_VERSION=$("$BIN_PATH" -v 2>/dev/null | head -n 1 | awk '{print $NF}')
             BIN_VERSION=${BIN_VERSION:-unknown}
-            if [[ "$BIN_VERSION" != "$LATEST_VERSION" && "$BIN_VERSION" != "unknown" && -n "$LATEST_VERSION" ]]; then
+            if [[ -n "$LATEST_VERSION" && "$BIN_VERSION" != "unknown" && "$BIN_VERSION" != "$LATEST_VERSION" ]]; then
                 OUTDATED="${YELLOW}[OUTDATED: $BIN_VERSION -> $LATEST_VERSION]${NC}"
             else
                 OUTDATED="${GREEN}[$BIN_VERSION]${NC}"
             fi
-            echo -e "  ${CYAN}$((i+1)))${NC} Manage ${YELLOW_L}${FOUND_BINS[$i]}${NC} $OUTDATED"
+            echo -e "  ${CYAN}$((i+1)))${NC} Manage ${YELLOW_L}${BIN_PATH}${NC} $OUTDATED"
         done
 
         echo -e "  ${CYAN}$(( ${#FOUND_BINS[@]} + 1 )))${NC} Install new binary"
@@ -215,11 +224,11 @@ if [[ -z "$ACTION" ]]; then
         echo -en "Choice [${CYAN}1${NC}] (q to quit): "
         read BINARY
         BINARY=${BINARY:-1}
-        [[ "${BINARY,,}" == "q" ]] && exit 0
+        [[ "$BINARY" =~ ^[qQ]$ ]] && exit 0
 
-        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 2))" ]] && { xdg-open "https://github.com/sparklost/endcord"; exit 0; }
-        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 3))" ]] && { xdg-open "https://github.com/sparklost/endcord/issues"; exit 0; }
-        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 4))" ]] && { xdg-open "https://discord.gg/judQSxw5K2"; exit 0; }
+        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 2))" ]] && { open_url "https://github.com/sparklost/endcord"; exit 0; }
+        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 3))" ]] && { open_url "https://github.com/sparklost/endcord/issues"; exit 0; }
+        [[ "$BINARY" == "$((${#FOUND_BINS[@]} + 4))" ]] && { open_url "https://discord.gg/judQSxw5K2"; exit 0; }
 
         if [[ "$BINARY" -le "${#FOUND_BINS[@]}" ]]; then
             INSTALLED_PATH="${FOUND_BINS[$((BINARY-1))]}"
@@ -237,7 +246,7 @@ if [[ -z "$ACTION" ]]; then
         echo -en "Choice [${CYAN}1${NC}] (q to quit): "
         read ACTION
         ACTION=${ACTION:-1}
-        [[ "${ACTION,,}" == "q" ]] && exit 0
+        [[ "$ACTION" =~ ^[qQ]$ ]] && exit 0
     fi
 else
     # Only fallback to first found if no path was passed via args
@@ -296,30 +305,30 @@ if [[ -z "$METHOD" ]]; then
     echo -en "Choice [${CYAN}1${NC}] (q to quit): "
     read METHOD
     METHOD=${METHOD:-1}
-    [[ "${METHOD,,}" == "q" ]] && exit 0
+    [[ "$METHOD" =~ ^[qQ]$ ]] && exit 0
 fi
 
 
 # mode prompt
 if [[ "$ACTION" == "1" && -n "$INST_MODE" && -z "$MODE" ]]; then
     MODE=$(echo "$INST_MODE" | sed -n 's/.*(\(.*\)).*/\1/p')
-    MODE="${MODE^^}"
+    MODE="$(echo "$MODE" | tr '[:lower:]' '[:upper:]')"
 fi
 
 if [[ -z "$MODE" ]]; then
     [[ "$METHOD" == "1" ]] && MUST_BUILD="${YELLOW}(NO DOWNLOAD)${NC} " || MUST_BUILD=""
     echo ""
     echo "${CYAN}==>${NC} Which 'level' of $APP_NAME to install?"
-    echo -e "  ${CYAN}1)${NC} FULL     media and voice call support"
-    echo -e "  ${CYAN}2)${NC} MEDIUM   ${MUST_BUILD}no media and voice calls, but can display images"
-    echo -e "  ${CYAN}3)${NC} LITE     no image, media or voice call support"
+    echo -e "  ${CYAN}1)${NC} FULL     full media support"
+    echo -e "  ${CYAN}2)${NC} MEDIUM   ${MUST_BUILD}call support, no media support except images"
+    echo -e "  ${CYAN}3)${NC} LITE     no image, media nor call support"
     echo -e "  ${CYAN}4)${NC} MINI     ${MUST_BUILD}like LITE, no sound unless paplay/pw-cat exist, no voice recording"
     echo -e "  ${CYAN}5)${NC} MICRO    ${MUST_BUILD}max compatibility on legacy/weird systems, no QR code and email login"
     [[ "$OS" != "Darwin" ]] && echo -e "  ${CYAN}6)${NC} ${PURPLE}GUI${NC}      windowed mode (needs GTK3), builds FULL level"
     echo -en "Choice [${CYAN}1${NC}] (q to quit): "
     read MODE_CHOICE
     MODE_CHOICE=${MODE_CHOICE:-1}
-    [[ "${MODE_CHOICE,,}" == "q" ]] && exit 0
+    [[ "$MODE_CHOICE" =~ ^[qQ]$ ]] && exit 0
     case "$MODE_CHOICE" in
         2) MODE="MEDIUM" ;;
         3) MODE="LITE" ;;
@@ -337,13 +346,19 @@ if [[ "$OS" == "Darwin" && "$MODE" == "GUI" ]]; then
     echo -e "${RED}Error:${NC} GUI mode is not supported on macOS"
     exit 1
 fi
-MODE_LOWER="${MODE,,}"
+MODE_LOWER="$(echo "$MODE" | tr '[:upper:]' '[:lower:]')"
 
 
 # name prompt
 if [[ "$ACTION" == "1" && -n "$INSTALLED_PATH" ]]; then
-    # inherit existing name on update
     FINAL_BIN_NAME=$(basename "$INSTALLED_PATH")
+    EXEC_CMD="$FINAL_BIN_NAME"
+    if [[ "$FINAL_BIN_NAME" == *"-"* ]]; then
+        SUFFIX="${FINAL_BIN_NAME#*-}"
+        [[ "$SUFFIX" == "gui" ]] && DISPLAY_NAME="Endcord GUI" || DISPLAY_NAME="Endcord $(tr '[:lower:]' '[:upper:]' <<< ${SUFFIX:0:1})${SUFFIX:1}"
+    else
+        DISPLAY_NAME="Endcord"
+    fi
 else
     if [[ -z "$ADD_SUFFIX" && "$MODE" != "FULL" && "$ACTION" != "3" ]]; then
         echo ""
@@ -355,6 +370,13 @@ else
         ADD_SUFFIX=${ADD_SUFFIX:-1}
     fi
     ADD_SUFFIX=${ADD_SUFFIX:-1}
+    if [[ "$ADD_SUFFIX" == "2" ]]; then
+        EXEC_CMD="endcord-${MODE_LOWER}"
+        [[ "$MODE_LOWER" == "gui" ]] && DISPLAY_NAME="Endcord GUI" || DISPLAY_NAME="Endcord $(tr '[:lower:]' '[:upper:]' <<< ${MODE_LOWER:0:1})${MODE_LOWER:1}"
+    else
+        EXEC_CMD="endcord"
+        DISPLAY_NAME="Endcord"
+    fi
 fi
 
 
@@ -387,13 +409,18 @@ if [[ "$METHOD" == "2" && $# -eq 0 && "$AUTO_YES" == false ]]; then
                 7) [[ "$b_noext" == " " ]] && b_noext="x" || b_noext=" " ;;
             esac
         done
-        echo -en "\033[9A\033[J"
+        printf -en "\033[9A\033[J"
         draw_menu
     done
 fi
 
 
 # location prompt
+if [[ "$OS" == "Darwin" && "$ARCH" == "arm64" ]]; then
+    SYS_PREFIX="/opt/homebrew"
+else
+    SYS_PREFIX="/usr/local"
+fi
 if [[ "$ACTION" == "1" && -n "$INSTALLED_PATH" ]]; then
     INSTALL_DIR=$(dirname "$INSTALLED_PATH")
     SHARE_DIR="${INSTALL_DIR%/bin}/share"
@@ -407,7 +434,7 @@ else
         if [[ "$EUID" -ne 0 ]]; then
             echo ""
             echo "${CYAN}==>${NC} Where to install?"
-            echo -e "  ${CYAN}1)${NC} System (${YELLOW_L}/usr/local/bin${NC}) - will ask for sudo"
+            echo -e "  ${CYAN}1)${NC} System (${YELLOW_L}${SYS_PREFIX}/bin${NC}) - will ask for sudo"
             echo -e "  ${CYAN}2)${NC} User (${YELLOW_L}$HOME/.local/bin${NC})"
             echo -en "Choice [${CYAN}1${NC}]: "
             read LOCATION
@@ -417,14 +444,14 @@ else
         fi
     fi
     if [[ -z "$CUSTOM_PREFIX" ]]; then
-        [[ "$LOCATION" == "2" && "$IS_NIXOS" == true ]] && { echo -e "${RED}Error:${NC} Cant install to system on NixOS"; exit 1; }
+        [[ "$LOCATION" == "1" && "$IS_NIXOS" == true ]] && { echo -e "${RED}Error:${NC} Cant install to system on NixOS"; exit 1; }
         if [[ "$LOCATION" == "2" ]]; then
             INSTALL_DIR="$HOME/.local/bin"
             SHARE_DIR="$HOME/.local/share"
             SUDO=""
         else
-            INSTALL_DIR="/usr/local/bin"
-            SHARE_DIR="/usr/local/share"
+            INSTALL_DIR="${SYS_PREFIX}/bin"
+            SHARE_DIR="${SYS_PREFIX}/share"
             [[ "$EUID" -ne 0 ]] && SUDO="sudo" || SUDO=""
         fi
     fi
@@ -548,16 +575,20 @@ $SUDO chmod +x "$INSTALL_DIR/$FINAL_BIN_NAME"
 # install .desktop and icon
 if [[ "$OS" == "Linux" && "$SKIP_DESKTOP" == false ]]; then
     DESKTOP_PATH=$(find "$SRC_DIR" -name "${APP_ID}.desktop" | head -n 1)
-    echo $DESKTOP_PATH
     ICON_PATH=$(find "$SRC_DIR" -name "endcord.svg" | head -n 1)
-    echo $ICON_PATH
     if [[ -n "$DESKTOP_PATH" && -n "$ICON_PATH" ]]; then
         echo "Installing .desktop file and icon..."
         $SUDO mkdir -p "$SHARE_DIR/applications" "$SHARE_DIR/icons/hicolor/scalable/apps"
-        $SUDO cp "$DESKTOP_PATH" "$SHARE_DIR/applications/${APP_ID}.desktop"
+        DEST_DESKTOP="$SHARE_DIR/applications/${APP_ID}.desktop"
+        $SUDO cp "$DESKTOP_PATH" "$DEST_DESKTOP"
         $SUDO cp "$ICON_PATH" "$SHARE_DIR/icons/hicolor/scalable/apps/${APP_ID}.svg"
+        $SUDO sed -i "s|^Exec=[^ ]*|Exec=$EXEC_CMD|" "$DEST_DESKTOP"
+        $SUDO sed -i "s|^Name=.*|Name=$DISPLAY_NAME|" "$DEST_DESKTOP"
         if command -v update-desktop-database &>/dev/null; then
             $SUDO update-desktop-database "$SHARE_DIR/applications" || true
+        fi
+        if command -v gtk-update-icon-cache &>/dev/null && [[ -f "$SHARE_DIR/icons/hicolor/index.theme" ]]; then
+            $SUDO gtk-update-icon-cache -f -t "$SHARE_DIR/icons/hicolor" || true
         fi
     fi
 fi
@@ -589,7 +620,7 @@ Installation will complete, but launching the binary requires dynamic linking su
 To enable 'nix-ld', add this to your /etc/nixos/configuration.nix:
    programs.nix-ld.enable = true;
 Then rebuild your system:
-   $ sudo nixos-rebuild switch
+   sudo nixos-rebuild switch
 After this ${APP_NAME} will run without re-installing.
 EOF
 echo -e "${CYAN}==>${NC} ${GREEN}$APP_NAME-${MODE_LOWER} installed successfully${NC}"

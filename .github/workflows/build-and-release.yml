@@ -120,14 +120,14 @@ jobs:
         with:
           enable-cache: false
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     uv venv --clear --python .cpython/bin/python3
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          uv venv --clear --python .cpython/bin/python3
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
 
       - name: Run build script [LITE]
         shell: bash
@@ -136,15 +136,15 @@ jobs:
           [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
           [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
           uv run build.py --level=LITE "${args[@]}"
-      #
-      # - name: Run build script [GUI]
-      #   shell: bash
-      #   run: |
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --toggle-windowed
-      #     uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [GUI]
+        shell: bash
+        run: |
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --toggle-windowed
+          uv run build.py --level=FULL "${args[@]}"
 
       - name: Make binaries executable
         run: chmod +x ./dist/endcord ./dist/endcord-lite ./dist/endcord-gui || true
@@ -157,9 +157,18 @@ jobs:
           extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           cp ../tools/com.sparklost.endcord.desktop ../tools/icons/endcord.svg .
-          # tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          # package FULL version
+          sed -i 's/^Name=.*/Name=Endcord/' com.sparklost.endcord.desktop
+          sed -i 's/^Exec=.*/Exec=endcord/' com.sparklost.endcord.desktop
+          tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          # package LITE version
+          sed -i 's/^Name=.*/Name=Endcord Lite/' com.sparklost.endcord.desktop
+          sed -i 's/^Exec=.*/Exec=endcord-lite/' com.sparklost.endcord.desktop
           tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
-          # tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
+          # package GUI version
+          sed -i 's/^Name=.*/Name=Endcord GUI/' com.sparklost.endcord.desktop
+          sed -i 's/^Exec=.*/Exec=endcord-gui/' com.sparklost.endcord.desktop
+          tar -czf "endcord-gui-$version-linux.tar.gz" endcord-gui $extra
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

@@ -1,5 +1,15 @@
-## Default config values with explanations:
-Note: always put string in `""`. To use `"` inside the string escape it like this: `\"`. To use `\` escape it like this: `\\`. These are counted as single character.
+## Configuration
+Settings, logs, state, themes, extensions etc. location:
+- On Linux: `~/.config/endcord/` or `$XDG_DATA_HOME/endcord/`  
+- On Windows: `%USERPROFILE%/AppData/Local/endcord/`  
+- On macOS: `~/Library/Application Support/endcord/`  
+- Or run `open_config_dir` command inside endcord.
+
+Run `endcord -h` or `endcord --help` to see available command arguments.  
+
+Note: always put string in `""`. To use `"` inside the string escape it like this: `\"`. To use `\` escape it like this: `\\`. These are counted as single character.  
+
+Also see [keybindings configuration](keybindings.md#configuring-keybindings).
 
 ### Main
 - `theme = None`  
@@ -57,10 +67,6 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Save unsent message when switching channel, and load it when re-opening that channel.
 - `show_pending_messages = True`  
     Show pending messages in chat with `color_chat_pending` until they are sent. Disable to save some CPU usage when sending messages.
-- `assist = True`  
-    Assist when typing @username, @role, #channel, :emoji:, ;sticker;
- - `assist_swap_binding = True`  
-    Whether to swap `chat_up` and `chat_down` with `extra_up` and `extra_down` when popup window is open.
 - `cursor_bar = True`  
     Whether to use terminals own bar-shaped cursor, instead of builtin block-shaped cursor in input line.
 - `cursor_on_time = 0.7`  
@@ -125,7 +131,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `media_font_aspect_ratio = None`  
     Font height/width ratio is automatically queried from terminal. But it may fail, in that case default `2.25` value is used.  
     If pictures appear wider or narrower change this to value = `char_w / char_h`, eg. `18 / 8 = 2.25`.
-- `inline_media = False`  
+- `inline_media = True`  
     Draw inline images in chat. Requires media support (not endcord-lite). Currently does nothing.
 - `inline_media_height = 14`  
     Height of DISPLAYED image in chat. In number of characters.
@@ -152,14 +158,22 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Force only one open server at a time in tree. When one is opened other is closed, excluding DMs.
 - `remember_collapsed_channels = True`  
     Whether to persist collapsed state for forums and channels with threads.
+- `assist = True`  
+    Assist when typing @username, @role, #channel, :emoji:, ;sticker;
+- `assist_stop_space = True`  
+    Wether to stop assist when space character is typed.
+ - `assist_swap_binding = True`  
+    Whether to swap `chat_up` and `chat_down` with `extra_up` and `extra_down` when popup window is open.
 - `assist_skip_app_command = False`  
     Skip assist for app_name when typing app command. Instead, show all app commands and insert app_name with selected command.
-- `fallback_keybinding_parser = False`  
-    Use fallback keybinding resolver. Some keybindings may not work, but should be more stable on exotic terminals. On windows, this is forced ON.
+- `assist_which_key = True`  
+    Whether to show keybindings hint when chained binding prefix is pressed.
 - `assist_limit = 50`  
     Maximum number of results when showing assist.
 - `assist_score_cutoff = 15`  
     Cutoff for assist match score. Lower value will result in more results.
+- `fallback_keybinding_parser = False`  
+    Use fallback keybinding resolver. Some keybindings may not work, but should be more stable on exotic terminals. On windows, this is forced ON.
 - `limit_command_history = 50`  
     Maximum number of commands stored in history. File is `command_history.json` in config dir.
 - `game_detection_download_delay = 7`  
@@ -180,7 +194,7 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
 - `call_fast_mixer = False`  
     This option only has effect on mixing received audio from multiple users speaking at the same time.  
     If True, call will use faster mixer that uses less CPU but might result in lower audio quality.  
-- `call_mic_noise_suppression = False`  
+- `call_noise_suppression = True`  
     Run noise suppression on audio recorded from microphone. Audio will be downmixed to mono. To use this, either install rnnoise on the system, or build endcord with `--bundle-rnnoise` build.py script argument.
 - `downloads_path = None`  
     Path to custom downloads directory. Set to `None` to use system default.
@@ -200,6 +214,10 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Sound played when there is outgoing call. Linux only. Set to `None` to disable. Sound names can be found in `/usr/share/sounds/freedesktop/stereo`, without extension.
 - `custom_ringtone_outgoing = None`  
     Path to audio file played when there is outgoing call. Set to `None` to disable. The file will be played in loop.
+- `custom_sound_join_call = None`  
+    Path to audio file played when user joins current voice call.
+- `custom_sound_leave_call = None`  
+    Path to audio file played when user leaves current voice call.
 - `custom_media_player = None`  
     Custom script, command, or path to executable that will be used to play media. Dont forget to make it executable. Can also run `bash path/to/file.sh`.  
     Prebuilt script already exists [here](https://github.com/sparklost/endcord/blob/main/tools/endcord-custom-media.sh), configuration instructions are in the script.  
@@ -286,14 +304,14 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     Formatting for single reaction string. Reactions string is assembled by joining these strings with `reactions_separator` in between. See [format_one_reaction](#format_one_reaction) for more info.
 - `format_timestamp = "%H:%M"`  
     Format for timestamps in messages. Same as [datetime format codes](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes)
-- `format_status_line_l = " ⠀%status_dot %nick %warn_state %unreads %action %typing"`  
+- `format_status_line_l = "  %status_dot %nick %warn_state %unreads %action %typing"`  
     Formatting for left side of status line. See [format_status](#format_status) for more info. Set to `None` to disable.  
-    This and other line formats will replace trailing, heading and 3 or more space characters with "middle line" if used in standard mode (not compact). This can be avoided by using Braille Pattern Blank character: `⠀`.  
+    This and other line formats will replace trailing, heading and 3 or more space characters with "middle line" if used in standard mode (not compact). This can be avoided by using en quad character: ` `.  
 - `format_status_line_r = "%vim_mode %slowmode"`  
     Formatting for right side of status line. See [format_status](#format_status) for more info.
 - `format_title_line_l = " %server: %channel_no_tab"`  
     Formatting for left side of title line. See [format_status](#format_status) for more info. Set to `None` to disable.
-- `format_title_line_r = None`  
+- `format_title_line_r = "%chain"`  
     Formatting for right side of title line. See [format_status](#format_status) for more info.
 - `format_subtitle_line = "─%tabs"`  
     Formatting for subtitle line - drawn below title line, only if there is content. See [format_status](#format_status) for more info.
@@ -381,6 +399,9 @@ Note: always put string in `""`. To use `"` inside the string escape it like thi
     `media_ascii_palette` and media_saturation have no effect when this is ON.
 - `media_truecolor = True`  
     Use truecolor for media rendering. Works only for `media_use_blocks`.
+- `media_slow_load_delay = 0`  
+    Delay between drawing each line of inline media. Adds "retro image loading" effect. Recommended value: 0.01-0.1.  
+    Note that endcord will be graphically unresponsive until all images are rendered.
 - `media_ascii_palette = "  ..',;:c*loexk#O0XNW"`  
     Characters used to draw in terminal. From darkest to brightest. Same character can be repeated. Number of characters is not fixed.
 - `media_saturation = 1.2`  
@@ -478,10 +499,12 @@ Every next list has additional `start` and `end`- indexes on a line where color 
     Color format for message app interaction string. Corresponding to `format_interaction`.
 - `color_format_forum = [[-1, -1], [242, -2, 0, 0, 12], [25, -2, 0, 15, 20]]`  
     Color format for threads in forum. Corresponding to `format_forum`.
-- `"syntax_token_colors = [133, 185, 102, 173, 133, 173, 111, -1, 167, 111, -1, -1]`  
+- `syntax_token_colors = [133, 185, 102, 173, 133, 173, 111, -1, 167, 111, -1, -1]`  
     A list of foreground colors for code block syntax. Must have all 12 values. Values correspond to (in order):  
     keyword, string, comment, number, type, classname, function, variable, preproc/builtin, specialchar, symbol, cbracket.  
     Set to negative value to disable this token.  
+- `inline_image_box_color = 234`  
+    Color for image bounding box, drawn as placeholder until image is downloaded.
 - `media_color_bg = -1`  
     Single color value for background color when showing media.
 
@@ -541,6 +564,7 @@ Note: everything after `%content` may be pushed to newline.
 - `%task` - currently running slow task (reconnecting, downloading chat...)
 - `%tabs` - all tabs formatted with `format_tabs` then joined with `tabs_separator`
 - `%slowmode` - `Slowmode: hh:mm:ss` if slowmode is enabled, otherwise its hidden
+- `%chain` - Prefix of currently pressed keybinding chain, eg `C-y-`
 - `%app_name` - default is `endcord`, can be changed with `ENDCORD_APP_NAME` environment variable
 - `%vim_mode` - `[--INSERT--]` or `[--NORMAL--]` when `vim_mode` is ON
 
@@ -597,6 +621,8 @@ Note: everything after `%content` may be pushed to newline.
     Only changes title of the window.
 - `ctrl_shift_v_paste: false`  
     If `true` will enable `Ctrl+Shift+V` for pasting TEXT ONLY. Ctrl+V is already gtk-natively handling smart-paste.
+- `enable_shif_backspace: false`  
+    Enabling this will add `Shift+Backspace` key combination. If its disabled just `Backspace` is sent.
 - `enable_tray: true`  
     Enable tray icon. closing window will minimize to tray.
 - `tray_icon_normal: null`  

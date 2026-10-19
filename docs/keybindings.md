@@ -6,7 +6,7 @@
 - `Alt+H` - Un/collapse channel with threads in tree
 - `Alt+J` - Join/leave selected thread in tree
 - `Alt+I` - View channel info (selected in tree)
-- `Alt+Shift+U`- Copy selected channel (in tree) URL to clipboard
+- `Alt+Shift+U` - Copy selected channel (in tree) URL to clipboard
 - `Shift+Up/Down` - Select prev/next server and collapse all other servers
 
 ### Input line
@@ -65,7 +65,7 @@
 - `Alt+D` - Cycle user status (online/away/DnD/invisible)
 - `Alt+M` - Toggle member list
 - `Ctrl+T` - Toggle tabbed state for selected channel in tree
-- `Alt+NUM`- Switch to tab, `NUM` is 1-9 in number row, not numeric keypad!
+- `Alt+NUM` - Switch to tab, `NUM` is 1-9 in number row, not numeric keypad!
 - `Alt+E` - Open external editor to type message in it
 - `Ctrl+K` - Open command palette and type `goto ` and show recent channels
 - `Alt+Left/Right` - Switch tabs incrementally (next/previous)
@@ -81,18 +81,25 @@
 - `Z` - replay
 
 ### Default command-bindings (macros)
-- `Alt+Left/Right` -`"M-LEFT" = "switch_tab prev"` and `"M-RIGHT" = "switch_tab next"`  
-    Switch to previous/next tabbed channel.
-- `Ctrl+K` - `"C-k" = "command_palette; type 'goto '"`  
-    Open command palette and type `goto `.
-- `Shift+Up` - `"S-UP" = "tree_select server prev; collapse_all_except selected"`  
-    Select previous server in tree and collapse all other servers except it.
-- `Shift+Down` - `"S-DOWN" = "tree_select server; collapse_all_except selected"`  
-    Select next server in tree and collapse all other servers except it.
-- `Ctrl+Y Up/Down` - `"C-y UP" = "resize_popup_window +1"` and `"C-y DOWN" = "resize_popup_window -1"`  
-    Increase/Decrease vertical size of popup window by 1.
-- `Alt+Q` - `"M-q" = "voice_set_volume_input"`  
-    Toggle voice call input volume. Something like push-to-talk.
+- `Alt+Left/Right` - Switch to previous/next tabbed channel
+- `Ctrl+K` - Open command palette and type `goto `
+- `Shift+UP/DOWN` - Select previous/next server in tree and collapse all other servers except it
+- `Ctrl+Y UP/DOWN` - Increase/Decrease vertical size of popup window by 1
+- `Ctrl+Y C` - copy link to currently selected channel in tree
+- `Ctrl+Y M` - copy link to currently selected message in chat
+- `Ctrl+Y V` - Start/stop recording voice message (will be sent upon stopping)
+- `Ctrl+Y A` - Toggle afk state
+- `Ctrl+Y B` - Toggle visibility of messages from blocked users
+- `Ctrl+Y H` - Show client-side command history
+- `Alt+Q C` - Start/join a voice call (in dm or voice channel)
+- `Alt+Q A` - Accept incoming DM voice call
+- `Alt+Q Q` - Leave currently ongoing voice call
+- `Alt+Q V` - Play video from first user that is streaming video (or selected user in open call list)
+- `Alt+Q L` - Show all call participants and their states in an updated list
+- `Alt+Q I` - Toggle voice call input volume (mute/unmute), something like push-to-talk
+- `Alt+Q C-UP/DOWN` - Increase/decrease input volume by 10
+- `Alt+Q M` - Toggle mute/unmute of selected user in open call list
+- `Alt+Q UP/DOWN` - Increase/decrease call volume by 10 for selected user in open call list
 
 ### OS specific keybindings
 Some keybindings are used by terminals or OS itself, so they are by default rebound to something else.
@@ -175,15 +182,15 @@ Special commands available only for command-bindings are documented in [Commands
 ## Vim mode keybindings
 - `i` - Enter insert mode
 
-### tree
+### Tree
 - `K/J` - Navigating channel tree
 - `Space` - Expand selected categories and servers or enter selected channel
 - `W` - Un/collapse channel with threads in tree
 - `O` - Join/leave selected thread in tree
 - `I` - View channel info (selected in tree)
-- `C`- Copy selected channel (in tree) URL to clipboard
+- `C` - Copy selected channel (in tree) URL to clipboard
 
-### input line
+### Input line
 - `h/l` - character left/right
 - `b/w` - word left/right
 - `Ctrl+h/l` - select left/right
@@ -197,7 +204,7 @@ Special commands available only for command-bindings are documented in [Commands
 - `X` - Delete word
 - `p` - Smart paste - paste text or file as attachment
 
-### chat
+### Chat
 - `Enter` - Send message
 - `k/j` - Navigating messages
 - `r` - Reply to selected message
@@ -220,22 +227,22 @@ Special commands available only for command-bindings are documented in [Commands
 - `n` - Show pinned messages in current channel
 - `Ctrl+Shift+V` - This is common terminal binding to paste text, better use: `paste` command
 
-### popup line
+### Popup line
 - `<` - Previous uploaded/uploading attachment
 - `>` - Next uploaded/uploading attachment
 
-### popup window
+### Popup window
 - `,/.` - navigate in popup window / member list
 - `q` - select in popup window / member list
 - `V` - Preview selected file in upload assist or when searching gif or attachments ready to send
 
-### other
+### Other
 - `:` - Open command palette
 - `X` - Cancel all downloads and uploads
 - `s` - Cycle user status (online/away/DnD/invisible)
 - `m` - Toggle member list
 - `t` - Toggle tabbed state for selected channel in tree
-- `NUM`- Switch to tab, `NUM` is 1-9.
+- `NUM` - Switch to tab, `NUM` is 1-9.
 - `E` - Open external editor to type message in it
 - `Ctrl+K` - Open command palette and type `goto ` and show recent channels
 - `Alt+Left/Right` - Switch tabs incrementally (next/previous)

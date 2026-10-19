@@ -201,7 +201,7 @@ def search_channels_all(guilds, dms, query, full_input, recent=None, read_state=
     return results
 
 
-def search_usernames_roles(roles, query_results, guild_id, gateway, query, presences=[], limit=50, score_cutoff=15):
+def search_usernames_roles(roles, query_results, query, presences=[], limit=50, score_cutoff=15):
     """Search for usernames and roles"""
     results = []
     worst_score = score_cutoff
@@ -237,15 +237,8 @@ def search_usernames_roles(roles, query_results, guild_id, gateway, query, prese
             if len(results) > limit:
                 heapq.heappop(results)
                 worst_score = results[0][2]
-    else:
-        gateway.request_members(
-            guild_id,
-            None,
-            query=query,
-            limit=10,
-        )
 
-    return sorted(results, key=lambda x: x[2], reverse=True)
+    return sorted(results, key=lambda x: x[2], reverse=True), not query_results
 
 
 def search_emojis(all_emojis, favorite_emojis, local_emojis, premium, guild_id, query, safe_emoji=False, limit=50, score_cutoff=15):
@@ -271,18 +264,21 @@ def search_emojis(all_emojis, favorite_emojis, local_emojis, premium, guild_id, 
             for guild in emojis:
                 guild_name = guild["guild_name"]
                 for guild_emoji in guild["emojis"]:
-                    if guild_emoji["id"] == emoji_name:
+                    if guild_emoji[0] == emoji_name:
                         break
                 else:
                     continue
-                formatted = f"** {guild_emoji["name"]} ({guild_name})"
+                anim = len(guild_emoji) == 3
+                formatted = f"** {guild_emoji[1]} ({guild_name})"
                 if query.startswith("**"):
                     score = 1000 + fuzzy_match_score(query[2:].strip(), formatted)
                 else:
                     score = fuzzy_match_score(query, formatted)
                 if score < worst_score:
                     continue
-                heapq.heappush(results, (formatted, f"<:{guild_emoji["name"]}:{guild_emoji["id"]}>", score + 1000))
+                if anim:
+                    formatted += " - Animated"
+                heapq.heappush(results, (formatted, f"<{"a" if anim else ""}:{guild_emoji[1]}:{guild_emoji[0]}>", score + 1000))
         except ValueError:
             emoji_string = f":{emoji_name}:"
             for emoji, data in utils.EMOJI_DATA.items():
@@ -315,11 +311,14 @@ def search_emojis(all_emojis, favorite_emojis, local_emojis, premium, guild_id, 
     for guild in emojis:
         guild_name = guild["guild_name"]
         for guild_emoji in guild["emojis"]:
-            formatted = f" {guild_emoji["name"]} ({guild_name})"
+            anim = len(guild_emoji) == 3
+            formatted = f" {guild_emoji[1]} ({guild_name})"
             score = fuzzy_match_score(query, formatted)
             if score < worst_score:
                 continue
-            heapq.heappush(results, (formatted, f"<:{guild_emoji["name"]}:{guild_emoji["id"]}>", score))
+            if anim:
+                formatted += " - Animated"
+            heapq.heappush(results, (formatted, f"<{"a" if anim else ""}:{guild_emoji[1]}:{guild_emoji[0]}>", score))
             if len(results) > limit:
                 heapq.heappop(results)
                 worst_score = results[0][2]
@@ -604,6 +603,34 @@ def search_profiles(profiles, query, limit=50, score_cutoff=15):
         keyring = "keyring" if num < keyring_len else "plaintext"
         active = "[Active]" if profile["name"] == profiles["selected"] else ""
         heapq.heappush(results, (f"{profile["name"]} - ({keyring}) {active}", "switch_profile " + profile["name"], score))
+        if len(results) > limit:
+            heapq.heappop(results)
+            worst_score = results[0][2]
+
+    return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def search_call_users(call_participants, user_volumes, videos, query, streams_only=False, limit=50, score_cutoff=15):
+    """Search for users in the current call"""
+    results = []
+    worst_score = score_cutoff
+
+    for participant in call_participants:
+        streaming = participant["user_id"] in videos
+        if streams_only and not streaming:
+            continue
+        name = participant["name"]
+        if not name:
+            continue
+        score = fuzzy_match_score(query, name)
+        if not query:
+            score = score_cutoff
+        elif score < worst_score and query:
+            continue
+        user_id = participant["user_id"]
+        volume = user_volumes.get(user_id, 100)
+        command = "voice_play_video " if streams_only else "voice_set_volume_user "
+        heapq.heappush(results, (f"{name} (Vol: {volume}){" - streaming" if streaming else ""}", command + f"<@{user_id}>", score))
         if len(results) > limit:
             heapq.heappop(results)
             worst_score = results[0][2]

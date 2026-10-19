@@ -75,7 +75,7 @@
 - `string_select [string]` / `string_select [num] [string]`  
     Select a string on interactive app message. Strings are provided in assist window. Specify `[num]` if there are multiple string selects.
 - `toggle_tab` / `toggle_tab <#[channel_id]>`  
-    Toggle tabbed state for selected (in tree) or specified channel.
+    Toggle tabbed state for selected channel (in tree) or specified channel.
 - `switch_tab [num/next/prev]`  
     Switch to specified tab by its number. Type `prev` or `next` to incrementally switch tab.
 - `remove_all_tabs`  
@@ -107,37 +107,41 @@
     Download specified custom emoji and show it in media player. If number or nothing is specified it will show emoji from selected line in chat.
 - `favorite_emoji [emoji]`  
     Add/remove specified emoji from local favorites. Favorites are saved in state file.
-- `play_in_native`  
+- `play_in_native` / `play_in_native [num]`  
     Play selected attachment in native media player, regardless of the `native_media_player` setting.
 - `voice_start_call`  
-    Start voice call in currently open DM.
+    Start voice call in currently open DM or join call in currently open voice channel.
 - `voice_accept_call`  
-    Accept incoming voice call.
+    Accept incoming voice call or join call in currently open voice channel.
 - `voice_leave_call`  
     Leave current voice call.
 - `voice_reject_call`  
     Silence incoming call or cancel outgoing call.
 - `voice_list_call`  
     Show all call participants and their states in an updated list. Must be in the call to use this.
-- `voice_open_chat`  
-    Open voice call chat for selected voice channel. If none is selected then open for currently active voice call.  
-- `voice_set_volume_input [value]`  
-    Change volume for input devices in voice call. Set to 0 to mute. Value can be `0-200%`, above 100 is boost. Persisted across sessions.  
+- `voice_set_volume_input *[value]`  
+    Change sound volume for input devices in voice call. Set to 0 to mute. Value can be `0-200%`, above 100 is boost. Persisted across sessions.  
     `+` and `-` can be prefixed to value so it will increment it - useful for binding this command to a key.  
-    Execute without value to toggle mute / last non-0 value.  
-- `voice_set_volume_output [value]`  
-    Change volume for output devices in voice call. Set to 0 to mute. Value can be `0-200%` above 100 is boost. Persisted across sessions.  
-    `+` and `-` can be prefixed to value so it will increment it - useful for binding this command to a key.  
-    Execute without value to toggle mute / last non-0 value.  
+    Execute without value to toggle mute / last non-0 value. Run without arguments to toggle.
+- `voice_set_volume_output *[value]`  
+    Change sound volume for output devices in voice call. Everything is same as for `voice_set_volume_input`.
+- `voice_set_volume_user *[value] <@[user_id]>`  
+    Change sound volume for specific user in current voice call. Everything is same as for `voice_set_volume_input`.  
+    Specify user id in the command (there will be assist), order of arguments is irrelevant. NOT PERSISTED.  
+    If command is executed as command-binding, then selected user from `voice_list_call` window will be used, unless specified.
 - `voice_set_input_device [name]`  
     Set input device from provided list of devices. Selection is persisted across sessions. If device is unavailable, default one will be selected automatically.
+- `voice_play_video *[user_id]`  
+    Play video from specified streaming user, or first if none is provided.
+- `voice_quit_video`  
+    Stop playing video stream.
 - `send_as_file`  
     Upload currently typed text as txt file attachment.
 - `generate_invite *[duration] *[limit]`  
     Generate invite to current server with custom expiration `duration` and uses `limit`. Set to 0 for infinite. Invite URL will be copied to clipboard.
     `duration` can be: `4w3d5h30m10s` where `w`is weeks, `d` is days..., can be used partially and mixed: `5h1w`. Default is 7 days and infinite uses.
 - `rename_folder [name]`  
-    Locally rename selected folder in tree. Custom names are kept in state_profile_name.json in config dir.
+    Rename selected folder in tree. Custom names are kept in state_profile_name.json in config dir.
 - `toggle_pinned` / `toggle_pinned <#[channel_id]>`
     Toggle pinned state for selected channel in tree.
 - `resize_popup_window [num/-1/+1]`  
@@ -146,6 +150,8 @@
     Collapse all servers in tree except specific `[option]`: `current` (default), `selected`, `above`, `below`.  
 - `tree_select *[server/channel], *next/prev`  
     Select next or previous server or channel in tree. Default is next channel.  
+- `show_command_history`  
+    Show client-side command history.
 - `check_standing`  
     Check account standing.  
 - `game_detection_blacklist [game_name]`  
@@ -164,7 +170,7 @@
 - `check_for_updates *open`  
     Check endcord and extensions for updates and optionally open github release for new endcord version.
 - `search_extensions`  
-    Search all endcord extensions on GitHub. Alt+Enter to install selected one.
+    Search all endcord extensions on GitHub. `Alt+Enter` to install selected one.
 - `install_extension *[url]`  
     Install extension from specified git url. Or use `repo_owner/repo_name`, which assumes github.  
     If url is not provided it will update all installed extensions.

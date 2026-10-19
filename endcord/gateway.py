@@ -32,10 +32,11 @@ from endcord.message import is_relevant_message, prepare_message
 
 DISCORD_HOST = "discord.com"
 DISCORD_HOST_GATEWY = "wss://gateway.discord.gg"
-LOCAL_MEMBER_COUNT = 50   # members per guild, CPU-RAM intensive
-LOCAL_VOICE_PRESENCE_LIMIT = 50   # per guild, slightly RAM intensive
+LOCAL_MEMBER_COUNT = 50   # members per guild, CPU and RAM intensive
+LOCAL_VOICE_PRESENCE_LIMIT = 20   # per channel, slightly RAM intensive
 LIMIT_SUBSCRIBED = 5   # channels per guild
 LIMIT_SUBSCRIBED_THREADS = 3   # threads per guild
+LIMIT_MENTION_CACHE = 30
 VOICE_FLAGS = 3   # CLIPS_ENABLED and ALLOW_VOICE_RECORDING
 DEFAULT_CAPABILITIES = 30717
 DEFAULT_INTENTS = 50364033
@@ -201,6 +202,7 @@ class Gateway():
         self.voice_gateway_data_ready = 0
         self.voice_states = {}
         self.should_redraw_tree = None
+        self.mention_cache = {}
 
 
     def load_extensions(self, extensions):
@@ -349,7 +351,6 @@ class Gateway():
                 data = response.read()
                 connection.close()
                 self.gateway_url = json.loads(data)["url"]
-                logger.info(self.gateway_url)
             else:
                 connection.close()
                 sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
@@ -584,12 +585,13 @@ class Gateway():
 
         # emojis
         guild_emojis = []
-        for emojis in guild["emojis"]:
-            if emojis["available"]:
-                guild_emojis.append({
-                    "id": emojis["id"],
-                    "name": emojis["name"],
-                })
+        for emoji in guild["emojis"]:
+            if not emoji["available"]:
+                continue
+            if emoji["animated"]:
+                guild_emojis.append((emoji["id"], emoji["name"], True))
+            else:
+                guild_emojis.append((emoji["id"], emoji["name"]))
         self.emojis.append({
             "guild_id": guild["id"],
             "guild_name": properties["name"],
@@ -1064,7 +1066,7 @@ class Gateway():
                             "custom_status": custom_status,
                             "activities": activities,
                         })
-                    # get initial voice presences
+                    # get initial voice states
                     for num, guild in enumerate(data["guilds"]):
                         count = 0
                         for state in guild["voice_states"]:
@@ -1091,7 +1093,7 @@ class Gateway():
                             self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) + 1
                             if count > LOCAL_VOICE_PRESENCE_LIMIT:
                                 continue
-                            self.voice_states[channel_id][user_id] = (username, global_name, nick)
+                            self.voice_states[channel_id][user_id] = (username, global_name, nick, state["self_mute"] or state["mute"], state["self_video"])
                     self.dm_activities_changed = True
                     del (guild, self.merged_users)   # this is large so lets save some memory
                     gc.collect()
@@ -1258,16 +1260,19 @@ class Gateway():
                         self.querying_members = False
                         self.member_query_results = []
                         for member in data["members"]:
+                            user_id = member["user"]["id"]
+                            username = member["user"]["username"]
                             name = member.get("nick")
                             if not name:
                                 name = member["user"].get("global_name")
                             if not name:
                                 name = member["user"].get("username")
-                            self.member_query_results.append({
-                                "id": member["user"]["id"],
-                                "username": member["user"]["username"],
-                                "name": name,
-                            })
+                            self.member_query_results.append({"id": user_id, "username": username, "name": name})
+                            if username in self.mention_cache:
+                                del self.mention_cache[username]
+                            self.mention_cache[username] = user_id
+                            if len(self.mention_cache) > LIMIT_MENTION_CACHE:
+                                del self.mention_cache[next(iter(self.mention_cache))]
                     else:   # subscribed members changed presence and for updating thread member list
                         guild_id = data["guild_id"]
                         for member in data["members"]:
@@ -1644,7 +1649,7 @@ class Gateway():
                                     username = "Unknown"
                                     global_name = None
                                     nick = None
-                                self.voice_states[channel_id][user_id] = (username, global_name, nick)
+                                self.voice_states[channel_id][user_id] = (username, global_name, nick, user["self_mute"] or user["mute"], user["self_video"])
                             self.should_redraw_tree = data["guild_id"]
                     # removed voice states
                     for user_id in data["removed_voice_states"]:
@@ -1701,9 +1706,9 @@ class Gateway():
                                 self.voice_states[channel_id] = {}
                             if user_id not in self.voice_states[channel_id]:
                                 self.voice_states[channel_id][0] = self.voice_states[channel_id].get(0, 0) + 1
-                                if len(self.voice_states) - 1 <= LOCAL_VOICE_PRESENCE_LIMIT:
-                                    self.voice_states[channel_id][user_id] = (username, global_name, nick)
-                                self.should_redraw_tree = data["guild_id"] if data["guild_id"] else -1
+                            if len(self.voice_states[channel_id]) - 1 <= LOCAL_VOICE_PRESENCE_LIMIT:
+                                self.voice_states[channel_id][user_id] = (username, global_name, nick, data["self_mute"] or data["mute"], data["self_video"])
+                            self.should_redraw_tree = data["guild_id"] if data["guild_id"] else -1
                         else:
                             for channel_id, activities in self.voice_states.items():   # search for channel and activity
                                 if user_id not in activities:
@@ -2383,7 +2388,7 @@ class Gateway():
 
 
     def set_subscribed_channels(self, subscribed_channels):
-        """Set currently subscribed channels and so MESSAGE_ events can be faster processed for other channels"""
+        """Set currently subscribed channels so MESSAGE_ events can be faster processed for other channels"""
         self.subscribed_channels = subscribed_channels
 
 
@@ -2406,6 +2411,11 @@ class Gateway():
         """Set offline client status"""
         # this will trigger reconnect from thread guard
         self.reconnect_requested = True
+
+
+    def clear_mention_cache(self):
+        """Clear mention cache"""
+        self.mention_cache = {}
 
 
     def get_ready(self):
