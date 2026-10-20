@@ -807,7 +807,7 @@ def download_font(url, save_dir):
         urllib.request.urlretrieve(url, save_path)
 
 
-def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], cxxflags=[], safe=False, lld=True):
+def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], cxxflags=[], safe=False, lld=True, exclude=True):
     """Set compiler and its flags in environment variables"""
     if clang:
         os.environ["CC"] = "clang"
@@ -825,9 +825,10 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
         safe = True
     skip_mtune = "-mtune=" in CFLAGS_OLD
     custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags and not (skip_mtune and item.starswith("-mtune"))] if safe else CUSTOM_CFLAGS
+    custom_ldflgs = [item for item in CUSTOM_LDFLAGS if "exclude-libs" not in item] if exclude else CUSTOM_LDFLAGS
     cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
     cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
-    ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + CUSTOM_LDFLAGS + ldflags
+    ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + custom_ldflgs + ldflags
     if shutil.which("lld") and clang and lld:
         ldflags.append("-fuse-ld=lld")
     os.environ["CFLAGS"] = " ".join(cflags)
@@ -1216,8 +1217,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     if libopus:
         add_data += [f"--include-data-files={libopus}={libopus}"]
 
-
-    setup_compiler(clang)
+    setup_compiler(clang, exclude=False)
 
     # options
     options = []

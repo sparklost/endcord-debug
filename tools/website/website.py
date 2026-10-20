@@ -19,6 +19,7 @@ PAGES = [
     ("Wiki", WIKI + "wiki.md"),
     (" - Basic Usage", WIKI + "usage.md"),
     (" - Keybindings", WIKI + "keybindings.md"),
+    (" - Commands", WIKI + "commands.md"),
     (" - Configuration", WIKI + "configuration.md"),
     (" - FAQ", WIKI + "faq.md"),
     (" - Extensions", WIKI + "extensions.md"),
@@ -272,6 +273,40 @@ def find_heading(lines, formats, anchor):
     return -1
 
 
+def hash_for(key, anchor=""):
+    """Build url hash that opens page key at heading anchor"""
+    for title, page_key in PAGES:
+        if page_key == key:
+            name = title.strip(" -").lower().replace(" ", "-")
+            break
+    else:   # not in sidebar
+        name = key[len(REPO):] if key.startswith(REPO) else ""
+    return name + "/" + anchor if name and anchor else name
+
+
+def page_from_hash():
+    """Get page key and heading from the url hash"""
+    hash_text = window.location.hash[1:]
+    for title, key in PAGES:
+        name = title.strip(" -").lower().replace(" ", "-")
+        if hash_text.lower() == name or hash_text.lower().startswith(name + "/"):
+            return key, hash_text[len(name) + 1:]
+    i = hash_text.find(".md")
+    if i > 0:
+        return REPO + hash_text[:i + 3], hash_text[i + 4:]
+    return None, ""
+
+
+def set_hash(key, anchor=""):
+    """Set page key and heading anchor in the url hash"""
+    hash_text = hash_for(key, anchor)
+    if hash_text and window.location.hash[1:] != hash_text:
+        if window.location.hash:
+            window.location.hash = hash_text
+        else:   # first page
+            window.history.replaceState(None, "", "#" + hash_text)
+
+
 def show(text):
     """Parse markdown text and display it"""
     width = max(10, min(int(main.clientWidth / char_width), MAX_TEXT_WIDTH))
@@ -280,18 +315,19 @@ def show(text):
     attrs = []
 
     for href in links:
-        anchor = escape(href.split("#", 1)[1]) if "#" in href else ""
+        raw_anchor = href.split("#", 1)[1] if "#" in href else ""
+        anchor = escape(raw_anchor)
         url = (href if "://" in href else resolve(current_page, href)).split("#")[0]
         if url.startswith(WIKI) and "." not in url.split("/")[-1]:
             url += ".md"
         dest = url if url.endswith(".md") and (url.startswith(WIKI) or url.startswith(REPO)) else None
 
         if href.startswith("#"):
-            attrs.append(f'href="#" data-anchor="{anchor}"')
+            attrs.append(f'href="#{escape(hash_for(current_page, raw_anchor))}" data-anchor="{anchor}"')
         elif href == "copy:install":
             attrs.append('href="#" data-copy="1"')
         elif dest:
-            attrs.append(f'href="#" data-go="{escape(dest)}" data-anchor="{anchor}"')
+            attrs.append(f'href="#{escape(hash_for(dest, raw_anchor))}" data-go="{escape(dest)}" data-anchor="{anchor}"')
         else:
             resolved = escape(url if "://" in href else resolve(current_page, href))
             attrs.append(f'href="{resolved}" target="_blank" rel="noopener"')
@@ -346,33 +382,22 @@ async def load(key):
         return "# Could not load this page\n\n" + key + "\n\n" + str(ex)
 
 
-def page_from_hash():
-    """Page key named in the url hash, or None"""
-    name = window.location.hash[1:].lower()
-    for title, key in PAGES:
-        if title.strip(" -").lower().replace(" ", "-") == name:
-            return key
-    return None
-
-
 async def go(key, anchor=""):
     """Open page key and scrol to heading anchor"""
     global current_page
     current_page = key
+    set_hash(key, anchor)
 
     for title, page_key in PAGES:
         if page_key == key:
             page.textContent = title.strip(" - ")
-            clean_title = title.strip(" -").lower().replace(" ", "-")
-            if window.location.hash[1:] != clean_title:
-                window.location.hash = clean_title
             break
     else:
         page.textContent = key.split("/")[-1].replace(".md", "")
 
     side_html = []
-    for t, k in PAGES:
-        side_html.append(f'<a href="#" data-go="{escape(k)}"{' class="cur"' if k == current_page else ""}>{escape(t)}</a>')
+    for title, page_key in PAGES:
+        side_html.append(f'<a href="#{hash_for(page_key)}" data-go="{escape(page_key)}"{' class="cur"' if page_key == current_page else ""}>{escape(title)}</a>')
     side.innerHTML = "".join(side_html)
 
     show(TEXT.get(key, "Loading..."))
@@ -401,14 +426,16 @@ def on_click(e):
         asyncio.create_task(go(key, anchor))
 
     elif a.getAttribute("data-copy"):   # copy to clipboard
+        e.preventDefault()
         window.navigator.clipboard.writeText(INSTALL_CMD)
 
-    elif a.getAttribute("href") == "#":   # go to this file anchor
+    elif a.getAttribute("href").startswith("#"):   # go to this file anchor
         e.preventDefault()
         if anchor:
             i = find_heading(DOC[0], DOC[1], anchor)
             if i >= 0:
                 main.scrollTop = i * CHAR_HEIGHT
+                set_hash(current_page, anchor)
 
 
 def on_key(e):
@@ -437,10 +464,15 @@ def on_resize(_):
 
 
 def on_hash_change(_):
-    """Open the page named in the url hash"""
-    key = page_from_hash() or "home"
+    """Open the page and heading from the url hash"""
+    key, anchor = page_from_hash()
+    key = key or "home"
     if key != current_page:
-        asyncio.create_task(go(key))
+        asyncio.create_task(go(key, anchor))
+    elif anchor:
+        i = find_heading(DOC[0], DOC[1], anchor)
+        if i >= 0:
+            main.scrollTop = i * CHAR_HEIGHT
 
 
 try:
@@ -462,6 +494,7 @@ body = document.body
 body.addEventListener("click", create_proxy(on_click))
 body.addEventListener("keydown", create_proxy(on_key))
 document.defaultView.addEventListener("resize", create_proxy(on_resize))
-body.addEventListener("hashchange", create_proxy(on_hash_change))
+document.defaultView.addEventListener("hashchange", create_proxy(on_hash_change))
 
-await go(page_from_hash() or "home")   # noqa
+start_key, start_anchor = page_from_hash()
+await go(start_key or "home", start_anchor)   # noqa
