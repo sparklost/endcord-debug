@@ -293,7 +293,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 build = [
     { name = "cython", specifier = ">=3.3.1" },
-    { name = "nuitka", extras = ["onefile"], specifier = ">=4.3.5" },
+    { name = "nuitka", extras = ["onefile"], specifier = "==4.2.2" },
     { name = "pyinstaller", specifier = ">=6.22.3" },
     { name = "setuptools", specifier = ">=82.0.0" },
 ]
@@ -319,9 +319,9 @@ wheels = [
 
 [[package]]
 name = "nuitka"
-version = "4.3.5"
+version = "4.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5f/ec/a9a448d2c429865483fdecf3e4d60e4dcdb8738085337cbd2482ec6468ef/nuitka-4.3.5.tar.gz", hash = "sha256:ca1dabc274b95efa7a46597f464ec27484b30f32cb89872d14d66541284d4f01", size = 4780637, upload-time = "2026-11-08T13:01:00.034Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/27/9fef9381e967c333c808d8b087ca2cca713d608647a638d962f34ea22a45/nuitka-4.2.2.tar.gz", hash = "sha256:29c1bfb6f53154e620b38cf6167cbb03f54043f6e08ef7d3f2d5080a95df7e0d", size = 4635975, upload-time = "2026-09-22T14:25:53.659Z" }
 
 [[package]]
 name = "numpy"
