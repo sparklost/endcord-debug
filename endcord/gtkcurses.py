@@ -31,7 +31,7 @@ if sys.platform == "win32":
 import cairo
 import gi
 
-from endcord import peripherals, utils
+from endcord import color, peripherals, utils
 from endcord.wide_ranges import WIDE_RANGES
 
 gi.require_version("Gtk", "3.0")
@@ -66,15 +66,10 @@ GTK_DARK_THEME = True
 BAR_THICKNESS = 0.5   # fraction of character width
 BG_ALPHA = 1.0
 BG_ALPHA_COLOR = 1.0
+EMOJI_MEDIA = True
+PFP_MEDIA = True
+INLINE_MEDIA = True
 APP_NAME = "endcord"
-try:
-    import __main__
-    TRUE_APP_NAME = APP_NAME
-    APP_NAME = getattr(__main__, "APP_NAME", "endcord")
-except Exception:
-    pass
-APP_ID = f"com.{peripherals.REPO_OWNER}.{TRUE_APP_NAME}"
-
 CTRL_SHIFT_V_PASTE = False   # enable Ctrl+Shift+V pasting
 ENABLE_SHIFT_BACKSPACE = False
 ENABLE_TRAY = True
@@ -88,6 +83,13 @@ SYSTEM_COLORS = (
     (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
     (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
 )
+
+try:
+    import __main__
+    APP_NAME = getattr(__main__, "APP_NAME", "endcord")
+except Exception:
+    pass
+APP_ID = f"com.{peripherals.REPO_OWNER}.{peripherals.TRUE_APP_NAME}"
 
 # custom path
 if sys.platform == "linux":
@@ -120,8 +122,11 @@ if config_path:
             MULTIPLE_INSTANCES = config.get("multiple_instances", MULTIPLE_INSTANCES)
             GTK_DARK_THEME = config.get("gtk_dark_theme", GTK_DARK_THEME)
             APP_NAME = config.get("app_name", APP_NAME)
+            EMOJI_MEDIA = config.get("emoji_media", EMOJI_MEDIA)
+            PFP_MEDIA = config.get("pfp_media", PFP_MEDIA)
+            INLINE_MEDIA = config.get("inline_media", INLINE_MEDIA)
             CTRL_SHIFT_V_PASTE = config.get("ctrl_shift_v_paste", CTRL_SHIFT_V_PASTE)
-            ENABLE_SHIFT_BACKSPACE = config.get("enable_shif_backspace", ENABLE_SHIFT_BACKSPACE)
+            ENABLE_SHIFT_BACKSPACE = config.get("enable_shift_backspace", ENABLE_SHIFT_BACKSPACE)
             ENABLE_TRAY = config.get("enable_tray", ENABLE_TRAY)
             TRAY_ICON_NORMAL = config.get("tray_icon_normal", TRAY_ICON_NORMAL)
             TRAY_ICON_UNREAD = config.get("tray_icon_unread", TRAY_ICON_UNREAD)
@@ -140,6 +145,9 @@ if config_path:
             "font_name": FONT_NAME,
             "gtk_dark_theme": GTK_DARK_THEME,
             "app_name": APP_NAME,
+            "emoji_media": EMOJI_MEDIA,
+            "pfp_media": PFP_MEDIA,
+            "inlin_media": INLINE_MEDIA,
             "ctrl_shift_v_paste": CTRL_SHIFT_V_PASTE,
             "enable_tray": ENABLE_TRAY,
             "tray_icon_normal": TRAY_ICON_NORMAL,
@@ -315,6 +323,7 @@ def load_svg_with_gtk(path, size=(64, 64)):
 
 
 # tray stuff
+
 
 def enable_tray():
     """Enable tray icon setup"""
@@ -513,6 +522,7 @@ class GtkTerminalWindow(Gtk.Window):
 
         # init gtk stuff
         self.curses_window = curses_window
+        self.media = None
         self.set_default_size(*WINDOW_SIZE)
         self.set_resizable(True)
         Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", GTK_DARK_THEME)
@@ -746,6 +756,9 @@ class GtkTerminalWindow(Gtk.Window):
                         cr.rectangle(cursor_px_x, cursor_px_y, bar_w, self.char_height)
                         cr.fill()
 
+        if self.media:
+            self.media.draw(cr)
+
         return True
 
 
@@ -830,7 +843,7 @@ class GtkTerminalWindow(Gtk.Window):
         if unicode_code != 0:
             ch = chr(unicode_code)
             if ch == " " and mod_prefix:
-                event_queue.put(mod_prefix + "SPACE")
+                event_queue.put((" " if mod_prefix == "S-" else mod_prefix + "SPACE"))
                 return True
             if not ctrl and not alt:
                 event_queue.put(ch)
@@ -1059,7 +1072,7 @@ def error_handler(message, unblock_event, report=False):
             if event.keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R, Gdk.KEY_Shift_L, Gdk.KEY_Shift_R, Gdk.KEY_Alt_L, Gdk.KEY_Alt_R):
                 return False
             if (event.state & Gdk.ModifierType.CONTROL_MASK) and event.keyval in (Gdk.KEY_c, Gdk.KEY_C):
-                return False
+                return True
             win.destroy()
             return True
         def on_destroy(widget):   # noqa
@@ -1128,6 +1141,18 @@ def notify_remove(notification_id):
             app.withdraw_notification(str(notification_id))
         except GLib.Error:   # fllback
             peripherals.notify_remove(notification_id)
+
+
+def get_dbus_connection():
+    """Get DBus connection of current GTK application"""
+    if gtk_app:
+        return gtk_app.get_dbus_connection()
+    return None
+
+
+def get_window():
+    """Get gtk window instance"""
+    return gtk_window
 
 
 # curses stuff
@@ -1297,6 +1322,14 @@ def init_pair(pair_id, fg, bg):
         missing = pair_id + 1 - len(color_map)
         color_map.extend([DEFAULT_PAIR] * missing)
     color_map[pair_id] = (fg_rgb, bg_rgb)
+
+
+def pair_content(pair_id):
+    """curses.pair_content clone"""
+    try:
+        return color.closest_color(color_map[pair_id][0])[0], color.closest_color(color_map[pair_id][1])[0]
+    except Exception:
+        return 0, 0
 
 
 def initscr():   # noqa

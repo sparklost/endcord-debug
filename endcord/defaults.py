@@ -35,7 +35,7 @@ settings = {
     "hide_spam": True,
     "keep_deleted": False,
     "limit_cache_deleted": 30,
-    "max_thumb_cache_age": 7,
+    "max_media_cache_age": 7,
     "syntax_highlight": True,
     "tree_show_folders": True,
     "wrap_around": True,
@@ -47,6 +47,7 @@ settings = {
     "extra_line_delay": 5,
     "gif_download_type": 1,
     "trim_embed_url_size": 40,
+    "show_embed_names": False,
     "aspell_mode": "normal",
     "aspell_lang": "en_US",
     "media_mute": False,
@@ -65,6 +66,7 @@ settings = {
     "default_stickers": True,
     "only_one_open_server": False,
     "remember_collapsed_channels": True,
+    "dm_activity_in_tree": True,
     "assist": True,
     "assist_stop_space": True,
     "assist_swap_binding": True,
@@ -95,12 +97,15 @@ settings = {
     "call_opus_mode": "voip",
     "call_fast_mixer": False,
     "call_noise_suppression": True,
+    "call_x264_bitrate": 1600,
+    "call_x264_preset": "veryfast",
     "yt_dlp_path": "yt-dlp",
     "yt_dlp_format": 18,
     "mpv_path": "mpv",
     "yt_in_mpv": False,
     "check_for_updates": 1,
     "check_update_interval": 1,
+    "automatic_extension_update": 1,
     "client_properties": "default",
     "custom_user_agent": None,
     "send_x_super_properties": True,
@@ -139,6 +144,7 @@ theme = {
     "format_search_message": "%channel: [%date] <%global_name> | %content",
     "edited_string": "(edited)",
     "app_string": "- (%app) ",
+    "vim_mode_strings": ["[--NORMAL--]", "[--INSERT--]"],
     "quote_character": "║",
     "scrollbar_character": "┃",
     "reactions_separator": " ",
@@ -226,7 +232,7 @@ theme = {
 
 keybindings = {
     # tree
-    "tree_up": ("C-UP", 500),
+    "tree_up": ("C-UP", 500),   # those with 500+ are handled in tui
     "tree_down": ("C-DOWN", 501),
     "tree_select": ("C-SPACE", 502),
     "tree_collapse_threads": ("M-h", 503),
@@ -246,6 +252,8 @@ keybindings = {
     "select_word_right": ("C-S-RIGHT", 511),
     "select_end_left": ("S-HOME", 528),
     "select_end_right": ("S-END", 529),
+    "spellcheck_left": ("M-[", 530),
+    "spellcheck_right": ("M-]", 531),
     "insert_newline": ("C-n", 512),
     "undo": ("M-z", 513),
     "redo": ("M-S-z", 514),
@@ -301,6 +309,7 @@ keybindings = {
     "toggle_tab": ("M-t", 41),
     "switch_tab_modifier": ("M-NUM", None),
     "open_external_editor": ("M-e", 45),
+    "push_to_talk": (None, 1000),
     "quit": (None, 34),   # already bound to Ctrl+C
 }
 

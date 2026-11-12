@@ -208,7 +208,7 @@ class Gateway():
     def load_extensions(self, extensions):
         """Load already initialized extensions from app class"""
         self.extensions = extensions
-        self.extension_cache = []
+        self.extension_cache = {}
 
 
     def execute_extensions_method_nochain(self, method_name, *args, cache=False):
@@ -216,54 +216,57 @@ class Gateway():
         if not self.extensions:
             return args
 
-        # try to load from cache (improves performance with many extensions)
         if cache:
-            for extension_point in self.extension_cache:
-                if extension_point[0] == method_name:
-                    for method in extension_point[1]:
-                        method(*args)
-            return
+            methods = self.extension_cache.get(method_name)
+            if methods is None:
+                methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+            self.extension_cache[method_name] = methods
+        else:
+            methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
 
-        # try to load method from extensions and add to cache
-        methods = []
-        for extension in self.extensions:
-            method = getattr(extension, method_name, None)
-            if callable(method):
-                if cache:
-                    methods.append(method)
+        for method in methods:
+            try:
                 method(*args)
-        if cache:
-            self.extension_cache.append((method_name, methods))
+            except Exception:
+                name = method.__self__.EXT_SOURCE.strip("/").split("/")[-1]
+                outdated = self.ext_updates.get(name, method.__self__.EXT_VERSION) != method.__self__.EXT_VERSION
+                logger.error(
+                    f"Extension {name} errored in {method_name}, it will keep running but this should be fixed!\n"
+                    f"{"  This extension is outdated, try updating it\n" if outdated else
+                    "  If many more errors appear, disable it until the bug is fixed"}",
+                    exc_info=True,
+                )
 
 
     def execute_extensions_method_first(self, method_name, *args, cache=False):
-        """Execute specific method for each extension if extension has this method, and chain them, without chaining, stop on first run extension with positive result"""
+        """Execute specific method for each extension, without chaining, stop on first positive result"""
         if not self.extensions:
             return None
-
-        # try to load from cache (improves performance with many extensions)
-        if cache:
-            result = False
-            for extension_point in self.extension_cache:
-                if extension_point[0] == method_name:
-                    for method in extension_point[1]:
-                        result = method(*args)
-                        if result:
-                            return result
-
-        # try to load method from extensions and add to cache
         result = False
-        methods = []
-        for extension in self.extensions:
-            method = getattr(extension, method_name, None)
-            if callable(method):
-                if cache:
-                    methods.append(method)
-                result = method(*args)
-                if result:
-                    break
+
         if cache:
-            self.extension_cache.append((method_name, methods))
+            methods = self.extension_cache.get(method_name)
+            if methods is None:
+                methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+            self.extension_cache[method_name] = methods
+        else:
+            methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+
+        for method in methods:
+            try:
+                result = method(*args)
+            except Exception:
+                name = method.__self__.EXT_SOURCE.strip("/").split("/")[-1]
+                outdated = self.ext_updates.get(name, method.__self__.EXT_VERSION) != method.__self__.EXT_VERSION
+                logger.error(
+                    f"Extension {name} errored in {method_name}, it will keep running but this should be fixed!\n"
+                    f"{"  This extension is outdated, try updating it\n" if outdated else
+                    "  If many more errors appear, disable it until the bug is fixed"}",
+                    exc_info=True,
+                )
+                continue
+            if result:
+                break
         return result
 
 
@@ -374,6 +377,8 @@ class Gateway():
             self.ws.send(json.dumps(request))
         except (websocket._exceptions.WebSocketException, OSError):
             self.reconnect_requested = True
+        except ValueError:
+            return
 
 
     def add_member_roles(self, guild_id, user_id, roles, nick=None, nonce=None):
@@ -1314,13 +1319,7 @@ class Gateway():
                             members_sync = []
                             for item in memlist["items"]:
                                 if "group" in item:
-                                    group_id = item["group"]["id"]
-                                    group_count = 0
-                                    for group in data["groups"]:
-                                        if group["id"] == group_id:
-                                            group_count = group["count"]
-                                            break
-                                    members_sync.append({"group": group_id, "count": group_count})
+                                    members_sync.append({"group": item["group"]["id"], "count": 0})
                                 else:
                                     member_data = item["member"]
                                     custom_status, activities = extract_activities(member_data["presence"]["activities"])
@@ -1345,17 +1344,15 @@ class Gateway():
                             try:
                                 if list_id not in self.activities[guild_index][1]:
                                     self.activities[guild_index][1][list_id] = [0, []]   # [last_index, members]
-                                if "group" in memlist["item"]:   # group can only be inserted
-                                    group_id = memlist["item"]["group"]["id"]
-                                    group_count = 0
-                                    for group in data["groups"]:
-                                        if group["id"] == group_id:
-                                            group_count = group["count"]
-                                            break
-                                    self.activities[guild_index][1][list_id][1].insert(memlist["index"], {"group": group_id, "count": group_count})
-                                    if len(self.activities[guild_index][1][list_id][1]) > 100:
-                                        self.activities[guild_index][1][list_id][1].pop(-1)
-                                    self.activities_changed.append(guild_id)
+                                if "group" in memlist["item"]:
+                                    group_item = {"group": memlist["item"]["group"]["id"], "count": 0}
+                                    members_list = self.activities[guild_index][1][list_id][1]
+                                    if memlist["op"] == "UPDATE" and memlist["index"] < len(members_list):
+                                        members_list[memlist["index"]] = group_item
+                                    else:   # INSERT
+                                        members_list.insert(memlist["index"], group_item)
+                                        if len(members_list) > 100:
+                                            members_list.pop(-1)
                                     self.activities[guild_index][1][list_id][0] = int(memlist["index"])
                                     continue
                                 member_data = memlist["item"]["member"]
@@ -1388,7 +1385,12 @@ class Gateway():
                                 self.activities[guild_index][1][list_id][0] = int(memlist["index"])
                             except (IndexError, KeyError):
                                 pass
-                        self.activities_changed.append(guild_id)
+                    # reset counts
+                    counts = {g["id"]: g["count"] for g in data.get("groups", [])}
+                    for item in self.activities[guild_index][1].get(list_id, [0, []])[1]:
+                        if "group" in item:
+                            item["count"] = counts.get(item["group"], 0)
+                    self.activities_changed.append(guild_id)
 
                 elif optext == "THREAD_MEMBER_LIST_UPDATE":
                     online = []
@@ -2366,7 +2368,7 @@ class Gateway():
         logger.debug("Requesting voice disconnect")
 
 
-    def update_mute_in_call(self, guild_id, channel_id, mute, video, preferred_regions):
+    def update_voice_state(self, guild_id, channel_id, mute, video, preferred_regions):
         """Update this client mute state while in voice call"""
         payload = {
             "op": 4,

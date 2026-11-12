@@ -202,7 +202,11 @@ class TUI():
     """Methods used to draw terminal user interface"""
 
     def __init__(self, screen, config, keybindings, command_bindings, draw_tree, draw_member_list):
-        self.spellchecker = peripherals.SpellCheck(config["aspell_mode"], config["aspell_lang"])
+        self.spellchecker = peripherals.SpellCheck(
+            config["aspell_mode"],
+            config["aspell_lang"],
+            os.path.join(peripherals.config_path, "aspell-personal.dict"),
+        )
         acs_map = acs.get_map()
         curses.use_default_colors()
         curses.curs_set(0)   # using custom cursor
@@ -359,8 +363,9 @@ class TUI():
         self.cursor_pos = 0   # on-screen position of cursor
         self.cursor_on = True
         self.enable_autocomplete = False
-        self.spelling_range = [0, 0]
+        self.spelling_range = (0, 0, 0)
         self.misspelled = []
+        self.spell_suggestions = []
         self.delta_store = []
         self.last_action = None
         self.delta_cache = ""
@@ -421,14 +426,15 @@ class TUI():
 
 
     def load_inline_media(self, inline_media):
-        """Pass inline media drawer reference from app to tui"""
+        """Pass inline/gtkcurses media instance from app to tui"""
+        # if uses_gtkcurses, then this is gtkcurses_media
         self.inline_media = inline_media
 
 
     def load_extensions(self, extensions):
         """Load already initialized extensions from app class and load chain parts for chainable bindings"""
         self.extensions = extensions
-        self.extension_cache = []
+        self.extension_cache = {}
         for extension in self.extensions:
             method = getattr(extension, "init_bindings", None)
             if not callable(method):
@@ -443,7 +449,7 @@ class TUI():
                 if len(split_binding) == 1:
                     continue
                 elif len(split_binding) > 2:
-                    logger.warn(f"Invalid keybinding: {binding}")
+                    logger.warning(f"Invalid keybinding: {binding}")
                 if split_binding[0] not in self.chainable:
                     self.chainable.append(split_binding[0])
         del self.keybindings   # not needed anymore
@@ -453,70 +459,63 @@ class TUI():
         """Execute specific method for each extension if extension has this method, and chain them"""
         if not self.extensions:
             return args
-
-        # try to load from cache (improves performance with many extensions)
-        if cache:
-            for extension_point in self.extension_cache:
-                data = args
-                if extension_point[0] == method_name:
-                    for method in extension_point[1]:
-                        result = method(*data)
-                        if result is not None:
-                            if not isinstance(result, tuple):
-                                result = (result, )
-                            data = result
-                    if data is not None:
-                        return data
-                    return args
-
-        # try to load method from extensions and add to cache
-        methods = []
         data = args
-        for extension in self.extensions:
-            method = getattr(extension, method_name, None)
-            if callable(method):
-                if cache:
-                    methods.append(method)
-                result = method(*data)
-                if result is not None:
-                    if not isinstance(result, tuple):
-                        result = (result, )
-                    data = result
+
         if cache:
-            self.extension_cache.append((method_name, methods))
-        if data is not None:
-            return data
-        return args
+            methods = self.extension_cache.get(method_name)
+            if methods is None:
+                methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+            self.extension_cache[method_name] = methods
+        else:
+            methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+
+        for method in methods:
+            try:
+                result = method(*data)
+            except Exception:
+                name = method.__self__.EXT_SOURCE.strip("/").split("/")[-1]
+                outdated = self.ext_updates.get(name, method.__self__.EXT_VERSION) != method.__self__.EXT_VERSION
+                logger.error(
+                    f"Extension {name} errored in {method_name}, it will keep running but this should be fixed!\n"
+                    f"{"  This extension is outdated, try updating it\n" if outdated else
+                    "  If many more errors appear, disable it until the bug is fixed"}",
+                    exc_info=True,
+                )
+                continue
+            if result is not None:
+                data = result if isinstance(result, tuple) else (result, )
+        return data
 
 
     def execute_extensions_method_first(self, method_name, *args, cache=False):
-        """Execute specific method for each extension if extension has this method, without chaining, stop on first run extension"""
+        """Execute specific method for each extension, without chaining, stop on first positive result"""
         if not self.extensions:
-            return args
-
-        # try to load from cache (improves performance with many extensions)
-        if cache:
-            result = False
-            for extension_point in self.extension_cache:
-                if extension_point[0] == method_name:
-                    for method in extension_point[1]:
-                        result = method(*args)
-                        if result:
-                            return result
-
-        # try to load method from extensions and add to cache
+            return None
         result = False
-        methods = []
-        for extension in self.extensions:
-            method = getattr(extension, method_name, None)
-            if callable(method):
-                if cache:
-                    methods.append(method)
-                result = method(*args)
-                if result:
-                    break
+
         if cache:
-            self.extension_cache.append((method_name, methods))
+            methods = self.extension_cache.get(method_name)
+            if methods is None:
+                methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+            self.extension_cache[method_name] = methods
+        else:
+            methods = [m for ext in self.extensions if callable(m := getattr(ext, method_name, None))]
+
+        for method in methods:
+            try:
+                result = method(*args)
+            except Exception:
+                name = method.__self__.EXT_SOURCE.strip("/").split("/")[-1]
+                outdated = self.ext_updates.get(name, method.__self__.EXT_VERSION) != method.__self__.EXT_VERSION
+                logger.error(
+                    f"Extension {name} errored in {method_name}, it will keep running but this should be fixed!\n"
+                    f"{"  This extension is outdated, try updating it\n" if outdated else
+                    "  If many more errors appear, disable it until the bug is fixed"}",
+                    exc_info=True,
+                )
+                continue
+            if result:
+                break
         return result
 
 
@@ -702,7 +701,7 @@ class TUI():
             self.screen.noutrefresh()   # ??? needed only with windows-curses
             self.need_update.set()
         self.resize()
-        if self.inline_media:
+        if not uses_gtkcurses and self.inline_media:
             self.inline_media.force_redraw()
         self.execute_extensions_methods("on_force_redraw")
 
@@ -768,7 +767,7 @@ class TUI():
             self.screen.refresh()
             self.disable_drawing = False
             self.resize(redraw_only=True)
-            if self.inline_media:
+            if not uses_gtkcurses and self.inline_media:
                 self.inline_media.force_redraw()
             self.execute_extensions_methods("on_force_redraw")
 
@@ -875,6 +874,7 @@ class TUI():
                 self.assist_start = -1
                 return None, 100
         if self.assist_start == -2:
+            self.assist_start = -1
             return None, 100
         if self.enable_autocomplete and self.input_buffer:
             return self.input_buffer, 7
@@ -893,6 +893,11 @@ class TUI():
     def get_focused(self):
         """Get whether chat is focused or not"""
         return self.focused and not self.disable_drawing
+
+
+    def get_spell_suggestions(self):
+        """Get spell suggestions for current mispelled word"""
+        return self.spell_suggestions
 
 
     def set_selected(self, selected, change_amount=0, scroll=True, draw=True):
@@ -915,7 +920,7 @@ class TUI():
             self.chat_index += change_amount
         if not self.disable_drawing and draw:
             self.draw_chat()
-            if self.inline_media:
+            if not uses_gtkcurses and self.inline_media:
                 self.inline_media.draw_selection(self.chat_selected)
 
 
@@ -930,9 +935,7 @@ class TUI():
         """Set cursor position on input line"""
         self.input_index = index
         _, w = self.input_hw
-        self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-        self.cursor_pos = max(self.cursor_pos, 0)
-        self.cursor_pos = min(w - 1, self.cursor_pos)
+        self.update_cursor_pos()
         self.input_select_start = None
         self.show_cursor()
 
@@ -990,7 +993,7 @@ class TUI():
                 self.tree_width = 1
         else:
             self.tree_width = value
-        if self.inline_media:
+        if not uses_gtkcurses and self.inline_media:
             self.inline_media.clear_images(force=True)
         self.resize()
 
@@ -1004,7 +1007,7 @@ class TUI():
                 self.member_list_width = 2
         else:
             self.member_list_width = value
-        if self.inline_media:
+        if not uses_gtkcurses and self.inline_media:
             self.inline_media.clear_images(force=True)
         if not self.win_member_list:
             self.draw_member_list([" "], [None])
@@ -1481,14 +1484,15 @@ class TUI():
         with self.lock:
             w = self.input_hw[1]
             # show only part of line when longer than screen
-            start = max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+            offset = w - 1 + self.input_line_index
+            start = max(0, len(self.input_buffer) - offset)
             end = start + w - 1
             line_text = self.input_buffer[start:end].replace("\n", "␤")
 
             # prepare selected range
             if self.input_select_start is not None:
-                selected_start_screen = self.input_select_start - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                selected_end_screen = self.input_select_end - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+                selected_start_screen = self.input_select_start - max(0, len(self.input_buffer) - offset)
+                selected_end_screen = self.input_select_end - max(0, len(self.input_buffer) - offset)
                 if selected_start_screen > selected_end_screen:
                     # swap so start is always left side
                     selected_start_screen, selected_end_screen = selected_end_screen, selected_start_screen
@@ -1508,7 +1512,7 @@ class TUI():
                 # selected part of string
                 elif self.input_select_start is not None and selected_start_screen <= pos < selected_end_screen:
                     safe_insch(self.win_input_line, 0, pos, character, curses.color_pair(15) | self.attrib_map[15])
-                elif pos in self.red_list:
+                elif pos + start in self.red_list:
                     safe_insch(self.win_input_line, 0, pos, character, curses.color_pair(20))
                 else:
                     for bad_range in self.misspelled:
@@ -1527,7 +1531,7 @@ class TUI():
 
     def draw_chat(self, refresh=True, inline=True):
         """Draw chat with applied color formatting"""
-        if self.inline_media:
+        if not uses_gtkcurses and self.inline_media:
             self.inline_media.clear_images()
             exclude_selection = self.inline_media.get_images()
         else:
@@ -1762,15 +1766,9 @@ class TUI():
                     self.win_tree.insstr(y, 0, line[:text_start], color_line)
                     self.win_tree.insstr(y, text_start, line[text_start:], color)
                     # if this is dm, set color for status sign
-                    # drawing it only for "normal" DMs, just to save some color pairs until python curses fixes the bug
-                    if 300 <= code < 399 and second_digit == 0 and not selected:
-                        if first_digit == 2:   # online
-                            # this character is always at position 4 (set in formatter)
-                            self.win_tree.addch(y, 4, self.tree_dm_status, curses.color_pair(18))
-                        elif first_digit == 3:   # idle
-                            self.win_tree.addch(y, 4, self.tree_dm_status, curses.color_pair(19))
-                        elif first_digit == 4:   # dnd
-                            self.win_tree.addch(y, 4, self.tree_dm_status, curses.color_pair(20))
+                    if 300 <= code < 399 and second_digit == 0 and not selected and 2 <= first_digit <= 4:
+                        # status character is always at position 4 (set in formatter)
+                        self.win_tree.chgat(y, 4, 1, curses.color_pair(first_digit + 16))
                 y += 1
                 while y < h:
                     # curses optimizes scrolling, so large empty space will cause flickering when scrolling member list
@@ -1992,8 +1990,11 @@ class TUI():
                 self.draw_chat(refresh=False)
                 self.win_extra_window.noutrefresh()
                 self.need_update.set()
-        if self.inline_media and title_txt:   # do here because of refresh=False
-            self.inline_media.draw_images()
+        if self.inline_media:
+            if title_txt:   # do here because of refresh=False
+                self.inline_media.draw_images()
+            if uses_gtkcurses:
+                self.inline_media.draw_extra_window_images()
         self.execute_extensions_methods("on_extra_window_draw", cache=False)
 
 
@@ -2029,6 +2030,8 @@ class TUI():
                 self.draw_scrollbar_chat()
             if self.inline_media:   # gotta be outside lock
                 self.inline_media.draw_images()
+                if uses_gtkcurses:
+                    self.inline_media.remove_extra_window_images()
             self.execute_extensions_methods("on_extra_window_remove")
 
 
@@ -2037,7 +2040,7 @@ class TUI():
         if self.disable_drawing:
             return
 
-        if self.inline_media and (not self.win_member_list or force):
+        if not uses_gtkcurses and self.inline_media and (not self.win_member_list or force):
             self.inline_media.clear_images(force=True)
 
         with self.lock:
@@ -2202,6 +2205,21 @@ class TUI():
             self.set_cursor_color(15)
             self.cursor_on = True
             self.hibernate_cursor = 0
+
+
+    def ensure_cursor_visible(self):
+        """Adjust input_line_index so cursor is on-screen"""
+        _, w = self.input_hw
+        buf_len = len(self.input_buffer)
+        x = self.input_index - max(0, buf_len - w + 1 - self.input_line_index)
+        margin = min(INPUT_LINE_JUMP, w - 3)
+        if x < 0:   # off the left edge
+            new_start = max(0, self.input_index - margin)
+            self.input_line_index = buf_len - w + 1 - new_start
+        elif x > w - 1:   # off the right edge
+            new_start = self.input_index - (w - 1) + margin
+            self.input_line_index = buf_len - w + 1 - new_start
+        self.input_line_index = min(max(0, self.input_line_index), max(0, buf_len - w + 1))
 
 
     def update_status_line(self, text_l, text_r=None, text_l_format=[], text_r_format=[]):
@@ -2432,7 +2450,7 @@ class TUI():
             # first space before last word
             range_word_end = len(self.input_buffer) - len(resplit(self.input_buffer)[-1]) - split_char_in(self.input_buffer)
         # indexes of words visible on screen
-        spelling_range = [range_word_start, range_word_end]
+        spelling_range = (range_word_start, range_word_end, line_start)
         if spelling_range != self.spelling_range:
             words_on_screen = resplit(self.input_buffer[range_word_start:range_word_end])
             misspelled_words_on_screen = self.spellchecker.check_list(words_on_screen)
@@ -2447,6 +2465,55 @@ class TUI():
                 index += word_len + 1
             # self.misspelled format: [start_index_on_screen, word_len] for all misspelled words on screen
         self.spelling_range = spelling_range
+
+
+    def jump_misspelled(self, forward):
+        """Move cursor to end of previous or next misspelled word, highlight it, return False if no misspelled"""
+        self.spell_suggestions = []
+        words = list(re.finditer(r"[\w']+", self.input_buffer))
+        flags = self.spellchecker.check_list([match.group() for match in words])
+        wrong = [match for match, flag in zip(words, flags) if flag]
+        if forward:
+            at_end = self.input_index == len(self.input_buffer)
+            found = [match for match in wrong if match.end() > self.input_index or (at_end and match.end() == self.input_index)]
+        else:
+            found = [match for match in wrong if match.end() < self.input_index]
+        if not found:
+            return False
+        match = found[0] if forward else found[-1]
+        self.input_index = match.end()
+        self.input_select_start = match.start()
+        self.input_select_end = match.end()
+        self.ensure_cursor_visible()
+        self.update_cursor_pos()
+        self.spell_suggestions = self.spellchecker.get_suggestions(match.group())
+        self.spellcheck()
+        return True
+
+
+    def add_to_aspell_dict(self, word):
+        """Add word to aspell dictionary"""
+        self.spellchecker.add_word(word)
+        self.spelling_range = None
+        self.spell_suggestions = []
+        return True
+
+
+    def do_spell_correct(self, index):
+        """Apply spellcheck correction from specified index (0 is add to dict)"""
+        if index == 0:
+            self.add_to_aspell_dict(resplit(self.input_buffer[:self.input_index])[-1])
+        else:
+            wrong_word = resplit(self.input_buffer[:self.input_index])[-1]
+            new_text = self.input_buffer[:self.input_index - len(wrong_word)] + self.spell_suggestions[index-1]
+            new_input_index = len(new_text)
+            new_text += self.input_buffer[self.input_index:]
+            self.input_buffer = new_text
+            self.input_index = new_input_index
+            self.ensure_cursor_visible()
+            self.update_cursor_pos()
+        self.input_select_start = None
+        self.spellcheck()
 
 
     def add_to_delta_store(self, key, character=None):
@@ -2656,12 +2723,20 @@ class TUI():
         return tmp, self.chat_selected, self.tree_selected_abs, code
 
 
+    def update_cursor_pos(self):
+        """Calculate new cursor position from input index"""
+        w = self.input_hw[1]
+        self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
+        self.cursor_pos = max(self.cursor_pos, 0)
+        self.cursor_pos = min(w - 1, self.cursor_pos)
+
+
     def wait_input(self, prompt="", init_text=None, reset=True, keep_cursor=False, autocomplete=False, clear_delta=False, forum=False, command=False, press=None):
         """
         Take input from user, and show it on screen.
         Return typed text, absolute_tree_position and whether channel is changed.
         """
-        _, w = self.input_hw
+        w = self.input_hw[1]
         self.enable_autocomplete = autocomplete
         if reset:
             self.input_buffer = ""
@@ -2674,9 +2749,7 @@ class TUI():
             if not keep_cursor:
                 w += self.prompt_len - formatter.len_wch(prompt)
                 self.input_index = len(self.input_buffer)
-                self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                self.cursor_pos = max(self.cursor_pos, 0)
-                self.cursor_pos = min(w - 1, self.cursor_pos)
+                self.update_cursor_pos()
         if not self.disable_drawing:
             self.update_prompt(prompt)
             self.spellcheck()
@@ -2717,6 +2790,9 @@ class TUI():
             # regular characters
             if len(key) == 1 and self.insert_mode:
                 if self.input_select_start is not None:
+                    if self.spell_suggestions and key.isdigit():
+                        self.do_spell_correct(int(key))
+                        return self.return_input_code(55)
                     self.delete_selection()
                     self.input_select_start = None
                 self.input_buffer = self.input_buffer[:self.input_index] + key + self.input_buffer[self.input_index:]
@@ -2738,12 +2814,11 @@ class TUI():
                             self.assist_start = self.input_index
                     elif self.assist_stop_space and key == " ":
                         self.assist_start = -2
-
                 self.spellcheck()
-                self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                self.cursor_pos = max(self.cursor_pos, 0)
-                self.cursor_pos = min(w - 1, self.cursor_pos)
+                self.update_cursor_pos()
                 self.draw_input_line()
+                if self.spell_suggestions:
+                    break
                 continue
 
             # switching tab with Binding+Num
@@ -2870,6 +2945,7 @@ class TUI():
             elif key == 504:   # input_left
                 if self.input_select_start is not None:
                     self.input_index = min(self.input_select_start, self.input_select_end)
+                    self.ensure_cursor_visible()
                     self.show_cursor()
                 elif self.input_index > 0:
                     # if index hits left screen edge, but there is more text to left, move line right
@@ -2884,6 +2960,7 @@ class TUI():
             elif key == 505:   # input_right
                 if self.input_select_start is not None:
                     self.input_index = max(self.input_select_start, self.input_select_end)
+                    self.ensure_cursor_visible()
                     self.show_cursor()
                 elif self.input_index < len(self.input_buffer):
                     # if index hits right screen edge, but there is more text to right, move line right
@@ -2903,12 +2980,8 @@ class TUI():
                     else:
                         left_len += len(word)
                         break
-                self.input_index -= left_len
-                self.input_index = max(self.input_index, 0)
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                if input_line_index_diff <= 0:
-                    self.input_line_index -= input_line_index_diff - 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                self.input_index = max(self.input_index - left_len, 0)
+                self.ensure_cursor_visible()
                 self.input_select_start = None
                 self.spellcheck()
 
@@ -2920,23 +2993,20 @@ class TUI():
                     else:
                         left_len += len(word)
                         break
-                self.input_index += left_len
-                self.input_index = min(self.input_index, len(self.input_buffer))
-                input_line_index_diff = self.input_index - max(0, len(self.input_buffer) - w - self.input_line_index) - w
-                if input_line_index_diff >= 0:
-                    self.input_line_index -= input_line_index_diff + 4   # diff is negative
-                    self.input_line_index = min(max(0, self.input_line_index), max(0, len(self.input_buffer) - w))
+                self.input_index = min(self.input_index + left_len, len(self.input_buffer))
+                self.ensure_cursor_visible()
                 self.input_select_start = None
                 self.spellcheck()
 
             elif key == 526:   # end_left
                 self.input_index = 0
-                self.input_line_index = 0
+                self.input_line_index = max(0, len(self.input_buffer) - w + 1)
                 self.input_select_start = None
                 self.spellcheck()
 
             elif key == 527:   # end_right
                 self.input_index = len(self.input_buffer)
+                self.input_line_index = 0
                 self.input_select_start = None
                 self.spellcheck()
 
@@ -3071,6 +3141,14 @@ class TUI():
                         self.add_to_delta_store("DELETE", char)
                     self.spellcheck()
 
+            elif key == 530 and not command:   # spellcheck left
+                if self.jump_misspelled(False):
+                    return self.return_input_code(54)
+
+            elif key == 531 and not command:   # spellcheck right
+                if self.jump_misspelled(True):
+                    return self.return_input_code(54)
+
             elif key == 513:   # undo
                 self.add_to_delta_store("UNDO")
                 if self.undo_index is None:
@@ -3124,9 +3202,7 @@ class TUI():
             elif key == 517 and self.input_select_start is not None:   # cut
                 self.delete_selection()
                 self.input_select_start = None
-                self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-                self.cursor_pos = max(self.cursor_pos, 0)
-                self.cursor_pos = min(w - 1, self.cursor_pos)
+                self.update_cursor_pos()
                 self.draw_input_line()
                 return self.return_input_code(20)
 
@@ -3185,16 +3261,14 @@ class TUI():
             # terminal reserved keys: CTRL+ C, I, J, M, Q, S, Z
 
             # keep index inside screen
-            self.cursor_pos = self.input_index - max(0, len(self.input_buffer) - w + 1 - self.input_line_index)
-            self.cursor_pos = max(self.cursor_pos, 0)
-            self.cursor_pos = min(w - 1, self.cursor_pos)
+            self.update_cursor_pos()
             self.draw_input_line()
 
             # unmatched keybinding chain
             if self.keybinding_chain is False:
                 return self.return_input_code(2002)
 
-            if press:
+            if press or (self.spell_suggestions and not (key >= 521 and key <= 524)):
                 break
         return self.return_input_code(None)
 

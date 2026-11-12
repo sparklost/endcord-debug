@@ -23,12 +23,18 @@ Any third party endcord forks may add features that can lead to account ban, cau
 
 ## Features
 - Extremely low CPU and RAM usage (see [RAM usage](docs/faq.md#ram-usage))
-- Voice and video calls (DM, groups and servers) with video streaming
 - Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
 - Mouse controls
 - Kitty protocol images, pfp, emoji (through extensions: [1](https://github.com/sparklost/endcord-image-inline), [2](https://github.com/sparklost/endcord-image-pfp), [3](https://github.com/sparklost/endcord-image-emoji))
-- Login with email, 2fa, QR code, or paste token
+- Login with email, MFA, QR code, or paste token
+- Voice calls
+    - Audio noise suppression with RNNoise
+    - View video throug mpv
+    - Stream video from any source (camera, usb, screen share)
+    - Set volues per-user or mute them
+    - Customizable video properties
+    - Global push-to-talk (Linux X11 and Windows)
 - Desktop notifications
 - Inline images (pixelated/ascii-art/[kitty-protocol](https://github.com/sparklost/endcord-image-inline))
 - View images, gifs, videos, audio, stickers and YouTube with ASCII art or in external app
@@ -50,7 +56,7 @@ Any third party endcord forks may add features that can lead to account ban, cau
     - Folders (can be renamed)
 - Show reactions, replied message, forwarded message
 - Show embeds, attachment types and links, code blocks (with syntax highlighting)
-- Spellchecking
+- Spellchecking with corrections
 - Advanced input line operations and ability to use external editor
 - Configurable bar or block shaped cursor
 - Tabs and temporary tabs with mouse controls (click, double click, middle click)
@@ -88,12 +94,14 @@ Any third party endcord forks may add features that can lead to account ban, cau
 - Run bots, with interactions
 - Lots of easter eggs
 - Endcord-GUI features
+    - Image emoji, image profile pictures, inline images  
     - Customizable tray icons, window can be minimized to tray
     - All bindings work, Ctrl+C, Ctrl+Z, Shift+Enter
     - Window can be transparent, and background colors can also have alpha value
     - Uses only 15MB (linux) more RAM (vs most terminals using 20-100MB)
     - GTK-native pasting and drag n' drop (text and files)
     - Linux desktop integration: app icon, notification count badge, click on notification
+    - Additional Wayland support for global push-to-talk
 
 
 ## Disclaimer
@@ -112,7 +120,7 @@ Any third party endcord forks may add features that can lead to account ban, cau
     Binaries are built on Ubuntu-like distro with `--custom-python --nuitka` build script options with clang, meaning they are maximally optimized.
 - Arch Linux (AUR):
     - `yay -S endcord-installer` - same install script as explained above
-    - `yay -S endcord` - full version with media support, larger executable
+    - `yay -S endcord` - full version with media and video stream support, larger executable
     - `yay -S endcord-lite` - lite version without voice calls and media support
     - `yay -S endcord-gui` - "gui" windowed version using GTK3
     - `-git` versions will build from source, with latest changes

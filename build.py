@@ -17,7 +17,7 @@ from datetime import datetime
 CUSTOM_CFLAGS = [
     "-DNDEBUG",
     "-g0",
-    "-O3",
+    "-O2",
     "-mtune=generic",
     "-fno-semantic-interposition",
     "-fno-strict-overflow",
@@ -825,7 +825,7 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
         safe = True
     skip_mtune = "-mtune=" in CFLAGS_OLD
     custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags and not (skip_mtune and item.starswith("-mtune"))] if safe else CUSTOM_CFLAGS
-    custom_ldflgs = [item for item in CUSTOM_LDFLAGS if "exclude-libs" not in item] if exclude else CUSTOM_LDFLAGS
+    custom_ldflgs = [item for item in CUSTOM_LDFLAGS if "exclude-libs" not in item] if not exclude else CUSTOM_LDFLAGS
     cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
     cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
     ldflags = ([] if overwrite else LDFLAGS_OLD.split(" ")) + custom_ldflgs + ldflags
@@ -1166,7 +1166,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
     if not print_cmd:
         if compile_deps and level not in ("MINI", "MICRO"):
             build_numpy_lite(clang)
-            if check_venv_file_size("Crypto", "_chacha", 10000):
+            if check_venv_file_size("Crypto", "_chacha", 20000):
                 build_generic_package("pycryptodome", clang, safe=True)
             else:
                 fprint("Building pycryptodome with custom compiler args")
@@ -1332,7 +1332,7 @@ def parser():
         choices=["FULL", "MEDIUM", "LITE", "MINI", "MICRO"],
         help=(
             'Change environment to build a specified level of endcord. Options:\n'
-            '  "FULL"   - Has media support\n'
+            '  "FULL"   - Has media and video stream support\n'
             '  "MEDIUM" - Has call support, no media support, but can display images\n'
             '  "LITE"   - No image, media, nor call support\n'
             '  "MINI"   - like LITE, no sound unless paplay/pw-cat exist, no voice recording\n'

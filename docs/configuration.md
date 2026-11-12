@@ -86,8 +86,8 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     Whether to keep deleted messages in the chat, with different color, or remove them.
 - `limit_cache_deleted = 30`  
     Limit number of cached deleted messages per channel.
-- `max_thumb_cache_age = 7`  
-    How long to keep cached thumbs for inline images, in days. Set `0` to clear on each new run.  
+- `max_media_cache_age = 7`  
+    How long to keep cached media: inline images, emoji and pfp, in days. Set `0` to clear on each new run.  
 - `syntax_highlight = True`  
     Whether to enable code block syntax highlighting. Code block needs to have language prefix.  
     For this to work, either GNU `source-highlight` or `python-pygments` needs to be installed.
@@ -115,6 +115,8 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     2 - mp4 Video  
 - `trim_embed_url_size = 40`  
     Length to which to trim embed url, appended with `...`. Set to `None` to disable. Minimum is 20.
+- `show_embed_names = False`  
+    Show embed/attachment file name. Forced ON when inline media is disabled/unavailable.
 - `aspell_mode = "normal"`  
     [Aspell](http://aspell.net/) filter mode.  
     Available options: `ultra` / `fast` / `normal` / `slow` / `bad-spellers`  
@@ -158,6 +160,8 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     Force only one open server at a time in tree. When one is opened other is closed, excluding DMs.
 - `remember_collapsed_channels = True`  
     Whether to persist collapsed state for forums and channels with threads.
+- `dm_activity_in_tree = True`  
+    Wether to show DM rich presence activity icon instead of status dot (`tree_dm_status` in theme) in tree. Uses characters from `activity_icons` in thme.
 - `assist = True`  
     Assist when typing @username, @role, #channel, :emoji:, ;sticker;
 - `assist_stop_space = True`  
@@ -196,6 +200,12 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     If True, call will use faster mixer that uses less CPU but might result in lower audio quality.  
 - `call_noise_suppression = True`  
     Run noise suppression on audio recorded from microphone. Audio will be downmixed to mono. To use this, either install rnnoise on the system, or build endcord with `--bundle-rnnoise` build.py script argument.
+- `call_x264_bitrate = 1600`  
+    Bitrate (Kbps) of libx264-encoded transmitted video in a voice call. On poor network, ping will slowly grow, then decrease this value.
+- `call_x264_preset = "veryfast"`  
+    Faster preset will decrease CPU usage and compression efficiency, which will increase uploaded packet size.  
+    Set to `ultrafast` only on very low-end CPU or when it is under high load. Slower presets will cause stream issues!  
+    Options: `ultrafast`, `superfast`, `veryfast`, `fast`, `medium`, `slow`...
 - `downloads_path = None`  
     Path to custom downloads directory. Set to `None` to use system default.
 - `notifications_pfp = True`  
@@ -245,7 +255,12 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     4 - Only check endcord, and send desktop notification
 - `check_update_interval = 1`  
     How often to check for endcord and extensions updates, in days.
--  `client_properties = "default"`  
+- `automatic_extension_update = 1`  
+    Automatically update extensions to latest version supporting current endcord version. Will run only after check for updates, meaning it will be affected by `check_for_updates` and `check_update_interval` options.  
+    0 - Do not update automatically  
+    1 - Only update official extensions  
+    2 - Update ALL installed extensions (warning: this will download and execute unverified code!)  
+- `client_properties = "default"`  
     Client properties are used by discord in spam detection system.  
     They contain various system information like operating system and browser user agent. Available options:
     - `"default"` - Approximately what official desktop client sends. Includes: OS version, architecture, Linux window manager, locale.
@@ -265,7 +280,9 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     WARNING: Using proxy (especially TOR) might make you more suspicious to discord.  
     Voice and video calls will only work with socks5 proxy and it must support UDP ASSOCIATE.  
 - `custom_host = None`  
-    Custom host to connect to, like `old.server.spacebar.chat`. Set to `None` to use default host (`discord.com`)
+    Custom host to connect to, like `old.server.spacebar.chat`. Set to `None` to use default host (`discord.com`).  
+    Profile manager and `--host` command argument can also set the host.  
+    Priority order (first overrides following): argument, profile, config.
 - `capabilities = None`  
     DO NOT CHANGE, unless you know what you're doing. This might cause some features to not work or client to get unstable.  
     If bot token is used, then this will be used as `intents` parameter instead. See [discord bot documentation](https://discord.com/developers/docs/events/gateway#gateway-intents).  
@@ -333,6 +350,8 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     A string that replaces `%edited` in the message format when the message is edited.
  - `app_string = "- (%app)"`  
     A string that replaces `%app` in the message format when the message is sent from app or webhook.
+- `vim_mode_strings = ["[--NORMAL--]", "[--INSERT--]"]`  
+    A list of two strings used in `%vim_mode`. First is normal mode, second is insert mode.
 - `quote_character = "║"`  
     A character that is prefixed to each line of single or multiline quote.
 - `scrollbar_character = "┃"`  
@@ -566,7 +585,7 @@ Note: everything after `%content` may be pushed to newline.
 - `%slowmode` - `Slowmode: hh:mm:ss` if slowmode is enabled, otherwise its hidden
 - `%chain` - Prefix of currently pressed keybinding chain, eg `C-y-`
 - `%app_name` - default is `endcord`, can be changed with `ENDCORD_APP_NAME` environment variable
-- `%vim_mode` - `[--INSERT--]` or `[--NORMAL--]` when `vim_mode` is ON
+- `%vim_mode` - Uses strings from `vim_mode_strings` option when `vim_mode` is ON
 
 ### format_rich
 - `%type` - type of rich presence: "Playing" or "Listening to"
@@ -619,9 +638,15 @@ Note: everything after `%content` may be pushed to newline.
     Whether to use dark GTK theme for the window.
 - `app_name: "Endcord"`  
     Only changes title of the window.
+- `emoji_media: true`  
+    Enable drawing image emoji.
+- `pfp_media: true`  
+    Enable drawing image profile pictures.
+- `inline_media: true`  
+    Enable drawing inline images.
 - `ctrl_shift_v_paste: false`  
     If `true` will enable `Ctrl+Shift+V` for pasting TEXT ONLY. Ctrl+V is already gtk-natively handling smart-paste.
-- `enable_shif_backspace: false`  
+- `enable_shift_backspace: false`  
     Enabling this will add `Shift+Backspace` key combination. If its disabled just `Backspace` is sent.
 - `enable_tray: true`  
     Enable tray icon. closing window will minimize to tray.

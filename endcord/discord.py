@@ -225,10 +225,10 @@ class Discord():
                 connection = http.client.HTTPSConnection(host, port, timeout=timeout + 5)   # extra time for tor
                 connection.sock = proxy_sock
             else:
-                logger.warn(f"Invalid proxy: {self.proxy}")
+                logger.warning(f"Invalid proxy: {self.proxy}")
                 connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
         except Exception as e:
-            logger.warn(f"Error connecting to proxy {self.proxy}: {e}")
+            logger.warning(f"Error connecting to proxy {self.proxy}: {e}")
             connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
         return connection
 
@@ -1797,10 +1797,9 @@ class Discord():
         """
         message_data = None
         url = "/api/v9/applications/detectable"
+        header = self.header.copy()
         if etag:
-            header = self.header | {"If-None-Match": f'W/"{etag}"'}
-        else:
-            header = self.header
+            header["If-None-Match"] = f'W/"{etag}"'
         try:
             connection = self.get_connection(self.host, 443)
             connection.request("GET", url, message_data, header)

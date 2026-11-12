@@ -12,7 +12,7 @@ import time
 
 from PIL import Image, ImageEnhance
 
-from endcord import peripherals, utils, xterm256
+from endcord import peripherals, xterm256
 
 # like this so build.by can switch terminal_utils and gtkcurses
 from endcord import terminal_utils as terminal_utils
@@ -64,6 +64,7 @@ class InlineMedia:
         self.slow_media = config["media_slow_load_delay"]
         self.mention_color = colors_formatted[12][0][0]
         self.mention_color_esc = f"{ESC}[48;5;{color_mention[1]}m"
+        self.draw_box = self.box_color != -1
         self.run = True
         self.prev_chat_index = None
         self.prev_win_hw = self.tui.screen_hw
@@ -80,12 +81,6 @@ class InlineMedia:
             self.img_to_term_block = img_to_term_block_truecolor
         else:
             self.img_to_term_block = img_to_term_block
-
-        threading.Thread(target=utils.delete_old_files, daemon=True, args=(   # might delay startup
-            os.path.join(peripherals.cache_path, "images"),
-            config["max_thumb_cache_age"],
-            True,
-        )).start()
         threading.Thread(target=self.downloader, daemon=True).start()
 
 
@@ -93,6 +88,15 @@ class InlineMedia:
         """Stop all threads"""
         self.run = False
         self.download_queue.put([None] * 9)
+
+
+    def clear_queue(self):
+        """Clear download queue (when switching channel)"""
+        while self.run:
+            try:
+                self.download_queue.get_nowait()
+            except queue.Empty:
+                break
 
 
     def force_redraw(self):
@@ -176,7 +180,7 @@ class InlineMedia:
             with self.image_cache_lock:
                 subtitle_line = bool(self.tui.win_subtitle_line)
                 for data, rel_y, rel_x, h, w, draw, mention in self.image_cache.values():
-                    if not data or not draw:
+                    if not draw and (not self.draw_box or data):
                         continue
                     abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
                     if abs_y - chat_y <= -h or abs_y > chat_h + 1 + subtitle_line:
@@ -191,6 +195,11 @@ class InlineMedia:
                         cut_y = -abs_y + 1 + subtitle_line
                         abs_y = chat_y
                     # logger.info(("DRAW", (h, w), abs_y, rel_y, cut_h, cut_y))
+                    if not data and self.draw_box:
+                        frame = draw_image_bounding_box(-1, self.box_color, w, h)
+                        self.draw_single_image(frame, rel_x, rel_y, w, h, mention, slow=False, lock=False)
+                        drawn_areas.append((abs_y, abs_x, cut_h, w, mention))
+                        continue
                     terminal_utils.draw_over_curses("\n".join(data.split("\n")[cut_y:cut_y + cut_h]), abs_y, abs_x)
                     drawn_areas.append((abs_y, abs_x, cut_h, w, mention))
             self.draw_selection(self.tui.chat_selected)
@@ -213,8 +222,8 @@ class InlineMedia:
         chat_y, chat_x = self.tui.win_chat.getbegyx()
         chat_h = self.tui.chat_hw[0]
         subtitle_line = bool(self.tui.win_subtitle_line)
-        for _, rel_y, _, h, w, draw, mention in self.image_cache.values():
-            if not draw:
+        for data, rel_y, _, h, w, draw, mention in self.image_cache.values():
+            if not draw and (not self.draw_box or data):
                 continue
             abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
             cut_h = h
@@ -292,32 +301,36 @@ class InlineMedia:
             break
 
 
-    def draw_single_image(self, data, rel_x, rel_y, w, h, mention, slow):
+    def draw_single_image(self, data, rel_x, rel_y, w, h, mention, slow, lock=True):
         """Draw single image on designated relative position on the screen"""
         chat_y, chat_x = self.tui.win_chat.getbegyx()
         chat_h, chat_w = self.tui.chat_hw
-        with self.tui.lock:
-            subtitle_line = bool(self.tui.win_subtitle_line)
+        subtitle_line = bool(self.tui.win_subtitle_line)
+        def do_draw():   # noqa
+            abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
+            if abs_y - chat_y <= -h or abs_y > chat_h + 1 + subtitle_line:
+                return
+            abs_x = chat_x + rel_x
+            cut_y = 0
+            cut_h = h
+            if abs_y > chat_h - h + 1 + subtitle_line:
+                cut_h = min(h, chat_h - abs_y + 1) + subtitle_line
+            if abs_y <= subtitle_line:
+                cut_h += abs_y - chat_y
+                cut_y = -abs_y + 1 + subtitle_line
+                abs_y = chat_y
+            # logger.info(("INIT", (h, w), abs_y, rel_y, cut_h, cut_y))
+            if slow:
+                terminal_utils.draw_over_curses_slow("\n".join(data.split("\n")[cut_y:cut_y + cut_h]), abs_y, abs_x, delay=slow)
+            else:
+                terminal_utils.draw_over_curses("\n".join(data.split("\n")[cut_y:cut_y + cut_h]), abs_y, abs_x)
+            self.drawn_areas.append((abs_y, abs_x, cut_h, w, mention))
+        if lock:
             with self.image_cache_lock:
-                abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
-                if abs_y - chat_y <= -h or abs_y > chat_h + 1 + subtitle_line:
-                    return
-                abs_x = chat_x + rel_x
-                cut_y = 0
-                cut_h = h
-                if abs_y > chat_h - h + 1 + subtitle_line:
-                    cut_h = min(h, chat_h - abs_y + 1) + subtitle_line
-                if abs_y <= subtitle_line:
-                    cut_h += abs_y - chat_y
-                    cut_y = -abs_y + 1 + subtitle_line
-                    abs_y = chat_y
-                # logger.info(("INIT", (h, w), abs_y, rel_y, cut_h, cut_y))
-                if slow:
-                    terminal_utils.draw_over_curses_slow("\n".join(data.split("\n")[cut_y:cut_y + cut_h]), abs_y, abs_x, delay=slow)
-                else:
-                    terminal_utils.draw_over_curses("\n".join(data.split("\n")[cut_y:cut_y + cut_h]), abs_y, abs_x)
-                self.drawn_areas.append((abs_y, abs_x, cut_h, w, mention))
-            self.draw_selection(self.tui.chat_selected)
+                do_draw()
+        else:
+            do_draw()
+        self.draw_selection(self.tui.chat_selected)
 
 
     def downloader(self):
@@ -341,36 +354,35 @@ class InlineMedia:
             with self.image_cache_lock:
                 if image_id in self.image_cache and not self.image_cache[image_id][0]:
                     draw_box = True
-            if draw_box and self.box_color != -1:
+            if draw_box and self.draw_box:
                 time.sleep(0.05)
                 data = draw_image_bounding_box(-1, self.box_color, w, h)
-                self.draw_single_image(data, rel_x, rel_y, w, h, mention, slow=False)
+                with self.tui.lock:
+                    self.draw_single_image(data, rel_x, rel_y, w, h, mention, slow=False)
 
+            # reuse larger cached image or delete smaller
+            image_path = None
+            for path in glob.glob(os.path.join(self.image_cache_path, f"{image_id}_*")):
+                try:
+                    cached_w = int(os.path.splitext(os.path.basename(path))[0].split("_")[-2])
+                except ValueError:
+                    continue
+                if cached_w >= img_h:
+                    image_path = path
+                else:
+                    os.remove(path)
+                break
+
+            # download
             img_quality = "lossless" if "//media." in img_url else self.inline_media_quality
             if img_url.endswith("&"):
                 img_url += "="
             if "?" not in img_url:
                 img_url += "?"
-
-            # reuse larger cached image or delete smaller
-            for path in glob.glob(os.path.join(self.image_cache_path, f"{image_id}_*")):
-                try:
-                    filename = os.path.splitext(os.path.basename(path))[0]
-                    _, _, new_w, new_h = filename.split(".")[0].split("_")
-                    if int(new_w) >= img_w:
-                        img_w = int(new_w)
-                        img_h = int(new_h)
-                        break
-                    else:
-                        os.remove(path)
-                        break   # assuming only one can exist
-                except Exception:
-                    pass
-
-            # download
-            img_url = f"{img_url}&format=webp&quality={img_quality}&width={img_w}&height={img_h}"
-            img_name = f"{image_id}_{img_w}_{img_h}.webp"
-            image_path = self.discord.get_file(img_url, self.image_cache_path, file_name=img_name, cache=True, keepalive=True)
+            if not image_path:
+                img_url = f"{img_url}&format=webp&quality={img_quality}&width={img_w}&height={img_h}"
+                img_name = f"{image_id}_{img_w}_{img_h}.webp"
+                image_path = self.discord.get_file(img_url, self.image_cache_path, file_name=img_name, cache=True, keepalive=True)
 
             # use latest data, in case something changed during download
             with self.image_cache_lock:
@@ -402,7 +414,8 @@ class InlineMedia:
             if not draw or self.tui.disable_drawing:
                 continue
 
-            self.draw_single_image(data, rel_x, rel_y, w, h, mention, slow=self.slow_media)
+            with self.tui.lock:
+                self.draw_single_image(data, rel_x, rel_y, w, h, mention, slow=self.slow_media)
 
 
     def load_image(self, path, h, w):

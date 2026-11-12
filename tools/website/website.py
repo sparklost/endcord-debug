@@ -31,21 +31,37 @@ INSTALL_CMD = 'bash -c "$(curl -fsSL https://raw.githubusercontent.com/sparklost
 DISCORD_URL = "https://discord.gg/judQSxw5K2"
 BUG_URL = "https://github.com/sparklost/endcord/issues"
 RPC_URL = "https://github.com/sparklost/endcord-rpc"
-HOME_MD = f"""# Endcord
+DONATE_URL = "https://ko-fi.com/sparklost"
+HOME_MD = f"""Hi! I don't know how to make websites. I only know how to make TUIs, so you get this instead.
 
-Hi, I dont know how to make websites, I only know how to make TUIs, so you get this instead.
+---
+
+### Getting Started
 
 - [Read the README]({PAGES[1][1]})
-- [Browse the wiki]({PAGES[2][1]})
-- [Browse endcord extensions]({PAGES[3][1]})
-- [Pick the binary you want on GitHub releases]({RELEASES_URL})
-- [Copy the linux/macos endcord-installer.sh command](copy:install)
-- [Join the official discord server]({DISCORD_URL})
-- [View the repo on GitHub]({REPO_URL})
-- [Report a bug on GitHub]({BUG_URL})
-- [endcord-rpc, the miniature rpc-only client]({RPC_URL})
+- [Browse the Wiki]({PAGES[2][1]})
+- [Explore Endcord Extensions]({PAGES[3][1]})
+- [Download a Binary]({RELEASES_URL}) — GitHub Releases
+
+### Installation
+
+Copy and run the installer for Linux / MacOS: [endcord-installer.sh](copy:install)
+
+### Community & Development
+
+- [Source Code]({REPO_URL})
+- [Report a Bug]({BUG_URL})
+- [Join the Official Discord]({DISCORD_URL})
+- [Endcord-RPC]({RPC_URL}) — the miniature RPC-only client
+
+### Support the Project
+
+If you enjoy Endcord and want to support its purely human development, you can [Donate Here]({DONATE_URL}).
+
+---
 
 Made with my own 2 hands - by SparkLost
+
 And you may not edit this website on GitHub
 """
 
@@ -247,29 +263,34 @@ def resolve(base, href):
     return "/".join(parts)
 
 
-def find_heading(lines, formats, anchor):
-    """Find index of the first line of anchor heading"""
+def heading_anchors(lines, formats):
+    """Find all headings, returns [(index of the first line, anchor), ...]"""
+    found = []
     title = None
     start = 0
     for i in range(len(lines) + 1):
+        heading = None
         if i < len(lines):
             for color, start_f, end_f in formats[i]:
                 if color in (C_H1, C_H2, C_H3):
                     heading = lines[i][start_f:end_f]
                     break
-            else:
-                heading = None
-        else:
-            heading = None
         if heading is not None:
             if title is None:
                 start, title = i, heading
             else:
                 title += " " + heading
         elif title is not None:
-            if title.lower().replace(" ", "-") == anchor.lower():
-                return start
+            found.append((start, title.lower().replace(" ", "-")))
             title = None
+    return found
+
+
+def find_heading(lines, formats, anchor):
+    """Find index of the first line of anchor heading"""
+    for start, heading in heading_anchors(lines, formats):
+        if heading == anchor.lower():
+            return start
     return -1
 
 
@@ -312,6 +333,7 @@ def show(text):
     width = max(10, min(int(main.clientWidth / char_width), MAX_TEXT_WIDTH))
     lines, formats, links = parse(text, width)
     DOC[0], DOC[1] = lines, formats
+    heading_at = dict(heading_anchors(lines, formats))
     attrs = []
 
     for href in links:
@@ -332,7 +354,7 @@ def show(text):
             resolved = escape(url if "://" in href else resolve(current_page, href))
             attrs.append(f'href="{resolved}" target="_blank" rel="noopener"')
     ready_lines = []
-    for line_text, line_format in zip(lines, formats):
+    for index, (line_text, line_format) in enumerate(zip(lines, formats)):
         marks = [()] * len(line_text)
         for cid, start, end in line_format:
             for i in range(start, end):
@@ -354,7 +376,11 @@ def show(text):
             else:
                 out.append(f'<span class="{cls}">{escape(line_text[i:j])}</span>')
             i = j
-        ready_lines.append("".join(out))
+        line_html = "".join(out)
+        if index in heading_at:   # link button next to heading
+            heading_hash = escape(hash_for(current_page, heading_at[index]))
+            line_html = f'<span class="hd">{line_html} <a class="hl" href="#{heading_hash}" data-anchor="{escape(heading_at[index])}">#</a></span>'
+        ready_lines.append(line_html)
     main.innerHTML = "\n".join(ready_lines)
 
 
@@ -394,6 +420,7 @@ async def go(key, anchor=""):
             break
     else:
         page.textContent = key.split("/")[-1].replace(".md", "")
+    document.title = "Endcord" if key == "home" else "Endcord - " + page.textContent
 
     side_html = []
     for title, page_key in PAGES:
@@ -445,7 +472,7 @@ def on_key(e):
         asyncio.create_task(go("home"))
 
     elif current_page == "home" and k in ("ArrowUp", "ArrowDown"):   # navigate urls in home
-        count = main.querySelectorAll("a").length
+        count = main.querySelectorAll("a[data-n]").length
         i = document.activeElement.getAttribute("data-n")
         i = int(i) + (1 if k == "ArrowDown" else -1) if i else (0 if k == "ArrowDown" else count - 1)
         i = max(min(count - 1, i), 0)

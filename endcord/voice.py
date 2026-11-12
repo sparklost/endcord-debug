@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.parse
 from collections import deque
+from fractions import Fraction
 
 import dave
 import nacl.bindings
@@ -49,14 +50,20 @@ CODECS = [
     {"name": "opus", "type": "audio", "priority": 1000, "payload_type": 120},
     # {"name": "AV1", "type": "video", "priority": 1000, "payload_type": 101, "rtx_payload_type": 102, "encode": False, "decode": True},
     {"name": "H264", "type": "video", "priority": 2000, "payload_type": 103, "rtx_payload_type": 104, "encode": True, "decode": True},
-    # # h265 only in discord beta
-    # {"name": "VP8", "type": "video", "priority": 3000, "payload_type": 105, "rtx_payload_type": 106, "encode": True, "decode": True},
-    # {"name": "VP9", "type": "video", "priority": 4000, "payload_type": 107, "rtx_payload_type": 108, "encode": False, "decode": True},
+    # {"name": "H265", "type": "video", "priority": 3000, "payload_type": 105, "rtx_payload_type": 106, "encode": True, "decode": True},
+    # {"name": "VP8", "type": "video", "priority": 4000, "payload_type": 107, "rtx_payload_type": 108, "encode": True, "decode": True},
 ]
-VIDEO_HEIGHT = 720   # screen share is scaled to this height
+VIDEO_HEIGHT = 720
 VIDEO_FPS = 30
-VIDEO_BITRATE = 2500   # kbps
 VIDEO_QUEUE_SIZE = 30
+VIDEO_STATS_INTERVAL = 5
+VIDEO_ENCODER_THREADS = 1   # warning: more than 1 causes lag
+VIDEO_RTX_REPAIRED_RID = False   # add repaired-rtp-stream-id extension on RTX packets
+VIDEO_KEYFRAME_ON_LOSS = False   # force keyframe when receiver reports lost packets
+VIDEO_HISTORY_SIZE = 256   # packets kept for retransmission
+VIDEO_KEYFRAME_MIN_INTERVAL = 1   # minimum time between requested keyframes
+VIDEO_PACING_SPREAD = 0.010   # spread a frame over this time
+VIDEO_PACING_BURST = 2   # packets sent back-to-back between pacing sleeps
 ANNEXB_START = b"\x00\x00\x00\x01"
 ANNEXB_START_RE = re.compile(b"\x00\x00\x01")
 logger = logging.getLogger(__name__)
@@ -88,7 +95,7 @@ def init_microphone(custom_mic):
         except IndexError:
             return soundcard.default_microphone()
     except Exception:
-        logger.warn("Failed to initialize microphone!")
+        logger.warning("Failed to initialize microphone!")
         return None
 
 
@@ -121,10 +128,47 @@ def split_annex_b(data, final=False):
     return [nal for nal in nals if nal], (starts[-1] - 3 if starts else 0)
 
 
+class VideoCapture:
+    """Video source opened with PyAV"""
+    def __init__(self, container):
+        self.container = container
+        self.stop = threading.Event()
+        self.done = threading.Event()
+        self.first_frame = threading.Event()
+        self.lock = threading.Lock()
+        self.frame = None
+        self.frame_count = 0
+        self.error = None
+
+
+def create_video_encoder(av, width, height, bitrate=1600, preset="veryfast"):
+    """Create low latency H264 encoder"""
+    encoder = av.CodecContext.create("libx264", "w")
+    encoder.width = width
+    encoder.height = height
+    encoder.pix_fmt = "yuv420p"
+    encoder.framerate = VIDEO_FPS
+    encoder.time_base = Fraction(1, VIDEO_FPS)
+    encoder.bit_rate = bitrate * 1000
+    encoder.gop_size = VIDEO_FPS * 2   # keyframe every 2s
+    encoder.options = {
+        "preset": preset,
+        "tune": "zerolatency",
+        "profile": "main",
+        "maxrate": str(bitrate * 1000),
+        "bufsize": str(bitrate * 1000),
+        "forced-idr": "1",   # must be IDR
+        "x264-params": "repeat-headers=1:scenecut=0:aud=1",
+        "threads": str(VIDEO_ENCODER_THREADS),
+    }
+    encoder.open()
+    return encoder
+
+
 class Gateway():
     """Methods for fetching and sending data to Discord voice gateway through websocket"""
 
-    def __init__(self, voice_gateway_data, my_id, volume_input, volume_output, user_agent, proxy=None, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False, denoise=True, mpv="mpv"):
+    def __init__(self, voice_gateway_data, my_id, volume_input, volume_output, user_agent, proxy=None, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False, denoise=True, mpv="mpv", x264_bitrate=1600, x264_preset="veryfast", stream=False):
         self.voice_gateway_data = voice_gateway_data
         self.guild_id = voice_gateway_data["guild_id"]
         self.channel_id = voice_gateway_data["channel_id"]
@@ -168,6 +212,10 @@ class Gateway():
         self.fast_mixer = fast_mixer
         self.denoise = denoise
         self.mpv = mpv
+        self.stream = stream   # connection to stream (go live) voice server, only for sending screen video
+
+        self.x264_bitrate = x264_bitrate
+        self.x264_preset = x264_preset
 
         self.connect()
 
@@ -231,12 +279,14 @@ class Gateway():
                 self.selected_mode,
                 self.volume_input,
                 self.volume_output,
-                custom_mic=(self.custom_mic if self.enable_input else "OFF"),
+                custom_mic=(self.custom_mic if self.enable_input and not self.stream else "OFF"),
                 silence=self.silence_threshold,
                 opus_mode=self.opus_mode,
                 fast_mixer=self.fast_mixer,
-                denoise=self.denoise,
+                denoise=self.denoise and not self.stream,
                 mpv=self.mpv,
+                x264_bitrate=self.x264_bitrate,
+                x264_preset=self.x264_preset,
             )
             self.call_handler.start()
 
@@ -273,7 +323,7 @@ class Gateway():
             proxy = urllib.parse.urlsplit(self.proxy)
             scheme = proxy.scheme
             self.ws.connect(
-                gateway_url + "/?v=8",
+                gateway_url + "/?v=9",
                 header=self.header,
                 proxy_type="socks5h" if scheme == "socks5" else "http" if scheme == "https" else scheme,
                 http_proxy_host=proxy.hostname,
@@ -281,7 +331,7 @@ class Gateway():
                 http_proxy_auth=(proxy.username, proxy.password) if proxy.username else None,
             )
         else:
-            self.ws.connect(gateway_url + "/?v=8", header=self.header)
+            self.ws.connect(gateway_url + "/?v=9", header=self.header)
 
 
     def connect(self):
@@ -561,16 +611,12 @@ class Gateway():
                 "user_id": self.my_id,
                 "session_id": self.voice_gateway_data["session_id"],
                 "token": self.voice_gateway_data["token"],
-                "video": True,
                 "max_dave_protocol_version": dave.get_max_supported_protocol_version(),
+                "video": True,
                 "streams": [{
-                    "type": "video",
+                    "type": "screen" if self.stream else "video",
                     "rid": "100",
                     "quality": 100,
-                }, {
-                    "type": "video",
-                    "rid": "50",
-                    "quality": 50,
                 }],
             },
         }
@@ -630,7 +676,7 @@ class Gateway():
         payload = {
             "op": 5,
             "d": {
-                "speaking": 1 if speaking else 0,
+                "speaking": (2 if self.stream else 1) if speaking else 0,   # soundshare flag for stream
                 "delay": 0,
                 "ssrc": self.ssrc,
             },
@@ -653,7 +699,7 @@ class Gateway():
                     "active": active,
                     "quality": 100,
                     "rtx_ssrc": rtx_ssrc,
-                    "max_bitrate": VIDEO_BITRATE * 1000,
+                    "max_bitrate": self.x264_bitrate * 1000,
                     "max_framerate": VIDEO_FPS,
                     "max_resolution": {"type": "fixed", "width": VIDEO_HEIGHT * 16 // 9, "height": VIDEO_HEIGHT},
                 }],
@@ -762,21 +808,21 @@ class Gateway():
         self.call_handler.stop_video_player()
 
 
-    def start_screen_sharing(self, source=None):
+    def start_video_streaming(self, source=None):
         """Capture screen with ffmpeg and send it as video"""
-        return self.call_handler.start_screen_sharing(source)
+        return self.call_handler.start_video_streaming(source)
 
 
-    def stop_screen_sharing(self):
+    def stop_video_streaming(self):
         """Stop screen sharing"""
-        self.call_handler.stop_screen_sharing()
+        self.call_handler.stop_video_streaming()
 
 
 
 class CallHandler:
     """Voice call sound receiver, transmitter, player and recorder"""
 
-    def __init__(self, gateway, my_id, my_ssrc, udp, secret_key, encryption_mode, volume_input, volume_output, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False, denoise=True, mpv="mpv"):
+    def __init__(self, gateway, my_id, my_ssrc, udp, secret_key, encryption_mode, volume_input, volume_output, custom_mic=None, silence=-30, opus_mode="voip", fast_mixer=False, denoise=True, mpv="mpv", x264_bitrate=1600, x264_preset="veryfast"):
         self.gateway = gateway
         self.my_id = my_id
         self.my_ssrc = my_ssrc
@@ -818,7 +864,7 @@ class CallHandler:
                 self.denoiser.process_frame(silence_frame)
             except OSError as e:
                 self.denoiser = None
-                logger.warn(e)
+                logger.warning(e)
         else:
             self.denoiser = None
 
@@ -835,6 +881,8 @@ class CallHandler:
         self.counter_lock = threading.Lock()
 
         # video stuff
+        self.x264_bitrate = x264_bitrate
+        self.x264_preset = x264_preset
         self.video_ssrc_to_userid = {}
         self.watch_user = None
         self.watch_ssrc = None
@@ -847,11 +895,22 @@ class CallHandler:
         self.video_queue = None
         self.last_pli = 0
         self.reset_video_receiver()
-        self.ffmpeg_proc = None
+        self.video_capture = None
+        self.video_keyframe_event = threading.Event()
         self.screen_ssrc = 0
         self.screen_rtx_ssrc = 0
         self.video_sequence = random.randint(0, 0xFFFF)
         self.video_timestamp_base = random.randint(0, 0xFFFFFFFF)
+        self.video_start_time = 0
+        self.video_twcc = 0
+        self.video_last_rtp = 0   # rtp timestamp of last sent frame
+        self.video_last_rtp_wall = 0   # time.time() when it was sent
+        self.video_packets_sent = 0
+        self.video_bytes_sent = 0
+        self.video_history = {}   # sequence: [marker, timestamp, payload, last_retransmit_time]
+        self.rtx_sequence = random.randint(0, 0xFFFF)
+        self.video_send_lock = threading.Lock()
+        self.video_stats = {"nack": 0, "pli": 0, "renack": 0, "miss": 0}
 
 
     def start(self):
@@ -867,7 +926,13 @@ class CallHandler:
         self.transport_counter = 0
         self.rtt_ms = 0.0
 
-        if have_sound:
+        if self.gateway.stream:   # stream connection only sends video
+            self.receiver_thread = threading.Thread(target=self.receiver_loop, daemon=True)
+            self.receiver_thread.start()
+            if RTCP_SR_SEND_DELAY:
+                threading.Thread(target=self.rtcp_sender_report_loop, daemon=True).start()
+
+        elif have_sound:
             # start receiver and player
             self.receiver_thread = threading.Thread(target=self.receiver_loop, daemon=True)
             self.receiver_thread.start()
@@ -896,7 +961,7 @@ class CallHandler:
             return
         self.run = False
         self.stop_video_player(notify=False)
-        self.stop_screen_sharing(notify=False)
+        self.stop_video_streaming(notify=False)
         try:
             self.udp.close()
         except Exception:
@@ -990,7 +1055,7 @@ class CallHandler:
             try:
                 data = self.udp.recv(4096)
             except OSError as e:
-                logger.error(f"UDP socket closed or error: {e}")
+                logger.warning(f"UDP socket closed or error: {e}")
                 break
             except Exception as e:
                 logger.error(f"UDP receive error: {e}")
@@ -1198,13 +1263,16 @@ class CallHandler:
 
 
     def rtcp_sender_report_loop(self):
-        """Send RTCP sender report"""
+        """Send RTCP sender reports for audio and video"""
         while self.run:
+            # audio
+            if self.gateway.stream:   # no audio on stream connection
+                time.sleep(RTCP_SR_SEND_DELAY)
+                continue
             now = time.time()
             ntp_seconds = int(now) + 2208988800   # ntp timestamp is seconds since 01.01.1900
             ntp_fraction = int((now % 1) * (1 << 32))
             ntp_timestamp = (ntp_seconds << 32) | ntp_fraction
-
             payload = bytearray(28)
             payload[0] = 0x80   # v2, no padding, RC=0
             payload[1] = 200   # PT=SR
@@ -1223,12 +1291,36 @@ class CallHandler:
                 self.udp.send(payload)
             except Exception:
                 break
+
+            # video
+            if not self.video_capture or not self.video_last_rtp_wall:
+                time.sleep(RTCP_SR_SEND_DELAY)
+                continue
+            now = time.time()
+            ntp_timestamp = ((int(now) + 2208988800) << 32) | int((now % 1) * (1 << 32))
+            rtp_timestamp = (self.video_last_rtp + int((now - self.video_last_rtp_wall) * 90000)) & 0xFFFFFFFF
+            payload = bytearray(28)
+            payload[0] = 0x80   # v2, no padding, RC=0
+            payload[1] = 200   # PT=SR
+            struct.pack_into(">H", payload, 2, 6)   # length in 32bit words
+            struct.pack_into(">I", payload, 4, self.screen_ssrc)
+            struct.pack_into(">Q", payload, 8, ntp_timestamp)
+            struct.pack_into(">I", payload, 16, rtp_timestamp)
+            struct.pack_into(">I", payload, 20, self.video_packets_sent)
+            struct.pack_into(">I", payload, 24, self.video_bytes_sent)
+            payload = self.transport_encrypt(payload[:8], payload[8:])
+            if payload:
+                try:
+                    self.udp.send(payload)
+                except Exception:
+                    pass
+
             time.sleep(RTCP_SR_SEND_DELAY)
 
 
     def handle_rtcp(self, data):
         """Decrypt and parse compounded rtcp packets"""
-        if data[1] != 201:   # only taking receiver report
+        if data[1] not in (200, 201, 205, 206):   # SR, RR, RTPFB (nack), PSFB (pli)
             return
 
         # decrypt
@@ -1259,8 +1351,28 @@ class CallHandler:
 
     def parse_rtcp_single(self, payload):
         """Parse one rtcp packet"""
+        fmt = payload[0] & 0x1F
+
         # if payload[1] == 200:   # RTCP sender report   # UNUSED
         #     pass
+
+        if payload[1] == 205 and fmt == 1 and len(payload) >= 16:   # generic NACK
+            media_ssrc = struct.unpack_from(">I", payload, 8)[0]
+            if media_ssrc == self.screen_ssrc:
+                lost = []
+                for offset in range(12, len(payload) - 3, 4):
+                    pid, blp = struct.unpack_from(">HH", payload, offset)
+                    lost.append(pid)
+                    lost.extend((pid + 1 + bit) & 0xFFFF for bit in range(16) if blp & (1 << bit))
+                self.video_stats["nack"] += len(lost)
+                self.retransmit_video(lost)
+            return
+
+        if payload[1] == 206 and fmt in (1, 4):   # PLI/FIR
+            self.video_stats["pli"] += 1
+            logger.debug("Receiver requested a keyframe (PLI/FIR)")
+            self.video_keyframe_event.set()
+            return
 
         if payload[1] == 201:   # RTCP receiver report
             block_offset = 8   # skip header and sender ssrc
@@ -1277,6 +1389,8 @@ class CallHandler:
                     now_mid = ((ntp_sec & 0xFFFF) << 16) | (ntp_frac >> 16)
                     rtt_units = (now_mid - lsr - dlsr) & 0xFFFFFFFF  # handle 32-bit wraparound
                     self.rtt_ms = (rtt_units / 65536) * 1000
+                if VIDEO_KEYFRAME_ON_LOSS and payload[block_offset + 4] > 0 and struct.unpack_from(">I", payload, block_offset)[0] == self.screen_ssrc:
+                    self.video_keyframe_event.set()   # fraction lost is not zero
                 if logger.getEffectiveLevel() == logging.DEBUG:
                     source_ssrc = struct.unpack_from(">I", payload, block_offset)[0]
                     loss_percentage = (payload[block_offset + 4] / 256) * 100
@@ -1289,8 +1403,7 @@ class CallHandler:
                     logger.debug(
                         f"RTCP Receiver Report: ssrc={source_ssrc}:\n"
                         f"  loss={loss_percentage:.1f}% cumulative={cum_lost}\n"
-                        f"  jitter={jitter_ms:.1f}ms\n"
-                        f"  rtt={self.rtt_ms:.1f}ms\n",
+                        f"  jitter={jitter_ms:.1f}ms rtt={self.rtt_ms:.1f}ms",
                     )
                 block_offset += 24
 
@@ -1883,18 +1996,18 @@ class CallHandler:
                     fu_header |= 0x40
                 packets.append(bytes([indicator, fu_header]) + body[i:i + chunk_size])
 
-        # send packets
+        # send packets, spread over a part of frame interval
+        count = len(packets)
+        start = time.monotonic()
         for i, packet in enumerate(packets):
-            self.video_sequence = (self.video_sequence + 1) & 0xFFFF
-            header = bytearray(12)
-            header[0] = 0x80   # v2, no padding, no extension, cc=0
-            header[1] = 0x67 | (0x80 if i == len(packets) - 1 else 0)   # marker on last packet of frame
-            struct.pack_into(">H", header, 2, self.video_sequence)
-            struct.pack_into(">I", header, 4, timestamp)
-            struct.pack_into(">I", header, 8, ssrc)
-            payload = self.transport_encrypt(header, packet)
+            marker = i == count - 1   # marker on last packet of frame
+            with self.video_send_lock:
+                self.video_sequence = (self.video_sequence + 1) & 0xFFFF
+                sequence = self.video_sequence
+                self.video_history[sequence] = [marker, timestamp, packet, 0]
+                self.video_history.pop((sequence - VIDEO_HISTORY_SIZE) & 0xFFFF, None)
+            payload = self.pack_video_packet(0x67, marker, sequence, timestamp, ssrc, packet, True)
             if not payload:
-                logger.error(f"Unknown mode: {self.mode}")
                 continue
             try:
                 self.udp.send(payload)
@@ -1902,7 +2015,68 @@ class CallHandler:
                 pass
             except Exception:
                 return False
+            self.video_packets_sent += 1
+            self.video_bytes_sent += len(packet)
+            if count > VIDEO_PACING_BURST and (i + 1) % VIDEO_PACING_BURST == 0 and i + 1 < count:
+                delay = start + VIDEO_PACING_SPREAD * (i + 1) / count - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
         return True
+
+
+    def pack_video_packet(self, payload_type, marker, sequence, timestamp, ssrc, packet, with_rid):
+        """Build RTP header and extensions for video packet and transport encrypt it"""
+        header = bytearray(12)
+        header[0] = 0x90   # v2, no padding, extension, cc=0
+        header[1] = payload_type | (0x80 if marker else 0)
+        struct.pack_into(">H", header, 2, sequence)
+        struct.pack_into(">I", header, 4, timestamp)
+        struct.pack_into(">I", header, 8, ssrc)
+        with self.video_send_lock:
+            self.video_twcc = (self.video_twcc + 1) & 0xFFFF
+            twcc = self.video_twcc
+        extension = (
+            bytes([(3 << 4) | 2]) + (int((time.time() % 64) * (1 << 18)) & 0xFFFFFF).to_bytes(3, "big")   # abs-send-time
+            + bytes([(5 << 4) | 1]) + twcc.to_bytes(2, "big")   # transport-wide sequence number
+            + bytes([(6 << 4) | 2]) + bytes(3)   # playout-delay, min and max 0
+        )
+        if with_rid or VIDEO_RTX_REPAIRED_RID:
+            rid_id = 12 if payload_type == 104 else 11   # repaired rtp stream id on RTX else rtp stream id
+            extension += bytes([(rid_id << 4) | 2]) + b"100"
+        extension += bytes(-len(extension) % 4)
+        header += b"\xbe\xde" + struct.pack(">H", len(extension) // 4)   # one-byte extension header
+        return self.transport_encrypt(header, extension + packet)
+
+
+    def retransmit_video(self, sequences):
+        """Retransmit requested video packets on RTX ssrc"""
+        if not self.screen_rtx_ssrc:
+            return
+        now = time.monotonic()
+        min_gap = max(self.rtt_ms / 1000, 0.05)   # do not resend same packet
+        for sequence in sequences:
+            entry = self.video_history.get(sequence)
+            if entry is None:
+                self.video_stats["miss"] += 1
+                self.video_keyframe_event.set()
+                continue
+            if entry[3]:
+                self.video_stats["renack"] += 1
+            if now - entry[3] < min_gap:
+                continue
+            entry[3] = now
+            marker, timestamp, packet, _ = entry
+            with self.video_send_lock:
+                self.rtx_sequence = (self.rtx_sequence + 1) & 0xFFFF
+                rtx_sequence = self.rtx_sequence
+            payload = self.pack_video_packet(104, marker, rtx_sequence, timestamp, self.screen_rtx_ssrc, struct.pack(">H", sequence) + packet, False)
+            if not payload:
+                continue
+            try:
+                self.udp.send(payload)
+            except Exception:
+                return
+            self.video_packets_sent += 1
 
 
     def start_video_player(self, user_id=None):
@@ -1984,81 +2158,264 @@ class CallHandler:
             self.stop_video_player(notify=self.run)
 
 
-    def start_screen_sharing(self, source=None):
-        """Capture screen with ffmpeg, encode to H264 and send it"""
-        if self.ffmpeg_proc:
+    def start_video_streaming(self, source):
+        """Start video stream from provided source (PyAV argument dictionary), capture and encode it with PyAV and send it"""
+        if self.video_capture:
             return True
         stream = next((s for s in self.gateway.streams if s.get("rid") == "100"), None)
         if not stream:
             logger.error("Server did not provide video stream info")
             return False
-
-        if source is None:
-            if sys.platform == "win32":
-                source = ["-f", "gdigrab", "-framerate", str(VIDEO_FPS), "-i", "desktop"]
-            elif sys.platform == "darwin":
-                source = ["-f", "avfoundation", "-capture_cursor", "1", "-framerate", str(VIDEO_FPS), "-i", "Capture screen 0:none"]
-            else:
-                source = ["-f", "x11grab", "-framerate", str(VIDEO_FPS), "-i", os.environ.get("DISPLAY", ":0")]
-
-        command = [
-            "ffmpeg", "-v", "error", *source,
-            "-vf", f"scale=-2:{VIDEO_HEIGHT},format=yuv420p",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline",
-            "-g", str(VIDEO_FPS * 2),   # keyframe every 2s
-            "-b:v", f"{VIDEO_BITRATE}k", "-maxrate", f"{VIDEO_BITRATE}k", "-bufsize", f"{VIDEO_BITRATE // 2}k",
-            "-x264-params", "aud=1:repeat-headers=1",   # use access unit delimiters as frame boundaries
-            "-f", "h264", "-",
-        ]
+        import av
+        target = source.get("target")
+        input_format = source.get("format")
+        options = source.get("options", {})
         try:
-            ffmpeg_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        except OSError as e:
-            logger.error(f"Failed to start ffmpeg: {e}")
+            container = av.open(target, mode="r", format=input_format, options=options, timeout=10)
+            if not container.streams.video:
+                container.close()
+                raise ValueError("source has no video stream")
+        except Exception as e:
+            logger.error(f"Failed to open video source: {e}")
+            return False
+        capture = VideoCapture(container)
+
+        if self.gateway.video_codec != "H264":
+            logger.warning(f"Server selected {self.gateway.video_codec} video codec, but only H264 can be encoded")
             return False
 
         self.screen_ssrc = int(stream["ssrc"])
         self.screen_rtx_ssrc = int(stream.get("rtx_ssrc", 0))
         if self.gateway.dave_protocol_version > 0:
             self.encryptor.assign_ssrc_to_codec(self.screen_ssrc, dave.Codec.h264)
-        self.ffmpeg_proc = ffmpeg_proc
+        self.video_capture = capture
+        self.video_start_time = time.monotonic()
+        self.video_packets_sent = 0
+        self.video_bytes_sent = 0
+        self.video_history.clear()
+        self.video_stats.update(nack=0, pli=0, renack=0, miss=0)
+        self.video_keyframe_event.clear()
+        self.video_last_rtp_wall = 0
 
         self.gateway.send_video_sources(True, self.screen_ssrc, self.screen_rtx_ssrc)
-        threading.Thread(target=self.screen_share_loop, args=(ffmpeg_proc, self.screen_ssrc), daemon=True).start()
+        threading.Thread(target=self.video_capture_loop, args=(capture,), daemon=True).start()
+        threading.Thread(target=self.video_stream_loop, args=(capture, self.screen_ssrc), daemon=True).start()
         return True
 
 
-    def stop_screen_sharing(self, notify=True):
-        """Stop screen capturing and notify server"""
-        if not self.ffmpeg_proc:
+    def stop_video_streaming(self, notify=True):
+        """Stop video capturing and notify server"""
+        capture = self.video_capture
+        if not capture:
             return
-        self.ffmpeg_proc.kill()
-        self.ffmpeg_proc = None
+        self.video_capture = None
+        capture.stop.set()
         if notify:
             self.gateway.send_video_sources(False, self.screen_ssrc, self.screen_rtx_ssrc)
 
 
-    def screen_share_loop(self, ffmpeg_proc, ssrc):
-        """Thread that reads H264 stream from ffmpeg, split it into frames and send them"""
-        buffer = bytearray()
-        access_unit = []
-        start_time = time.monotonic()
+    def video_capture_loop(self, capture):
+        """Thread that decodes frames from video source and keeps latest one"""
+        container = capture.container
+        size = None
+        try:
+            stream = container.streams.video[0]
+            stream.thread_type = "AUTO"
+            for frame in container.decode(stream):
+                if capture.stop.is_set():
+                    break
+                if size is None:
+                    height = VIDEO_HEIGHT
+                    width = max(2, round(frame.width * height / frame.height / 2) * 2)
+                    size = (width, height)
+                scaled = frame.reformat(width=size[0], height=size[1], format="yuv420p")
+                with capture.lock:
+                    capture.frame = scaled
+                    capture.frame_count += 1
+                capture.first_frame.set()
+        except Exception as e:
+            if not capture.stop.is_set():
+                capture.error = e
+        finally:
+            capture.done.set()
+            try:
+                container.close()
+            except Exception:
+                pass
+
+
+    def video_stream_loop(self, capture, ssrc):
+        """Thread that encodes latest captured frame at constant framerate and sends it"""
+        import av
+        from av.video.frame import PictureType
+        frame_interval = 1.0 / VIDEO_FPS
+        rtp_timestamp_step = 90000 // VIDEO_FPS
+        encoder = None
+        frame_index = 0
+        last_keyframe = 0.0
+        seen_count = 0
+        last_new_frame = time.monotonic()
         ok = True
 
-        while ok and self.run and self.ffmpeg_proc is ffmpeg_proc:
-            data = ffmpeg_proc.stdout.read1(65536)
-            if not data:
-                break
-            buffer += data
-            nals, cut = split_annex_b(buffer)
-            del buffer[:cut]
-            for nal in nals:
-                if nal[0] & 0x1F == 9 and access_unit:   # frame is complete
-                    timestamp = (self.video_timestamp_base + int((time.monotonic() - start_time) * 90000)) & 0xFFFFFFFF   # 90khz
-                    ok = self.send_video_frame(ssrc, access_unit, timestamp)
-                    access_unit = []
-                    if not ok:
-                        break
-                access_unit.append(nal)
+        stats_start = time.monotonic()
+        stats_packets = self.video_packets_sent
+        stats_frames = stats_keyframes = stats_forced = 0
+        max_cam_gap = max_late = max_encode = max_send = 0.0
 
-        if self.ffmpeg_proc is ffmpeg_proc:   # ffmpeg died or sending failed
-            self.stop_screen_sharing(notify=self.run)
+        try:
+            deadline = time.monotonic() + 10
+            while not capture.first_frame.wait(0.02):
+                if capture.stop.is_set() or capture.done.is_set() or not self.run or time.monotonic() > deadline:
+                    break
+            next_frame_time = time.monotonic()
+
+            while ok and self.run and self.video_capture is capture and not capture.stop.is_set():
+                now = time.monotonic()
+                wait = next_frame_time - now
+                if wait > 0:
+                    if capture.stop.wait(wait):
+                        break
+                    now = time.monotonic()
+                elif -wait > frame_interval * 2:
+                    next_frame_time = now   # rebase the schedule if encoder or sender stalled
+                max_late = max(max_late, now - next_frame_time)
+                next_frame_time += frame_interval
+
+                with capture.lock:
+                    frame = capture.frame
+                    count = capture.frame_count
+                if frame is None:
+                    break
+                if count != seen_count:
+                    max_cam_gap = max(max_cam_gap, now - last_new_frame)
+                    last_new_frame = now
+                    seen_count = count
+
+                # if source is slower than framerate - previous frame is encoded again, if faster - frames are skipped
+                if encoder is None:
+                    encoder = create_video_encoder(av, frame.width, frame.height, self.x264_bitrate, self.x264_preset)
+                force = False
+                if self.video_keyframe_event.is_set() and now - last_keyframe >= VIDEO_KEYFRAME_MIN_INTERVAL:
+                    self.video_keyframe_event.clear()
+                    force = True
+                    stats_forced += 1
+                frame.pts = frame_index
+                frame.pict_type = PictureType.I if force else PictureType.NONE   # decoded frames come marked as intra
+
+                encode_started = time.monotonic()
+                packets = encoder.encode(frame)
+                max_encode = max(max_encode, time.monotonic() - encode_started)
+
+                for packet in packets:
+                    if packet.is_keyframe:
+                        last_keyframe = now
+                        stats_keyframes += 1
+                    nals = split_annex_b(bytes(packet), final=True)[0]
+                    timestamp = (self.video_timestamp_base + frame_index * rtp_timestamp_step) & 0xFFFFFFFF
+                    self.video_last_rtp = timestamp
+                    self.video_last_rtp_wall = time.time()
+                    send_started = time.monotonic()
+                    ok = self.send_video_frame(ssrc, nals, timestamp)
+                    max_send = max(max_send, time.monotonic() - send_started)
+                    stats_frames += 1
+                frame_index += 1
+
+                if logger.getEffectiveLevel() == logging.DEBUG and VIDEO_STATS_INTERVAL and time.monotonic() - stats_start >= VIDEO_STATS_INTERVAL:
+                    logger.debug(
+                        f"Video stats: {stats_frames} frames ({stats_keyframes} key, {stats_forced} requested) "
+                        f"in {time.monotonic() - stats_start:.1f}s\n  packets={self.video_packets_sent - stats_packets}, "
+                        f"camera_gap={max_cam_gap * 1000:.0f}ms late={max_late * 1000:.0f}ms "
+                        f"encode={max_encode * 1000:.0f}ms send={max_send * 1000:.0f}ms\n  "
+                        f"nack={self.video_stats['nack']} pli={self.video_stats['pli']}\n "
+                        f"renack={self.video_stats['renack']} miss={self.video_stats['miss']}",
+                    )
+                    self.video_stats.update(nack=0, pli=0, renack=0, miss=0)
+                    stats_start = time.monotonic()
+                    stats_packets = self.video_packets_sent
+                    stats_frames = stats_keyframes = stats_forced = 0
+                    max_cam_gap = max_late = max_encode = max_send = 0.0
+        except Exception as e:
+            logger.error(f"Video encoding failed: {e}")
+
+        if self.video_capture is capture:
+            if capture.error:
+                logger.error(f"Video capture failed: {capture.error}")
+            self.stop_video_streaming(notify=self.run)
+
+
+video_sources_cache = []
+video_sources_query_time = 0
+
+
+def get_video_sources(fps=30, height=720, delay=1):
+    """Get list of available video sources ready for PyAV"""
+    global video_sources_cache, video_sources_query_time
+    if time.monotonic() < video_sources_query_time + delay:
+        return video_sources_cache
+    sources = []
+    try:
+        if sys.platform == "win32":
+            try:
+                from pygrabber.dshow_graph import FilterGraph
+                cameras = FilterGraph().get_input_devices()
+            except (ImportError, Exception):
+                cameras = ["Integrated Camera", "USB Camera"]
+            for name in cameras:
+                sources.append((
+                    name, {
+                        "target": f"video={name}",
+                        "format": "dshow",
+                        "options": {"framerate": str(fps), "video_size": f"{height * 16 // 9}x{height}"},
+                    },
+                ))
+            sources.append(("Capture Screen", {"target": "desktop", "format": "gdigrab", "options": {"framerate": str(fps)}}))
+
+        elif sys.platform == "darwin":
+            mac_cams = [("Default Camera", "0")]   # how do i get cameras?
+            for name, dev_id in mac_cams:
+                sources.append((
+                    name, {
+                        "target": f"{dev_id}:none",
+                        "format": "avfoundation",
+                        "options": {"framerate": str(fps), "pixel_format": "uyvy422"},
+                    },
+                ))
+            sources.append((
+                "Capture Screen", {
+                    "target": "1:none",
+                    "format": "avfoundation",
+                    "options": {"framerate": str(fps), "capture_cursor": "1"},
+                },
+            ))
+
+        else:
+            sys_path = "/sys/class/video4linux"
+            if os.path.exists(sys_path):
+                for device in sorted(os.listdir(sys_path), key=lambda x: int(x[5:]) if x[5:].isdigit() else 0):
+                    try:
+                        with open(os.path.join(sys_path, device, "index"), "r", encoding="utf-8") as f:
+                            if f.read().strip() != "0":   # skip metadata nodes
+                                continue
+                        with open(os.path.join(sys_path, device, "name"), "r", encoding="utf-8") as f:
+                            name = f.read().strip()
+                    except OSError:
+                        continue
+                    sources.append((
+                        f"{name} ({device})", {
+                            "target": f"/dev/{device}",
+                            "format": "v4l2",
+                            "options": {
+                                "input_format": "mjpeg",
+                                "framerate": str(fps),
+                                "video_size": f"{height * 16 // 9}x{height}",
+                            },
+                        },
+                    ))
+            sources.append(("Capture Screen", {"target": "desktop", "format": "gdigrab", "options": {"framerate": str(fps)}}))
+
+    except Exception:
+        pass
+
+    video_sources_cache = sources
+    video_sources_query_time = time.monotonic()
+    return sources

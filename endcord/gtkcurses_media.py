@@ -1,0 +1,594 @@
+# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
+# Source-available under the Endcord License. See LICENSE for terms.
+# Redistribution of modified versions is not permitted.
+
+import glob
+import importlib.util
+import logging
+import os
+import queue
+import threading
+
+import cairo
+import gi
+
+from endcord import formatter, gtkcurses, peripherals, utils
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, GLib   # noqa
+
+logger = logging.getLogger(__name__)
+
+IMAGE_SIZES = [16, 20, 22, 24, 28, 32, 40, 44, 48, 56, 60, 64, 80, 96, 100, 128, 160, 240, 254]
+
+WEBP_PIXBUF = "webp" in [pixbuf_format.get_name() for pixbuf_format in GdkPixbuf.Pixbuf.get_formats()]
+USE_PILLOW = False
+if not WEBP_PIXBUF and importlib.util.find_spec("PIL"):
+    from PIL import Image, features
+    USE_PILLOW = features.check("webp")
+IMAGE_FORMAT = "webp" if WEBP_PIXBUF or USE_PILLOW else "png"
+logger.debug(f"Media image format: {IMAGE_FORMAT}, loader: {"pillow" if USE_PILLOW else "pixbuf"}")
+
+
+def load_surface(path, w, h, scale):
+    """Load image into cairo surface using best available loader"""
+    if USE_PILLOW:
+        img = Image.open(path).convert("RGBA").resize((w * scale, h * scale), Image.Resampling.LANCZOS)
+        data = bytearray(img.convert("RGBa").tobytes("raw", "BGRa"))
+        surface = cairo.ImageSurface.create_for_data(data, cairo.FORMAT_ARGB32, img.width, img.height)
+        surface.set_device_scale(scale, scale)
+        return surface
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, w * scale, h * scale, True)
+    return Gdk.cairo_surface_create_from_pixbuf(pixbuf, scale, None)
+
+
+class GtkCursesMedia:
+    """Draws media over gtkcurses text buffer"""
+
+    def __init__(self, app, gtk_window, emoji=True, pfp=True, inline=True, pfp_round=True, pfp_aa=True):
+        self.app = app
+        self.tui = app.tui
+        self.gtk_window = gtk_window
+        self.run = True
+        self.chat_map = []
+        self.messages = []
+        self.assist_data = []
+        self.update_event = threading.Event()
+        self.prev_chat_index = None
+        self.prev_chat_hw = None
+        self.prev_assist_type = None
+        self.prev_extra_index = None
+        self.my_id = None
+        self.my_avatar_id = None
+        self.emoji = emoji
+        self.pfp = pfp
+
+        # emoji
+        self.download_queue = queue.Queue()
+        self.images = {}   # emoji_id: surface
+        self.images_lock = threading.Lock()
+        self.emoji_pos_cache = []   # (rel_y, rel_x, emoji_id)
+        self.emoji_assist_cache = []   # (line number, emoji_id, extra_w)
+        self.chat_draw_list = []   # (abs_y, abs_x, emoji_id)
+        self.extra_draw_list = []
+        self.emoji_cache_path = os.path.join(peripherals.cache_path, "emoji")
+        self.post_one_reaction_len = len(self.app.config["format_one_reaction"].split("%reaction")[-1])
+        self.size = round(self.gtk_window.char_height)
+        self.x_offset = max(0, (2 * self.gtk_window.char_width - self.size) / 2)
+        if self.emoji:
+            self.app.placeholder_emoji = True
+            self.app.formatter.placeholder_emoji = "  "
+
+        # pfp
+        self.round = pfp_round
+        self.antialias = pfp_aa
+        self.pfp_queue = queue.Queue()
+        self.pfp_images = {}   # avatar_id: surface
+        self.pfp_lock = threading.Lock()
+        self.pfp_pos_cache = []   # (rel_y, key)
+        self.pfp_draw_list = []   # (abs_y, abs_x, key)
+        self.pfp_clip = (0, 0)   # visible rows, top and bottom
+        self.pfp_cache_path = os.path.expanduser(os.path.join(peripherals.cache_path, "pfp-small"))
+        os.makedirs(self.pfp_cache_path, exist_ok=True)
+
+        # make room for pfp in message formats
+        self.pfp_size = 1
+        if self.pfp:
+            self.pfp_size = self.shift_formats()
+
+        self.pfp_side = round(min(self.pfp_size * self.gtk_window.char_height, self.pfp_size * 2 * self.gtk_window.char_width))
+        self.pfp_x_offset = (self.pfp_size * 2 * self.gtk_window.char_width - self.pfp_side) / 2
+        self.pfp_y_offset = (self.pfp_size * self.gtk_window.char_height - self.pfp_side) / 2
+
+        # inline images
+        self.inline = inline
+        self.inline_quality = app.config["inline_media_quality"]
+        self.inline_queue = queue.Queue()
+        self.inline_images = {}   # key: surface
+        self.inline_lock = threading.Lock()
+        self.inline_pos_cache = []   # (rel_y, rel_x, key, w, h, draw)
+        self.inline_draw_list = []   # (abs_y, abs_x, key, w, h, draw)
+        self.inline_cache_path = os.path.expanduser(os.path.join(peripherals.cache_path, "images"))
+        os.makedirs(self.inline_cache_path, exist_ok=True)
+        self.box_color = app.config["inline_image_box_color"]
+        self.draw_box = self.box_color != -1
+        if self.draw_box:
+            self.box_rgb = gtkcurses.rgb_to_cairo(gtkcurses.xterm_to_rgb(self.box_color))
+        if self.inline:
+            app.placeholder_images = True
+            app.formatter.placeholder_images = app.config["inline_media_height"]
+            app.inline_media = False
+
+        self.gtk_window.media = self
+        if self.emoji:
+            threading.Thread(target=self.emoji_downloader, daemon=True).start()
+        if self.pfp:
+            threading.Thread(target=self.pfp_downloader, daemon=True).start()
+        if self.inline:
+            threading.Thread(target=self.inline_downloader, daemon=True).start()
+        threading.Thread(target=self.worker, daemon=True).start()
+
+
+    def shift_formats(self):
+        """Make room for pfp in message formats, returns pfp height in rows"""
+        app = self.app
+        message_shift = app.config.get("ext_image_pfp_format_message_shift", (0, 5))
+        format_message = app.config["format_message"]
+        app.formatter.format_message = format_message[:message_shift[0]] + (" " * message_shift[1]) + format_message[message_shift[0]:]
+        app.formatter.color_message = formatter.shift_formats(app.formatter.color_message, message_shift[0], message_shift[1])
+        app.formatter.color_mention_message = formatter.shift_formats(app.formatter.color_mention_message, message_shift[0], message_shift[1])
+        if "\n" in app.formatter.format_message:
+            grouped_shift = app.config.get("ext_image_pfp_format_message_grouped_shift", (2, 1))
+            format_message_grouped = app.config["format_message_grouped"]
+            app.formatter.format_message_grouped = format_message_grouped[:grouped_shift[0]] + (" " * grouped_shift[1]) + format_message_grouped[grouped_shift[0]:]
+            app.formatter.color_message_grouped = formatter.shift_formats(app.formatter.color_message_grouped, grouped_shift[0], grouped_shift[1])
+            app.formatter.color_mention_message_grouped = formatter.shift_formats(app.formatter.color_mention_message_grouped, grouped_shift[0], grouped_shift[1])
+            newline_shift = app.config.get("ext_image_pfp_format_newline_shift", (2, 1))
+            format_newline = app.config["format_newline"]
+            app.formatter.format_newline = format_newline[:newline_shift[0]] + (" " * newline_shift[1]) + format_newline[newline_shift[0]:]
+            app.formatter.color_newline = formatter.shift_formats(app.formatter.color_newline, newline_shift[0], newline_shift[1])
+            app.formatter.color_mention_newline = formatter.shift_formats(app.formatter.color_mention_newline, newline_shift[0], newline_shift[1])
+            pfp_size = 2
+        else:
+            pfp_size = 1
+        app.formatter.calculate_lengths()
+        app.keep_avatars = True
+        return pfp_size
+
+
+    def set_my_user(self, new_data):
+        """Update my user avatar"""
+        self.my_id = new_data["id"]
+        self.my_avatar_id = new_data["extra"].get("avatar")
+
+
+    def redraw(self):
+        """Tell GTK to redraw the window"""
+        GLib.idle_add(self.gtk_window.drawing_area.queue_draw)
+
+
+    def draw(self, cr):
+        """Draw images over text buffer, called from GTK on_draw"""
+        if self.tui.disable_drawing:
+            return
+        char_width = self.gtk_window.char_width
+        char_height = self.gtk_window.char_height
+
+        # pfp
+        cr.save()
+        top, bottom = self.pfp_clip
+        cr.rectangle(0, top * char_height, self.gtk_window.curses_window.ncols * char_width, (bottom - top) * char_height)
+        cr.clip()
+        for abs_y, abs_x, key in self.pfp_draw_list:
+            surface = self.pfp_images.get(key)
+            if not surface:
+                continue
+            cr.set_source_surface(surface, abs_x * char_width + self.pfp_x_offset, abs_y * char_height + self.pfp_y_offset)
+            cr.paint()
+
+        # inline images
+        for abs_y, abs_x, key, w, h, draw in self.inline_draw_list:
+            surface = self.inline_images.get(key)
+            if surface:
+                if draw:
+                    cr.set_source_surface(surface, abs_x * char_width, abs_y * char_height)
+                    cr.paint()
+            elif self.draw_box:   # bounding box until image is downloaded
+                cr.set_source_rgb(*self.box_rgb)
+                cr.set_line_width(3)
+                cr.rectangle(abs_x * char_width + 0.5, abs_y * char_height + 0.5, w * char_width - 3, h * char_height - 3)
+                cr.stroke()
+        cr.restore()
+
+        # emoji
+        for abs_y, abs_x, emoji_id in self.chat_draw_list + self.extra_draw_list:
+            surface = self.images.get(emoji_id)
+            if not surface:
+                continue
+            cr.set_source_surface(surface, abs_x * char_width + self.x_offset, abs_y * char_height)
+            cr.paint()
+
+
+    def stop(self):
+        """Stop all threads"""
+        self.run = False
+        self.gtk_window.media = None
+        self.update_event.set()
+        self.download_queue.put(None)
+        self.pfp_queue.put(None)
+        self.inline_queue.put(None)
+
+
+    def clear_queue(self):
+        """Clear download queues and drawn images (when switching channel)"""
+        for download_queue in (self.download_queue, self.pfp_queue, self.inline_queue):
+            while self.run:
+                try:
+                    download_queue.get_nowait()
+                except queue.Empty:
+                    break
+        with self.images_lock:
+            self.images = {emoji_id: surface for emoji_id, surface in self.images.items() if surface}
+        with self.pfp_lock:
+            self.pfp_images = {key: surface for key, surface in self.pfp_images.items() if surface}
+        with self.inline_lock:
+            self.inline_images = {key: surface for key, surface in self.inline_images.items() if surface}
+        self.inline_pos_cache = []
+        self.inline_draw_list = []
+        self.emoji_pos_cache = []
+        self.chat_draw_list = []
+        self.pfp_pos_cache = []
+        self.pfp_draw_list = []
+        self.redraw()
+
+
+    def update(self, chat_format, chat_map, messages):   # noqa
+        """Get new chat data, queue downloads, update caches and redraw"""
+        self.chat_map = chat_map
+        self.messages = messages
+        self.update_event.set()
+
+
+    def update_assist(self, assist_data, assist_type):
+        """Get new assist data"""
+        if assist_type == 3:
+            self.assist_data = assist_data
+            self.update_event.set()
+        else:
+            self.assist_data = []
+            if self.prev_assist_type != assist_type:
+                self.prev_assist_type = assist_type
+                self.update_event.set()
+
+
+    def draw_images(self):
+        """Recalculate image positions if chat was scrolled or resized"""
+        if self.prev_chat_index == self.tui.chat_index and self.prev_chat_hw == self.tui.chat_hw:
+            return
+        self.calculate_chat()
+
+
+    def draw_extra_window_images(self):
+        """Recalculate emoji positions in extra window"""
+        if not self.tui.win_extra_window:
+            return
+        if self.tui.extra_index != self.prev_extra_index:
+            self.prev_extra_index = self.tui.extra_index
+            self.update_event.set()
+        self.calculate_extra()
+
+
+    def remove_extra_window_images(self):
+        """Remove emoji from extra window when its removed"""
+        self.assist_data = []
+        self.prev_assist_type = None
+        self.prev_extra_index = None
+        self.emoji_assist_cache = []
+        self.extra_draw_list = []
+        self.update_event.set()
+        self.redraw()
+
+
+    def calculate_chat(self):
+        """Calculate absolute image positions from cached chat positions"""
+        with self.tui.lock:
+            chat_y, chat_x = self.tui.win_chat.getbegyx()
+            chat_h = self.tui.chat_hw[0]
+            subtitle_line = bool(self.tui.win_subtitle_line)
+
+            # emoji
+            draw_list = []
+            for rel_y, rel_x, emoji_id in self.emoji_pos_cache:
+                abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
+                if abs_y <= subtitle_line or abs_y > chat_h + self.tui.have_title + subtitle_line - 1:
+                    continue
+                draw_list.append((abs_y, chat_x + rel_x, emoji_id))
+            self.chat_draw_list = draw_list
+
+            # pfp
+            top = 1 + subtitle_line
+            bottom = chat_h + 1 + subtitle_line
+            draw_list = []
+            for rel_y, key in self.pfp_pos_cache:
+                abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
+                if abs_y + self.pfp_size <= top or abs_y >= bottom:
+                    continue
+                draw_list.append((abs_y, chat_x, key))
+            self.pfp_draw_list = draw_list
+            self.pfp_clip = (top, bottom)
+
+            # inline images
+            draw_list = []
+            for rel_y, rel_x, key, w, h, draw in self.inline_pos_cache:
+                abs_y = chat_h - (rel_y - self.tui.chat_index - self.tui.have_title - subtitle_line + 1)
+                if abs_y + h <= top or abs_y >= bottom:
+                    continue
+                draw_list.append((abs_y, chat_x + rel_x, key, w, h, draw))
+            self.inline_draw_list = draw_list
+
+            self.prev_chat_index = self.tui.chat_index
+            self.prev_chat_hw = self.tui.chat_hw
+        self.redraw()
+
+
+    def calculate_extra(self):
+        """Convert cached extra window emoji positions to absolute cell positions"""
+        with self.tui.lock:
+            if not self.tui.win_extra_window:
+                self.extra_draw_list = []
+                return
+            win_y, win_x = self.tui.win_extra_window.getbegyx()
+            win_h = self.tui.win_extra_window.getmaxyx()[0]
+            draw_list = []
+            for num, emoji_id, extra_w in self.emoji_assist_cache:
+                rel_y = num - self.tui.extra_index
+                if rel_y + 1 >= win_h or rel_y < 0:
+                    continue
+                draw_list.append((win_y + rel_y + 1, win_x + 1 + 2 * extra_w, emoji_id))
+            self.extra_draw_list = draw_list
+        self.redraw()
+
+
+    def worker(self):
+        """Thread that updates position caches and queues missing downloads"""
+        while self.run:
+            self.update_event.wait()
+            self.update_event.clear()
+            visible = set()
+            visible_pfp = set()
+            visible_inline = set()
+            new_pos_cache = []
+            new_pfp_cache = []
+            new_inline_cache = []
+            new_assist_cache = []
+            chat_w = self.tui.chat_hw[1]
+            for rel_y, line_map in enumerate(self.chat_map):
+                if not line_map:
+                    continue
+
+                # pfp
+                if self.pfp and line_map[1]:
+                    try:
+                        message = self.messages[line_map[0]]
+                        user_id = message["user_id"]
+                    except (IndexError, KeyError):
+                        user_id = None
+                    if user_id:
+                        avatar_id = message.get("avatar")
+                        if not avatar_id and user_id == self.my_id:
+                            avatar_id = self.my_avatar_id
+                        key = avatar_id or user_id
+                        with self.pfp_lock:
+                            if key not in self.pfp_images:
+                                self.pfp_images[key] = None
+                                self.pfp_queue.put((key, user_id, avatar_id))
+                        visible_pfp.add(key)
+                        new_pfp_cache.append((rel_y, key))
+
+                # inline images
+                if self.inline and line_map[5] and line_map[5][5] and len(line_map[5][5]) >= 4:
+                    rel_x, w, embed_idx, h = line_map[5][5]
+                    try:
+                        message = self.messages[line_map[0]]
+                        embed = message["embeds"][embed_idx]
+                        img_h, img_w = embed["hw"]
+                    except (IndexError, KeyError):
+                        img_w = 0
+                    if img_w and img_h:
+                        image_id = f"{message["id"]}_{embed_idx}"
+                        key = f"{image_id}_{w}_{h}"
+                        with self.inline_lock:
+                            if key not in self.inline_images:
+                                self.inline_images[key] = None
+                                self.inline_queue.put((key, image_id, embed["proxy_url"], img_h, img_w, w, h))
+                        visible_inline.add(key)
+                        draw = not (embed["name"] and embed["name"].startswith("SPOILER_"))
+                        if not draw:
+                            draw = 1000 + embed_idx in message.get("spoiled", [])
+                        new_inline_cache.append((rel_y, rel_x, key, w, h, draw))
+
+                # emoji
+                if not self.emoji:
+                    iterable = ()
+                elif line_map[3]:
+                    iterable = line_map[3]
+                elif line_map[5] and line_map[5][2]:
+                    iterable = line_map[5][2]
+                else:
+                    iterable = ()
+                for emoji in iterable:
+                    if line_map[3]:
+                        _, rel_x, emoji_id = emoji
+                        rel_x -= 1 + self.post_one_reaction_len
+                    else:
+                        rel_x, _, emoji_id = emoji
+                    if not emoji_id or rel_x >= chat_w - 1 or len(emoji_id) < 5:
+                        continue
+                    with self.images_lock:
+                        if emoji_id not in self.images:
+                            self.images[emoji_id] = None
+                            self.download_queue.put(emoji_id)
+                    visible.add(emoji_id)
+                    new_pos_cache.append((rel_y, rel_x, emoji_id))
+
+            # emoji in extra window with emoji assist
+            if self.emoji and self.tui.win_extra_window:
+                win_h = self.tui.win_extra_window.getmaxyx()[0]
+                for num, line in enumerate(self.assist_data):
+                    rel_y = num - self.tui.extra_index
+                    if rel_y < 0 or not line[1].startswith("<:"):
+                        continue
+                    if rel_y + 1 >= win_h:
+                        break
+                    emoji_id = line[1].split(":")[-1][:-1]
+                    extra_w = line[0].startswith("** ")
+                    with self.images_lock:
+                        if emoji_id not in self.images:
+                            self.images[emoji_id] = None
+                            self.download_queue.put(emoji_id)
+                    visible.add(emoji_id)
+                    new_assist_cache.append((num, emoji_id, extra_w))
+
+            # update changed positions
+            chat_changed = False
+            if new_pos_cache != self.emoji_pos_cache:
+                self.emoji_pos_cache = new_pos_cache
+                chat_changed = True
+            if new_pfp_cache != self.pfp_pos_cache:
+                self.pfp_pos_cache = new_pfp_cache
+                chat_changed = True
+            if new_inline_cache != self.inline_pos_cache:
+                self.inline_pos_cache = new_inline_cache
+                chat_changed = True
+            if chat_changed:
+                self.calculate_chat()
+            if new_assist_cache != self.emoji_assist_cache:
+                self.emoji_assist_cache = new_assist_cache
+                self.calculate_extra()
+
+            # delete unused images
+            with self.images_lock:
+                for emoji_id in [emoji_id for emoji_id in self.images if emoji_id not in visible]:
+                    del self.images[emoji_id]
+            with self.pfp_lock:
+                for key in [key for key in self.pfp_images if key not in visible_pfp]:
+                    del self.pfp_images[key]
+            with self.inline_lock:
+                for key in [key for key in self.inline_images if key not in visible_inline]:
+                    del self.inline_images[key]
+
+
+    def emoji_downloader(self):
+        """Thread that downloads emoji, loads it and triggers redraw"""
+        while self.run:
+            emoji_id = self.download_queue.get()
+            if emoji_id is None:
+                break
+            image_path = self.app.discord.get_emoji(emoji_id, img_type="png", cache=self.emoji_cache_path, keepalive=True)
+            if not image_path:
+                continue
+            scale = self.gtk_window.get_scale_factor()
+            try:
+                surface = load_surface(image_path, self.size, self.size, scale)
+            except (GLib.Error, OSError):
+                logger.warning(f"Failed loading emoji: {emoji_id}")
+                continue
+            with self.images_lock:
+                if emoji_id not in self.images:
+                    continue
+                self.images[emoji_id] = surface
+            self.redraw()
+
+
+    def pfp_downloader(self):
+        """Thread that downloads profile pictures, rounds them, loads them and triggers redraw"""
+        while self.run:
+            item = self.pfp_queue.get()
+            if item is None:
+                break
+            key, user_id, avatar_id = item
+            scale = self.gtk_window.get_scale_factor()
+            pixel_size = self.pfp_side * scale
+            image_size = min((x for x in IMAGE_SIZES if x >= pixel_size), default=None)
+
+            # check if cached
+            image_path = utils.search_pfp_cache(self.pfp_cache_path, f"{avatar_id}*", avatar_id)
+            if not image_path:
+                image_path = self.app.discord.get_pfp(user_id, avatar_id, size=image_size, img_type=IMAGE_FORMAT, save_path=self.pfp_cache_path, keepalive=True)
+                if image_path and not avatar_id:
+                    image_path = peripherals.resize_image(image_path, h=image_size, w=image_size)
+            if not image_path:
+                continue
+
+            if self.round:
+                try:
+                    image_path = peripherals.make_round_image(image_path, antialias=self.antialias)
+                except Exception as e:
+                    logger.error(f"Error converting image: {e}")
+
+            try:
+                surface = load_surface(image_path, self.pfp_side, self.pfp_side, scale)
+            except (GLib.Error, OSError):
+                logger.warning(f"Failed loading profile picture: {key}")
+                continue
+            with self.pfp_lock:
+                if key not in self.pfp_images:
+                    continue
+                self.pfp_images[key] = surface
+            self.redraw()
+
+
+    def inline_downloader(self):
+        """Thread that downloads inline images, loads them and triggers redraw"""
+        while self.run:
+            item = self.inline_queue.get()
+            if item is None:
+                break
+            key, image_id, img_url, img_h, img_w, w, h = item
+            scale = self.gtk_window.get_scale_factor()
+            cell_w = self.gtk_window.char_width
+            cell_h = self.gtk_window.char_height
+            fit = min(h * cell_h / img_h, w * cell_w / img_w, 1)
+            view_w = max(1, round(img_w * fit))
+            view_h = max(1, round(img_h * fit))
+            fit = min(h * cell_h * scale / img_h, w * cell_w * scale / img_w, 1)
+            req_w = max(1, round(img_w * fit))
+            req_h = max(1, round(img_h * fit))
+
+            # reuse larger cached image or delete smaller
+            image_path = None
+            for path in glob.glob(os.path.join(self.inline_cache_path, f"{image_id}_*")):
+                try:
+                    cached_w = int(os.path.splitext(os.path.basename(path))[0].split("_")[-2])
+                except ValueError:
+                    continue
+                if cached_w >= req_w:
+                    image_path = path
+                else:
+                    os.remove(path)
+                break
+
+            # download
+            if not image_path:
+                img_quality = "lossless" if IMAGE_FORMAT == "webp" and "//media." in img_url else self.inline_quality
+                if img_url.endswith("&"):
+                    img_url += "="
+                if "?" not in img_url:
+                    img_url += "?"
+                img_url = f"{img_url}&format={IMAGE_FORMAT}&quality={img_quality}&width={req_w}&height={req_h}"
+                img_name = f"{image_id}_{req_w}_{req_h}.{IMAGE_FORMAT}"
+                image_path = self.app.discord.get_file(img_url, self.inline_cache_path, file_name=img_name, cache=True, keepalive=True)
+            if not image_path:
+                continue
+
+            try:
+                surface = load_surface(image_path, view_w, view_h, scale)
+            except (GLib.Error, OSError):
+                logger.warning(f"Failed loading inline image: {image_id}")
+                continue
+            with self.inline_lock:
+                if key not in self.inline_images:
+                    continue
+                self.inline_images[key] = surface
+            self.redraw()

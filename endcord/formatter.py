@@ -202,7 +202,6 @@ def format_seconds(seconds, nice=False, pad=True):
     return ":".join(parts)
 
 
-
 def generate_discord_timestamp(timestamp, discord_format, timezone=True):
     """Generate discord formatted timestamp"""
     if discord_format == "R":
@@ -249,7 +248,7 @@ def format_kilo(n, dec=1):
     return f"{s}K"
 
 
-def move_by_indexes(indexes, *ranges_lists):
+def move_by_indexes(indexes, *ranges_lists, is_sorted=True):
     """Move format by indexes"""
     for ranges in ranges_lists:
         for format_part in ranges:
@@ -258,8 +257,8 @@ def move_by_indexes(indexes, *ranges_lists):
                     format_part[0] -= 1
                 if index < format_part[1]:
                     format_part[1] -= 1
-                else:
-                    break
+                elif is_sorted:
+                    break   # dangerous if indexes is unsorted
 
 
 def emoji_name(emoji_char):
@@ -401,10 +400,10 @@ def fix_map_ranges(map_ranges, text):
         return map_ranges
 
     corrected = []
-    for start, end, data in map_ranges:
+    for start, end, data, *optional in map_ranges:
         start_shift = bisect_left(wide_positions, start)
         end_shift = bisect_left(wide_positions, end)
-        corrected.append((start + start_shift, end + end_shift, data))
+        corrected.append((start + start_shift, end + end_shift, data, *optional))
 
     return corrected
 
@@ -978,11 +977,14 @@ def format_md_all(line, content_start, except_ranges=()):
     """
     line_format = []
     indexes = []
+    search_from = 0
     for _ in range(20):   # safety limit
         line_content = line[content_start:]
-        string_match = re.search(match_md_all, line_content)
+        string_match = re.search(match_md_all, line_content[search_from:])
         if not string_match:
             break
+        match_start = string_match.start() + search_from
+        match_end = string_match.end() + search_from
 
         if string_match.group(2):   # underline
             attribute = curses.A_UNDERLINE
@@ -994,26 +996,26 @@ def format_md_all(line, content_start, except_ranges=()):
             attribute = curses.A_ITALIC
             format_len = 1
 
-        start = string_match.start() + content_start
-        end = string_match.end() + content_start
+        start = match_start + content_start
+        end = match_end + content_start
         skip = False
         for except_range in chain(*except_ranges):
             start_r = except_range[0]
             end_r = except_range[1]
             # if this match is inside excepted range
-            if (start >= start_r and start <= end_r) or (end > start_r and end < end_r):
+            if start >= start_r and end <= end_r:
                 skip = True
                 break
         if skip:
+            search_from = match_end
             continue
         text = string_match.group(0)[format_len:-format_len]
         line = line[:start] + text + line[end:]
         true_end = end - 2 * format_len
 
         # keep indexes of changes
-        indexes.extend((start, true_end))
-        if format_len == 2:
-            indexes.extend((start+1, end - 3))
+        indexes.extend([start] * format_len)
+        indexes.extend([end - 2 * format_len] * format_len)
 
         # rearrange formats at indexes after this format index
         done = False
@@ -1035,6 +1037,8 @@ def format_md_all(line, content_start, except_ranges=()):
                 attribute |= format_part[2]
         if not done:
             line_format.append([start, end - 2 * format_len, attribute])
+
+        search_from = 0
 
     # sort by format start so tui can draw nested format on top of previous one
     line_format = sorted(line_format, key=lambda x: x[0], reverse=True)
@@ -1115,6 +1119,24 @@ def ranges_multiline_one_line(ranges, line_len, newline_len, quote=False):
             line_ranges.append([newline_len + quote*2, format_range[1], format_range[2] if have_id else num])
         else:
             line_ranges.append([newline_len + quote*2, line_len, format_range[2] if have_id else num])
+    return line_ranges
+
+
+def urls_multiline_one_line(ranges, line_len, newline_len, quote=False):
+    """Generate ranges for one line"""
+    line_ranges = []
+    for num, format_range in enumerate(ranges):
+        if format_range[0] >= line_len or format_range[1] < newline_len:
+            continue
+        if format_range[0] >= newline_len:
+            if format_range[1] < line_len:
+                line_ranges.append([format_range[0], format_range[1], *format_range[2:]])
+            else:
+                line_ranges.append([format_range[0], line_len, *format_range[2:]])
+        elif format_range[1] < line_len:
+            line_ranges.append([newline_len + quote*2, format_range[1], *format_range[2:]])
+        else:
+            line_ranges.append([newline_len + quote*2, line_len, *format_range[2:]])
     return line_ranges
 
 
@@ -1311,6 +1333,7 @@ class ChatGenerator:
         self.dpw = dpw   # "dots" per character width
         self.placeholder_emoji = "  " if placeholder_emoji else None
         self.placeholder_images = (config["inline_media_height"]) if placeholder_images else None
+        self.show_embed_names = config["show_embed_names"] or not self.placeholder_images
 
         # load colors
         self.color_default = [colors[0]]
@@ -1935,6 +1958,7 @@ class ChatGenerator:
         embeds = []
         image_locations = []
         embed_marker_ranges = []
+        embed_spans = []   # [start, end, real_url] of embed text, to mark urls found inside as embed urls
         for num_e, embed in enumerate(message["embeds"]):
             embed_url = embed["url"]
             embed_type = embed["type"]
@@ -1942,22 +1966,25 @@ class ChatGenerator:
                 continue
             if content:
                 content += "\n"
+            real_url = embed["main_url"] if "main_url" in embed and not embed_url.startswith("https://") else embed_url
+            embed_start = pre_content_len + len(content)
+            attachment = "main_url" not in embed
+            url_ranges = []
             spoiler = embed["name"] and embed["name"].startswith("SPOILER_")
+            duration = f"({format_seconds(embed["duration"], nice=True, pad=False)})" if embed.get("duration") else ""
             if spoiler:
                 spoiler = 1000 + num_e not in message.get("spoiled", [])
             if "main_url" not in embed:   # its attachment
-                if self.placeholder_images:
+                embed_type = clean_type(embed_type)
+                if (embed["name"] and self.show_embed_names) or embed_type not in ("image", "video"):
+                    embed_url = trim_string(embed.get("name", "Unnamed"), self.trim_embed_url_size)
+                elif self.placeholder_images:
                     embed_url = ""
                 elif self.trim_embed_url_size:
                     embed_url = trim_string(embed_url, self.trim_embed_url_size)
-                embed_type = clean_type(embed_type)
-                if embed_type.lower() not in ("image", "video"):
-                    embed_type = "file"
-                    embed_url = embed.get("name", "")
-                    if embed.get("duration"):
-                        embed_url += f" ({format_seconds(embed["duration"], nice=True, pad=False)})"
-                    pre_embed_len = pre_content_len + len(content)
-                    embeds.append([pre_embed_len, pre_embed_len + len(embed_type) + 15 + len(embed_url), 0])
+                if duration and embed_url:
+                    duration = " " + duration
+                embed_url += duration
                 embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 14])
                 content += f"[{embed_type} attachment]: {embed_url}"
             elif embed_type == "rich":
@@ -1966,23 +1993,32 @@ class ChatGenerator:
                 if url_ranges:
                     pre_embed_len = pre_content_len + len(content) + len(embed_type) + 10
                     for url_range in url_ranges:
-                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], 0])
+                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], url_range[2], True])
                 embed_marker_ranges.append([len(content), len(content) + 13])
                 content += f"[rich embed]:\n{embed_url}"
             else:
-                if embed_type.startswith("gif") and embed_url.startswith(">"):
+                if self.show_embed_names and "youtube." not in embed["main_url"]:
+                    name = embed.get("name")
+                    embed_url = trim_string(name if name else "Unnamed", self.trim_embed_url_size)
+                elif embed.get("proxy_url") and embed_url == " " and not self.placeholder_images:
+                    embed_url = trim_string(embed["proxy_url"], self.trim_embed_url_size)
+                elif embed_type.startswith("gif") and embed_url.startswith(">"):
                     embed_url = embed_url[2:]
                 embed_url, url_ranges = replace_markdown_urls(embed_url, ())
                 if url_ranges:
                     pre_embed_len = pre_content_len + len(content) + len(embed_type) + 10
                     for url_range in url_ranges:
-                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], 0])
+                        urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], url_range[2], True])
                 if embed_type.startswith("gif") and embed_url.startswith("["):
                     pass
                 elif embed["main_url"] == embed_url and self.trim_embed_url_size:
                     embed_url = trim_string(embed_url, self.trim_embed_url_size)
                 embed_marker_ranges.append([len(content), len(content) + len(embed_type) + 9])
-                content += f"[{embed_type} embed]: {embed_url}"
+                content += f"[{embed_type} embed]: {embed_url.strip()}"
+            if embed_type != "rich" and not url_ranges and embed_url:   # make embed text clickable
+                text_start = embed_start + len(embed_type) + (15 if attachment else 10)
+                urls.append([text_start, pre_content_len + len(content) - len(duration), real_url, True])
+            embed_spans.append([embed_start, pre_content_len + len(content), None if embed_type == "rich" else real_url])
             if self.placeholder_images and embed.get("proxy_url") and embed["hw"]:
                 if not embed["hw"][0] or not embed["hw"][1]:
                     continue
@@ -2047,13 +2083,15 @@ class ChatGenerator:
                         skip = True
                         break
                 if not skip:
-                    urls.append([start, end, match.group()])
+                    is_embed = False
+                    for span in embed_spans:
+                        if span[0] <= start < span[1]:
+                            is_embed = True
+                            skip = bool(span[2])   # not rich embed, already has its own range
+                            break
+                    if not skip:
+                        urls.append([start, end, match.group(), is_embed])
         urls = sorted(urls, key=lambda x: x[0])
-        for idx, url in enumerate(urls):
-            url[2] = idx
-        idx = len(urls)
-        for i, embed in enumerate(embeds):
-            embed[2] = idx + i
 
         # find spoilers - must be after all other replacements
         spoilers = []
@@ -2069,7 +2107,6 @@ class ChatGenerator:
             move_by_indexes(
                 md_indexes,
                 urls,
-                embeds,
                 spoilers,
                 code_snippets,
                 code_blocks,
@@ -2088,7 +2125,6 @@ class ChatGenerator:
                 escaped_indexes,
                 md_format,
                 urls,
-                embeds,
                 spoilers,
                 code_snippets,
                 code_blocks,
@@ -2170,7 +2206,7 @@ class ChatGenerator:
         code_block_format += format_multiline_one_line_format(code_blocks_tokens, newline_index+1, 0, quote)
 
         chat.append(message_line)
-        urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls + embeds, newline_index+1, 0, quote), message_line)
+        urls_this_line = fix_map_ranges(urls_multiline_one_line(urls + embeds, newline_index+1, 0, quote), message_line)
         spoilers_this_line = fix_map_ranges(ranges_multiline_one_line(spoilers, newline_index+1, 0, quote), message_line)
         emoji_this_line = fix_map_ranges(ranges_multiline_one_line(emoji_ranges, newline_index+1, 0, quote), message_line)
         mentions_this_line = fix_map_ranges(ranges_multiline_one_line(mention_ranges, newline_index+1, 0, quote), message_line)
@@ -2324,7 +2360,7 @@ class ChatGenerator:
 
             len_new_line = len(new_line)
             chat.append(new_line)
-            urls_this_line = fix_map_ranges(ranges_multiline_one_line(urls + embeds, len_new_line, self.newline_len, quote), new_line)
+            urls_this_line = fix_map_ranges(urls_multiline_one_line(urls + embeds, len_new_line, self.newline_len, quote), new_line)
             spoilers_this_line = fix_map_ranges(ranges_multiline_one_line(spoilers, len_new_line, self.newline_len, quote), new_line)
             emoji_this_line = fix_map_ranges(ranges_multiline_one_line(emoji_ranges, len_new_line, self.newline_len, quote), new_line)
             mentions_this_line = fix_map_ranges(ranges_multiline_one_line(mention_ranges, len_new_line, self.newline_len, quote), new_line)
@@ -2637,11 +2673,7 @@ def generate_status_line(my_user_data, my_status, unread_count, typing, active_c
     else:
         slowmode = f"Slowmode: {format_seconds(slowmode)}"
 
-    if vim_mode is False:
-        vim_mode = "[--NORMAL--]"
-    elif vim_mode is True:
-        vim_mode = "[--INSERT--]"
-    else:
+    if vim_mode is None:
         vim_mode = ""
 
     sl_format = []
@@ -3012,7 +3044,7 @@ def generate_extra_line_guild_start_call(channel, voice_states, max_len, bordere
     return shortened_str + right_text, line_format
 
 
-def generate_extra_line_call(call_participants, volume_in, volume_out, videos, rtt, max_len, bordered, colors):   # noqa
+def generate_extra_line_call(call_participants, volume_in, volume_out, videos, rec, rtt, max_len, bordered, colors):   # noqa
     """Generate extra line containing information about ongoing call"""
     max_len = max_len - bordered * 3
     color_low = colors[8]
@@ -3020,8 +3052,9 @@ def generate_extra_line_call(call_participants, volume_in, volume_out, videos, r
     left_text = "In the call: You"
     rtt_text = f"({min(rtt, 999.9):.1f}ms) " if rtt is not None else ""
     video_text = f"(VID:{len(videos)}) " if videos else ""
-    right_text = f"{video_text}{rtt_text}[I:{(str(volume_in)+"%").center(4)} O:{(str(volume_out)+"%").center(4)}] [Leave]"
+    right_text = f"{rtt_text}{"●REC " if rec else ""}{video_text}[I:{(str(volume_in)+"%").center(4)} O:{(str(volume_out)+"%").center(4)}] [Leave]"
     max_str_length = max_len - len(right_text) - 3   # 3 for ...
+    rec_txt_len = 5 if rec else 0
 
     for participant in call_participants:
         left_text += f", {participant["name"]}"
@@ -3031,11 +3064,15 @@ def generate_extra_line_call(call_participants, volume_in, volume_out, videos, r
     line_format = [
         (color_standout, None, 13, len(left_text[:max_str_length])),
         (color_standout, None, max_len - 23, max_len - 8),
-        (20 if int(rtt) > 500 else 19 if rtt > 200 else color_low, None, max_len - 23 - len(rtt_text), max_len - 23),
+        (20 if int(rtt) > 500 else 19 if rtt > 200 else color_low, None, max_len - 23 - len(rtt_text) - len(video_text) - rec_txt_len, max_len - 23 - len(video_text) - rec_txt_len),
         (20 if volume_out == 0 else None, None, max_len - 15, max_len - 9),
         (20 if volume_in == 0 else None, None, max_len - 22, max_len - 16),
         (20, None, max_len - 7, max_len),
     ]
+    if videos:
+        line_format.append((18, None, max_len - 23 - len(video_text), max_len - 23))
+    if rec:
+        line_format.append((20, 1, max_len - 28 - len(video_text), max_len - 23 - len(video_text)))
 
     if len(left_text) + 1 + len(right_text) <= max_len:
         space_num = max_len - (len(left_text) + len(right_text))
@@ -3457,26 +3494,28 @@ def generate_extra_window_search(query, messages, roles, channels, blocked, tota
     return title_line, body, body_format, indexes
 
 
-def generate_extra_window_search_ext(extensions, colors, max_len):
+def generate_extra_window_search_ext(extensions, installed, updates, colors, max_len):
     """Generate extra window title and body for extensions search view"""
     title_line = f"Extensions search results: {len(extensions)} extensions"
     color_low = colors[8]
     color_standout = colors[9]
     body = []
     body_format = []
+    installed_ext = [ex.EXT_SOURCE.strip("/").split("/")[-1] for ex in installed if ex.EXT_SOURCE]
     for extension in extensions:
         official = " (official)" if extension[3] else ""
         description = str(extension[2]).replace("An extension for endcord discord TUI client, that ", "")
         description = description.capitalize()
         name = extension[1] + official + " - "
         body.append(normalize_string(name + description, max_len, emoji_safe=True, dots=True, fill=False))
+        line_format = [(color_low, None, len(name) - 1, len(name) + len(description))]
         if extension[3]:
-            body_format.append([
-                (color_standout, None, len(extension[1]) + 1, len(extension[1]) + len(official)),
-                (color_low, None, len(name) - 1, len(name) + len(description)),
-            ])
-        else:
-            body_format.append([(color_low, None, len(name) - 1, len(name) + len(description))])
+            line_format.insert(0, (color_standout, None, len(extension[1]) + 1, len(extension[1]) + len(official)))
+        if extension[1] in updates:
+            line_format.insert(0, (19, None, 0, len(extension[1])))
+        elif extension[1] in installed_ext:
+            line_format.insert(0, (18, None, 0, len(extension[1])))
+        body_format.append(line_format)
     return title_line, body, body_format
 
 
@@ -3535,6 +3574,19 @@ def generate_extra_window_reactions(reaction, details, colors, max_len):
         line = f"{user["global_name"]} ({user["username"]})"[:max_len]
         body.append(line)
         body_format.append([(color_low, None, len(user["global_name"]) + 1, len(line))])
+    return title_line[:max_len], body, body_format
+
+
+def generate_extra_window_spell(word, suggestions, colors, max_len):
+    """Generate extra window title and body for spell suggestions"""
+    title_line = f"Spelling assist: {len(suggestions)} candidates, use number row or select correction"
+    color_standout = colors[9]
+    body = [f'0 - Add "{word}" to dictionary']
+    body_format = [[(color_standout, None, 9, 9 + len(word))]]
+    for num, sug in enumerate(suggestions):
+        line = f"{num + 1} - {sug}"[:max_len]
+        body.append(line)
+        body_format.append([(color_standout, None, 3 + int(num > 9), len(line))])
     return title_line[:max_len], body, body_format
 
 
@@ -3658,6 +3710,8 @@ def generate_member_list(member_list_raw, guild_roles, width, use_nick, status_s
     filler = " " * width
     first = True
     for member in member_list_raw:
+        if "group" in member and not member["count"]:
+            continue
         this_format = []
         if "id" in member:
 
@@ -3770,7 +3824,7 @@ def generate_message_notification(data, channels, roles, guild_name, my_data, co
     return title, body
 
 
-def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, collapsed, voice_states, active_channel_id, config, safe_emoji=False, max_width=0):
+def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, collapsed, voice_states, active_channel_id, activity_icons, config, safe_emoji=False, max_width=0):
     """
     Generate channel tree according to provided formatting.
     tree_format keys:
@@ -3809,6 +3863,7 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
     dm_status_char = config["tree_dm_status"]
     show_folders = config["tree_show_folders"]
     uncollapse_threads = config["remember_collapsed_channels"]
+    dm_activity_in_tree = config["dm_activity_in_tree"]
     intersection = f"{dd_intersect}{dd_hline*2}"   # default: "|--"
     pass_by = f"{dd_vline}  "   # default: "|  "
     intersection_end = f"{dd_corner}{dd_hline*2}"   # default: "\\--"
@@ -3843,9 +3898,9 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
         code = 300
         # get dm status
         if len(dm["recipients"]) == 1:
-            for activity in activities:
-                if activity["id"] == dm["recipients"][0]["id"]:
-                    status = activity["status"]
+            for presence in activities:
+                if presence["id"] == dm["recipients"][0]["id"]:
+                    status = presence["status"]
                     if status == "online":
                         code += 2
                     elif status == "idle":
@@ -3854,7 +3909,8 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
                         code += 4
                     else:
                         break
-                    name = dm_status_char + " " + name
+                    status_char = activity_icons[presence["activities"][0]["type"]] if presence["activities"] and dm_activity_in_tree else dm_status_char
+                    name = status_char + " " + name
                     break
         mention_count = generate_count(len(ch_read_state["mentions"])) if unseen_dm else ""
         if dm["type"] == 3:
