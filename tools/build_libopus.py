@@ -1,12 +1,11 @@
-# endcord - Copyright (C) 2025-2026 SparkLost. All Rights Reserved.
-# Source-available under the Endcord License. See LICENSE for terms.
-# Redistribution of modified versions is not permitted.
-
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
 import urllib.request
+
+LIB_NAMES = ("libopus.so", "libopus.dylib", "libopus-0.dll", "libopus.dll", "opus.dll")
 
 
 def download(url, dest_path):
@@ -19,35 +18,33 @@ def download(url, dest_path):
     return dest_path
 
 
-BAD_ENV = ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS")
-
-
-def clean_env():
-    """Copy of environment without flag variables meant for other platforms"""
+def get_env():
+    """Environment for build commands, without foreign flag variables on windows"""
     env = os.environ.copy()
-    for name in BAD_ENV:
-        env.pop(name, None)
+    if sys.platform == "win32":
+        for name in ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
+            env.pop(name, None)
     return env
 
 
 def run(cmd, cwd):
     """Run command and show its output on failure"""
-    result = subprocess.run(cmd, cwd=cwd, env=clean_env(), capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=cwd, env=get_env(), capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(result.stdout)
         print(result.stderr)
         log_path = os.path.join(cwd, "config.log")
         if os.path.exists(log_path):
-            with open(log_path, "r", errors="replace") as f:
+            with open(log_path, "r", errors="replace", encoding="utf-8") as f:
                 print("".join(f.readlines()[-80:]))
         raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
-def find_library(root, names):
+def find_library(root):
     """Search directory tree for the first matching library file"""
     for folder, _, files in os.walk(root):
         for filename in files:
-            if filename in names:
+            if filename in LIB_NAMES:
                 return os.path.abspath(os.path.join(folder, filename))
     return None
 
@@ -63,8 +60,14 @@ def build_libopus(build_dir="", opus_version="1.5.2"):
 
     print("  Compiling libopus library")
     jobs = str(os.cpu_count() or 1)
-    if sys.platform == "win32":
-        cmake_dir = os.path.join(working_dir, "cmake_build")
+    try:
+        run(["sh", "./configure", "--disable-doc", "--disable-extra-programs"], working_dir)
+        run(["make", f"-j{jobs}"], working_dir)
+        return find_library(os.path.join(working_dir, ".libs"))
+    except (subprocess.CalledProcessError, OSError):
+        if sys.platform != "win32" or not shutil.which("cmake"):
+            raise
+        print("  configure/make failed, trying cmake")
         run([
             "cmake", "-S", ".", "-B", "cmake_build", "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=Release",
@@ -73,11 +76,7 @@ def build_libopus(build_dir="", opus_version="1.5.2"):
             "-DOPUS_BUILD_TESTING=OFF",
         ], working_dir)
         run(["cmake", "--build", "cmake_build", "--config", "Release", "-j", jobs], working_dir)
-        return find_library(cmake_dir, ("opus.dll", "libopus.dll"))
-
-    run(["sh", "./configure", "--disable-doc", "--disable-extra-programs"], working_dir)
-    run(["make", f"-j{jobs}"], working_dir)
-    return find_library(os.path.join(working_dir, ".libs"), ("libopus.so", "libopus.dylib"))
+        return find_library(os.path.join(working_dir, "cmake_build"))
 
 
 if __name__ == "__main__":
