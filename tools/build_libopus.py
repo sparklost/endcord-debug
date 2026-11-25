@@ -19,9 +19,20 @@ def download(url, dest_path):
     return dest_path
 
 
+BAD_ENV = ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS")
+
+
+def clean_env():
+    """Copy of environment without flag variables meant for other platforms"""
+    env = os.environ.copy()
+    for name in BAD_ENV:
+        env.pop(name, None)
+    return env
+
+
 def run(cmd, cwd):
     """Run command and show its output on failure"""
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=cwd, env=clean_env(), capture_output=True, text=True)
     if result.returncode != 0:
         print(result.stdout)
         print(result.stderr)
