@@ -48,10 +48,27 @@ def parser(app_name, version, default_config_path, log_path, level):
         help="launch profile manager",
     )
     parser.add_argument(
+        "-s",
+        "--settings",
+        action="store_true",
+        help="launch settings editor",
+    )
+    parser.add_argument(
+        "--settings-theme",
+        action="store_true",
+        help="launch theme editor",
+    )
+    parser.add_argument(
         "-k",
         "--keybinding",
         action="store_true",
-        help="launch keybinding resolver",
+        help="launch keybinding editor",
+    )
+    parser.add_argument(
+        "--doc",
+        "--documentation",
+        action="store_true",
+        help="launch documentation viewer",
     )
     parser.add_argument(
         "-o",
@@ -60,10 +77,14 @@ def parser(app_name, version, default_config_path, log_path, level):
         help="show all available colors and their codes",
     )
     parser.add_argument(
-        "-u",
         "--vumeter",
         action="store_true",
         help="launch vumeter used to configure voice call silence detection",
+    )
+    parser.add_argument(
+        "--extensions",
+        action="store_true",
+        help="launch extension manager",
     )
     parser.add_argument(
         "-i",
@@ -96,14 +117,12 @@ def parser(app_name, version, default_config_path, log_path, level):
         if provided, will play it without starting endcord discord",
     )
     parser.add_argument(
-        "-s",
         "--host",
         type=str,
         action="store",
         help="custom host to connect to; overrides custom_host in config",
     )
     parser.add_argument(
-        "-x",
         "--proxy",
         type=str,
         action="store",
@@ -111,7 +130,6 @@ def parser(app_name, version, default_config_path, log_path, level):
         supported proxy protocols: http, socks5; using proxy might make you more suspicious to discord",
     )
     parser.add_argument(
-        "-n",
         "--headless",
         action="store_true",
         help="run in headless mode, UI will not be drawn",

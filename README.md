@@ -23,6 +23,7 @@ Any third party endcord forks may add features that can lead to account ban, cau
 
 ## Features
 - Extremely low CPU and RAM usage (see [RAM usage](docs/faq.md#ram-usage))
+- Discord, [Spacebar](https://spacebar.chat/) (native) and [fluxer](https://fluxer.com/) (through [extension](https://github.com/sparklost/endflux)) support
 - Vim-mode
 - Integrated RPC (only Rich Presence) and game detection
 - Mouse controls
@@ -34,7 +35,7 @@ Any third party endcord forks may add features that can lead to account ban, cau
     - Stream video from any source (camera, usb, screen share)
     - Set volues per-user or mute them
     - Customizable video properties
-    - Global push-to-talk (Linux X11 and Windows)
+    - Global push-to-talk (Linux X11/Wayland and Windows)
 - Desktop notifications
 - Inline images (pixelated/ascii-art/[kitty-protocol](https://github.com/sparklost/endcord-image-inline))
 - View images, gifs, videos, audio, stickers and YouTube with ASCII art or in external app
@@ -76,6 +77,8 @@ Any third party endcord forks may add features that can lead to account ban, cau
 - Change server/channel/category notification settings
 - Partial markdown support (underline, bold, italic, spoiler, quote)
 - Generate server invite link
+- Settings, theme and keybindings editor UI
+- Builtin documentation viewer
 - Theming
 - Customizable status, title and prompt lines
 - Customizable chat lines (message, newline, reaction, reply)
@@ -83,12 +86,12 @@ Any third party endcord forks may add features that can lead to account ban, cau
 - Show discord emoji as `:emoji_name:` and view them in media player
 - Show mentions as `@username`, `@role`, `#channel_name`
 - Channel chat caching
-- Extension API, builtin extensions search
+- Extension API, builtin extensions manager with github search
 - Macro keybindings support (bind key to chain of commands)
 - Proxy support
 - Profile manager for multiple accounts
 - Store token in system keyring
-- Works in termux, with android notifications
+- Works on Android in termux, with notifications
 - Automatic endcord and extensions check for updates
 - Headless mode
 - Run bots, with interactions
@@ -101,7 +104,7 @@ Any third party endcord forks may add features that can lead to account ban, cau
     - Uses only 15MB (linux) more RAM (vs most terminals using 20-100MB)
     - GTK-native pasting and drag n' drop (text and files)
     - Linux desktop integration: app icon, notification count badge, click on notification
-    - Additional Wayland support for global push-to-talk
+    - More colors in UI
 
 
 ## Disclaimer
@@ -161,6 +164,8 @@ Optional dependency for spellchecking: `aspell`. Can be installed with: `brew as
 - `libsecret` - Store token in system keyring (secret service provider is also required (eg. `gnome-keyring`, `KWallet`, `KeePassXC`), with `dbus` as dependency)
 - `libappindicator-gtk3` - Tray support under wayland, for [windowed mode](docs/faq.md#gui-windowed-mode) only.
 - `imagemagick` - To make notification images round; only needed for endcord-lite.
+- `x11-utils` - Screen share on X11 Linux desktops
+- `xdg-desktop-portal-*` (gnome, kde, wlr) and `gst-launch-1.0` - Screen share on Wayland Linux desktops
 - `source-highlight` or `python-pygments` - Code block syntax highlighting (Alternatively use [this extension](https://github.com/sparklost/endcord-pygments-syntax)).
 - `rnnoise` - Noise suppression in voice calls (or use `--bundle-rnnoise` build.py arg)
 - `libopus` - Needed for voice calls only if endcord is built without bundled libopus
@@ -177,10 +182,10 @@ To toggle [windowed mode](docs/faq.md#gui-windowed-mode) run: `python build.py -
 
 ### Build steps
 1. Install [Python](https://www.python.org/) 3.12 or later
-2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) (optional)
 1. Clone this repository: `git clone https://github.com/sparklost/endcord.git` or download zip and unzip it
 3. `cd endcord`
-4. On BSD systems, rust might be required to build some dependencies, if thats not possible - run `uv remove orjson`
+4. On BSD systems, rust might be required to build some dependencies, check [building-without-rust](#building-without-rust).
 5. run build script: `python build.py`
 
 ### Nuitka
@@ -207,8 +212,9 @@ To make it use freethreaded python run `python build.py` (not `uv`!) with `--fre
 
 ### Building without rust
 If you want to build without any rust dependencies, just run `uv remove orjson` for the first time, before running anything else.  
-This will make it fallback to standard json (more CPU usage by game detection).  
-Optionally it can use `ujson`, run `uv add ujson` to install it.  
+If uv is not installed then manually edit pyproject.toml and remove orjson line from dependencies.  
+This will make it fallback to standard json (more CPU usage).  
+Optionally endcord can use `ujson`, run `uv add ujson` to install it.  
 
 
 ## Planned features

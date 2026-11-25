@@ -2,6 +2,7 @@
 # Source-available under the Endcord License. See LICENSE for terms.
 # Redistribution of modified versions is not permitted.
 
+import glob
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ if sys.platform.startswith("android"):
 if "bsd" in sys.platform:
     sys.platform = "linux"
 
+from endcord import peripherals
 
 GATEWAY_RATE_LIMIT = 5   # delay between each event that rpc server will send to discord
 GATEWAY_RATE_LIMIT_SAME = 60   # delay between each same activity that rpc server will send to discord
@@ -46,6 +48,38 @@ def to_milliseconds(timestamp):
     if timestamp < 1_000_000_000_000:
         return int(timestamp * 1000)
     return int(timestamp)
+
+
+def find_detectable_apps_file(directory):
+    """Find detectable_apps_[etag].ndjson path and extract etag"""
+    pattern = os.path.expanduser(os.path.join(directory, "detectable_apps_*.ndjson"))
+    matches = glob.glob(pattern)
+    if not matches:
+        return None, None, 0
+    path = matches[0]
+    filename_parts = os.path.basename(path)[:-7].split("_")
+    etag = filename_parts[2]
+    save_time = int(filename_parts[3]) * 1000 if len(filename_parts) >= 4 else 0
+    return path, etag, save_time
+
+
+def search_detectable_apps(list_path, app_id):
+    """Search app_id in detectable apps ndjson"""
+    try:
+        f = open(list_path, "r", encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        for line in f:
+            try:
+                app = json.loads(line)   # [id, name, [os, app_path]]
+            except Exception:
+                continue
+            if app[0] == app_id:
+                return app[1]
+    finally:
+        f.close()
+    return None
 
 
 def receive_data_linux(connection):
@@ -131,11 +165,19 @@ class RPC:
         self.connections = []
         self.lock = threading.Lock()
         self.server = None
+        self.passthrough_apps = config["rpc_passthrough"]
         if user["bot"]:
             logger.warning("RPC server cannot be started for bot accounts")
             self.run = False
             return
         self.run = True
+
+        self.detectable = None
+        if isinstance(self.passthrough_apps, str):
+            try:
+                self.passthrough_apps = json.loads(self.passthrough_apps)
+            except Exception:
+                pass
 
         self.generate_dispatch(user)
 
@@ -200,7 +242,7 @@ class RPC:
         if data["cmd"] == "SET_ACTIVITY":
             response = {
                 "cmd": data["cmd"],
-                "data": data["args"]["activity"],
+                "data": data["args"].get("activity"),
                 "evt": None,
                 "nonce": data["nonce"],
             }
@@ -233,7 +275,7 @@ class RPC:
         own_activity = None   # activity of this connection, as stored in self.activities
         pid = None
 
-        try:   # lets keep server running even if there is error in one thread
+        try:   # keep server running even if there is error in one thread
             self.connections.append(connection)
             op, init_data = receive_data(connection)
             if op is None or init_data is None:
@@ -248,9 +290,23 @@ class RPC:
 
             logger.debug(f"RPC app id: {app_id}")
             status, rpc_data = self.discord.get_rpc_app(app_id)
-            rpc_assets = self.discord.get_rpc_app_assets(app_id)
+            if rpc_data:
+                rpc_assets = self.discord.get_rpc_app_assets(app_id)
+            else:
+                if not self.detectable or not os.path.exists(self.detectable):
+                    self.detectable = find_detectable_apps_file(peripherals.config_path)
+                app_name = search_detectable_apps(self.detectable, app_id)
+                if app_name:
+                    rpc_data = {"id": app_id, "name": app_name, "description": ""}
+                elif isinstance(self.passthrough_apps, dict) and app_id in self.passthrough_apps:
+                    rpc_data = {"id": app_id, "name": self.passthrough_apps[app_id], "description": ""}
+                elif self.passthrough_apps:
+                    rpc_data = {"id": app_id, "name": "Unknown", "description": ""}
+                rpc_assets = [] if rpc_data else None
+
             if rpc_data and rpc_assets not in (None, False):
-                logger.info(f"RPC client connected: {rpc_data["name"]}")
+                id_text = f" ({app_id})" if rpc_data["name"] in (None, "Unknown") else ""
+                logger.info(f"RPC client connected: {rpc_data["name"]}{id_text}")
                 send_data(connection, 1, self.dispatch)
                 sent_time = time.monotonic() - (GATEWAY_RATE_LIMIT + 1)
                 prev_activity = None
@@ -265,18 +321,9 @@ class RPC:
 
                     if data["cmd"] == "SET_ACTIVITY":
                         pid = data["args"].get("pid", pid)
-                        if "activity" not in data["args"]:
-                            response = {
-                                "cmd": data["cmd"],
-                                "data": {"code": 4000, "message": "Invalid payload"},
-                                "evt": "ERROR",
-                                "nonce": data.get("nonce"),
-                            }
-                            send_data(connection, op, response)
-                            continue
 
                         # activity cleared by client
-                        if not data["args"]["activity"]:
+                        if not data["args"].get("activity"):
                             if own_activity:
                                 self.remove_activity(own_activity)
                                 own_activity = None

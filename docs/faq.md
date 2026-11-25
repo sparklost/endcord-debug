@@ -37,7 +37,7 @@ To run multiple endcord instances at the same time, while keeping them completel
 
 ### No emoji
 If emoji are drawn as empty box or similar, it means emoji font is not installed, its misconfigured in terminal config, or emoji are not supported by this terminal.
-If case emoji cant be configured, enable `emoji_as_text` in eendcord `config.ini`.
+If case emoji cant be configured, enable `emoji_as_text` in endcord `config.ini`.
 
 ### Sticker cannot be opened
 This is very likely "lottie sticker". These stickers have special vector way of drawing (not svg) and will not be supported.
@@ -62,10 +62,18 @@ This happens with `Alt+Key` keybindings, but may happen with other modifiers too
 But this also means that it can be added to keybinding config. See [keybinding](#keybinding) for instructions on how to add multiple keybindings for same action.
 
 ### If some keybindings still don't work
-Its probably terminal emulator sending different key codes than those in default settings. Check this by running endcord with `-k` or `--keybinding` to start keybinding resolver.
+Its probably terminal emulator sending different key codes than those in default settings. Check this by running endcord with `-k` or `--keybinding` to start keybinding settings.
 Then press key combination and see printed code. Put this code in settings to use it.
 This mostly happens with `Ctrl+Arrow` and `Alt+Arrow` combinations, on some non-standard terminal emulators like kitty or cmder.
 As a last resort try setting `fallback_keybinding_parser = True` in config.
+
+## Running from source
+1. Install [Python](https://www.python.org/downloads/) 3.14
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) (optional)
+3. Download endcord source code, extract the zip, open terminal in that folder
+4. Enable gui mode (optional): `python build.py --toggle windowed`
+5. Every time to start endcord run: `uv run main.py`
+    - if uv is not installed then either `source .venv/bin/activate; python main.py` or `python build.py --run`
 
 ### Running in tty
 Linux tty doesnt support 256-colors endcord will try to run anyways (and may still crash) but UI lines will be drawn wrongly and colors will be mixed up.
@@ -91,8 +99,7 @@ Tray icon will be enabled, so closing window will only minimize it to tray.
 If using external editor, use editor with graphical interface. TUI editors will not work, as this is no longer in terminal.
 Also, endcord built-in media player will not work because its standalone TUI thats not using curses. All media will be opened in native player.
 Building with pyinstaller is not recommended because it generates huge binary.
-You can toggle windowed mode by running: `python build.py --toggle-windowed`.
-Then run endcord from source: `uv run main.py`.
+You can toggle windowed mode by running: `python build.py --toggle-windowed`. See [running-from-source](#running-from-source)
 After first run in windowed mode, extra config will be generated in endcord config path, a file called `gtkcurses.json`. More info in [configuration](configuration.md).
 All keybindings will work in windowed mode, even those not available in terminal (eg. `Shift+Enter`, `Ctrl+Z`).
 Note: To have tray icon on Linux, [ayatana appindicator](https://github.com/AyatanaIndicators/libayatana-appindicator) must be installed.
@@ -105,7 +112,7 @@ If that happens, use [legacy theme](themes/legacy.ini). It is used by default on
 ### Virus scanners are flagging endcord binaries as malware
 These are false positives. Binaries are built using nuitka, the problem is that its regularly used by other people to distribute malware. So some AVs flag all nuitka-built binaries as malware. [Ref](https://nuitka.net/user-documentation/common-issue-solutions.html#windows-virus-scanners).
 Its the same with all other python freezing tools, like pyinstaller, cx-freeze...
-So to run endcord, either allow it in anti-virus/windows-defender or run it from source.
+So to run endcord, either allow it in anti-virus/windows-defender or [run it from source](#running-from-source).
 
 ### Debug mode
 Debug mode can be enabled with `-d` flag.

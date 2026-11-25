@@ -57,7 +57,7 @@ jobs:
   build-linux:
     name: Build (Linux)
     if: github.event_name == 'push' || inputs.build_linux
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # for compatibility with older glibc
     permissions:
       contents: read
       actions: write
@@ -120,22 +120,22 @@ jobs:
         with:
           enable-cache: false
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     uv venv --clear --python .cpython/bin/python3
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
-      #
-      # - name: Run build script [LITE]
-      #   shell: bash
-      #   run: |
-      #     args=("--custom-python")
-      #     [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=LITE "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          uv venv --clear --python .cpython/bin/python3
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [LITE]
+        shell: bash
+        run: |
+          args=("--custom-python")
+          [[ "${LINUX_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${LINUX_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -157,14 +157,14 @@ jobs:
           extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           cp ../tools/com.sparklost.endcord.desktop ../tools/icons/endcord.svg .
-          # # package FULL version
-          # sed -i 's/^Name=.*/Name=Endcord/' com.sparklost.endcord.desktop
-          # sed -i 's/^Exec=.*/Exec=endcord/' com.sparklost.endcord.desktop
-          # tar -czf "endcord-$version-linux.tar.gz" endcord $extra
-          # # package LITE version
-          # sed -i 's/^Name=.*/Name=Endcord Lite/' com.sparklost.endcord.desktop
-          # sed -i 's/^Exec=.*/Exec=endcord-lite/' com.sparklost.endcord.desktop
-          # tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
+          # package FULL version
+          sed -i 's/^Name=.*/Name=Endcord/' com.sparklost.endcord.desktop
+          sed -i 's/^Exec=.*/Exec=endcord/' com.sparklost.endcord.desktop
+          tar -czf "endcord-$version-linux.tar.gz" endcord $extra
+          # package LITE version
+          sed -i 's/^Name=.*/Name=Endcord Lite/' com.sparklost.endcord.desktop
+          sed -i 's/^Exec=.*/Exec=endcord-lite/' com.sparklost.endcord.desktop
+          tar -czf "endcord-lite-$version-linux.tar.gz" endcord-lite $extra
           # package GUI version
           sed -i 's/^Name=.*/Name=Endcord GUI/' com.sparklost.endcord.desktop
           sed -i 's/^Exec=.*/Exec=endcord-gui/' com.sparklost.endcord.desktop
@@ -216,21 +216,21 @@ jobs:
         with:
           version: ${{ env.WIN_CLANG_VERSION }}
 
-      # - name: Run build script [FULL]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=FULL "${args[@]}"
-      #
-      # - name: Run build script [LITE]
-      #   shell: bash
-      #   run: |
-      #     args=()
-      #     [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
-      #     [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
-      #     uv run build.py --level=LITE "${args[@]}"
+      - name: Run build script [FULL]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=FULL "${args[@]}"
+
+      - name: Run build script [LITE]
+        shell: bash
+        run: |
+          args=()
+          [[ "${WIN_USE_NUITKA}" == "true" ]] && args+=("--nuitka")
+          [[ "${WNDOWS_USE_CLANG}" != "true" ]] && args+=("--noclang")
+          uv run build.py --level=LITE "${args[@]}"
 
       - name: Run build script [GUI]
         shell: bash
@@ -246,10 +246,10 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           version=${version#refs/heads/}
-          extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
+          extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
-          # 7z a "endcord-$version-windows.zip" endcord.exe $extra
-          # 7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
+          7z a "endcord-$version-windows.zip" endcord.exe $extra
+          7z a "endcord-lite-$version-windows.zip" endcord-lite.exe $extra
           7z a "endcord-gui-$version-windows.zip" endcord-gui.exe $extra
 
       - name: Upload build artifact
@@ -325,7 +325,7 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           version=${version#refs/heads/}
-          extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
+          extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-arm64.zip" endcord $extra
           zip "endcord-lite-$version-macos-arm64.zip" endcord-lite $extra
@@ -403,7 +403,7 @@ jobs:
         run: |
           version=${GITHUB_REF#refs/tags/}
           version=${version#refs/heads/}
-          extra="README.md LICENSE docs/commands.md docs/configuration.md docs/extensions.md docs/keybindings.md"
+          extra="README.md LICENSE com.sparklost.endcord.desktop endcord.svg docs/*.md"
           cd dist && mkdir -p docs && cp ../README.md ../LICENSE . && cp ../docs/*.md docs/
           zip "endcord-$version-macos-x86_64.zip" endcord $extra
           zip "endcord-lite-$version-macos-x86_64.zip" endcord-lite $extra

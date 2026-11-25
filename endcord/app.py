@@ -80,6 +80,7 @@ ASSISTED_COMMANDS = ("set ", "string_select ", "set_notifications ", "game_detec
 STATS_COMMAND_TEXT = ("Run time", "Gateway events/h", "Gateway messages/h", "Gateway ping time", "Message buffer size", "Total API requests", "API response time", "Cache sizes", "  Cached members", "  Deleted messages", "  Summaries", "  Image cache")
 match_youtube = re.compile(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}")
 match_last_parentheses = re.compile(r"\([^()]*\)(?!.*\([^()]*\))")
+match_url = re.compile(r"https?:\/\/[\w-]+(?:\.[\w-])+[^\s)\]>]*")   # same as in message.py
 
 
 class Endcord:
@@ -97,14 +98,14 @@ class Endcord:
             if profile["name"] == profiles["selected"]:
                 self.token = profile["token"]
                 self.last_run = profile["time"]
-                custom_host = profile.get("host")
+                self.custom_host = profile.get("host")
                 break
         else:
             profiles = profiles["keyring"] + profiles["plaintext"]
             self.token = profiles[0]["token"]
             self.profiles["selected"] = profiles[0]["name"]
             self.last_run = profiles[0]["time"]
-            custom_host = profile.get("host")
+            self.custom_host = profile.get("host")
 
         # load often used values from config
         self.enable_rpc = config["rpc"]
@@ -164,6 +165,7 @@ class Endcord:
         self.placeholder_images = bool(self.inline_media)   # for extensions
         self.premium_override_commands = []   # for extensions
         self.keep_avatars = False   # for extensions
+        self.command_bindings = command_bindings
 
         if not self.font_ratio:
             self.font_w, self.font_h = terminal_utils.get_font_size()
@@ -188,7 +190,6 @@ class Endcord:
 
         # variables
         self.run = False
-        self.extensions = []
         self.active_channel = {
             "guild_id": None,
             "channel_id": None,
@@ -213,6 +214,14 @@ class Endcord:
         self.deleted_cache = []
         self.last_summary_save = time.monotonic() - SUMMARY_SAVE_INTERVAL - 1
         self.new_version = None
+
+        # early load extensions
+        self.extensions = []
+        if self.config["extensions"] and ENABLE_EXTENSIONS:
+            self.ext_updates = utils.load_json("version.json")
+            if self.ext_updates:
+                self.ext_updates = self.ext_updates["extensions"]
+            self.load_extensions(version, early=True)
 
         # load state
         if self.config["remember_state"]:   # loading this early to set tree_width and use in preload_chat
@@ -239,13 +248,17 @@ class Endcord:
             client_prop = None
         logger.debug(f"User-Agent: {self.user_agent}")
         self.chat = []
-        self.chat.insert(0, f"Connecting to {custom_host or "Discord"}")
-        logger.info(f"Connecting to {custom_host or "Discord"}")
+        self.chat.insert(0, f"Connecting to {self.custom_host or "Discord"}")
+        logger.info(f"Connecting to {self.custom_host or "Discord"}")
 
         # initialize stuff
+        hosts = discord.get_hosts(self.custom_host, proxy=self.config["proxy"])
+        if not hosts or not hosts[3]:
+            raise SystemExit(f"Could not get endpoints for host: {self.custom_host}")
+        api, cdn, dyn_cdn, gateway_host, _ = hosts
         self.discord = discord.Discord(
             self.token,
-            custom_host,
+            api, cdn, dyn_cdn,
             client_prop,
             self.user_agent,
             proxy=self.config["proxy"],
@@ -256,7 +269,7 @@ class Endcord:
         threading.Thread(target=self.preload_chat, daemon=True).start()
         self.gateway = gateway.Gateway(
             self.token,
-            custom_host,
+            api, gateway_host,
             client_prop_gateway,
             self.user_agent,
             proxy=self.config["proxy"],
@@ -301,6 +314,7 @@ class Endcord:
         self.cleanup_cache()
         self.formatter = formatter.ChatGenerator(
             self.config,
+            self.guilds,
             self.colors,
             self.colors_formatted,
             self.colors_code,
@@ -317,7 +331,7 @@ class Endcord:
         self.voice_gateway = None
         self.ptt = None
         self.reset()
-        self.chat.insert(0, f"Connecting to {custom_host or "Discord"}")
+        self.chat.insert(0, f"Connecting to {self.custom_host or "Discord"}")
         self.gateway_state = self.gateway.get_state()
         self.chat_dim, self.tree_dim, _ = self.tui.get_dimensions()
         self.tree = []
@@ -377,11 +391,8 @@ class Endcord:
             )
             self.tui.load_inline_media(self.inline_media)
 
-        # init extensions
+        # init standard extensions
         if self.config["extensions"] and ENABLE_EXTENSIONS:
-            self.ext_updates = utils.load_json("version.json")
-            if self.ext_updates:
-                self.ext_updates = self.ext_updates["extensions"]
             self.load_extensions(version)
             self.tui.load_extensions(self.extensions)
             self.gateway.load_extensions(self.extensions)
@@ -454,13 +465,22 @@ class Endcord:
             sys.exit(0)
 
 
-    def load_extensions(self, version):
+    def load_extensions(self, version, early=False):
         """Load extensions and initialize them"""
         # get extensions
         path = os.path.expanduser(os.path.join(peripherals.config_path, "Extensions"))
         if not os.path.exists(path):
             os.makedirs(os.path.expanduser(path), exist_ok=True)
         extensions, invalid = utils.get_extensions(path)
+
+        # early pass loads only early extensions, normal pass loads the rest
+        extensions = [
+            ext for ext in extensions
+            if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(ext[0])), "early_load")) == early
+        ]
+        if early and not extensions:
+            return
+        start = len(self.extensions)
 
         # load extensions
         log_text = []
@@ -505,14 +525,21 @@ class Endcord:
                 sys.path[:] = original_path
 
         # log stuff
+        loaded = len(self.extensions) - start
+        if early:   # chat and tui are not ready yet, so only log
+            if log_text:
+                logger.info(f"Early loaded {loaded} extensions:\n" + "\n".join(log_text))
+            if log_text_invalid:
+                logger.warning("Invalid early extensions:\n" + "\n".join(log_text_invalid))
+            return
         for ext_file, ext_name in invalid:
             log_text_invalid.append(f"  {ext_name} - ERROR: Invalid extension structure")
         if log_text:
-            logger.info(f"Loaded {len(self.extensions)} extensions:\n" + "\n".join(log_text))
+            logger.info(f"Loaded {loaded} extensions:\n" + "\n".join(log_text))
         if log_text_invalid:
             logger.warning("Invalid extensions:\n" + "\n".join(log_text_invalid))
         self.chat.insert(0, f"Successfully loaded {len(self.extensions)} extensions ({num_outdated} with mismatched version)")
-        self.chat.insert(0, f"Not loaded (invalid) {len(extensions) - len(self.extensions) + len(invalid)} extensions")
+        self.chat.insert(0, f"Not loaded (invalid) {len(extensions) - loaded + len(invalid)} extensions")
         self.tui.update_chat(self.chat, [[[self.colors[0]]]] * len(self.chat))
         self.extension_cache = {}
 
@@ -731,7 +758,6 @@ class Endcord:
         self.search = False
         self.search_end = False
         self.search_gif = False
-        self.search_ext = False
         self.command = False
         self.app_command_autocomplete = ""
         self.app_command_autocomplete_resp = []
@@ -1418,12 +1444,20 @@ class Endcord:
 
     def insert_into_input_store(self, text):
         """Insert text at cursor position for current channel input store"""
+        channel_id = self.active_channel["channel_id"]
         for num, channel in enumerate(self.input_store):
             if channel["id"] == self.active_channel["channel_id"]:
                 input_text = self.input_store[num]["content"]
                 input_index = self.input_store[num]["index"]
                 self.input_store[num]["content"] = input_text[:input_index] + text + input_text[input_index:]
                 self.input_store[num]["index"] = len(input_text[:input_index] + text)
+        else:
+            self.input_store.append({
+                "id": channel_id,
+                "content": text,
+                "index": len(text),
+                "reply": self.replying if self.replying["id"] else None,
+            })
 
 
     def add_to_command_history(self, command):
@@ -2101,17 +2135,6 @@ class Endcord:
                         self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(url, False, True)))
                         self.download_threads[-1].start()
                         continue
-                    elif self.search_ext:
-                        extra_selected = self.tui.get_extra_selected()
-                        if extra_selected < 0:
-                            continue
-                        repo = self.search_results[extra_selected]
-                        from endcord import git
-                        status, message = git.install_extension(repo[0] + "/" + repo[1], cli=False, proxy=self.config["proxy"])
-                        self.stop_extra_window()
-                        self.update_extra_line(message)
-                        self.restore_input_text = (input_text, "standard")
-                        continue
                     elif self.assist_found:
                         new_input_text, new_input_index = self.insert_assist(
                             input_text,
@@ -2507,11 +2530,9 @@ class Endcord:
                             self.restore_input_text = (input_text, "standard extra")
                             self.view_profile(clicked_id)
                         elif clicked_type == 9:   # channel
-                            if "/" in clicked_id:
-                                message_id = clicked_id.split("/")[1]
-                                clicked_id = clicked_id.split("/")[0]
-                            else:
-                                message_id = None
+                            parts = clicked_id.split("/")   # channel, guild/channel or guild/channel/message
+                            message_id = parts[2] if len(parts) == 3 else None
+                            clicked_id = parts[1] if len(parts) > 1 else parts[0]
                             channel_id, _, guild_id, _, parent_hint = self.find_parents_from_id(clicked_id)
                             if channel_id:
                                 self.switch_channel(channel_id, guild_id, parent_hint=parent_hint)
@@ -2524,10 +2545,12 @@ class Endcord:
                             if embed_name and embed_name.startswith("SPOILER_") and 1000 + clicked_id not in self.messages[msg_index].get("spoiled", []):
                                 self.spoil(msg_index, 1000 + clicked_id)
                             else:
-                                if embed["type"] in ("article", "rich"):
+                                if embed["type"] in ("article", "rich", "link") and embed.get("proxy_url"):
                                     url = embed["proxy_url"] or embed["main_url"]
                                 else:
                                     url = embed["main_url"] if not embed["url"].startswith("https://") else embed["url"]
+                                if not url and embed.get("proxy_url"):   # fallback just in case
+                                    url = embed.get("proxy_url")
                                 self.download_threads.append(threading.Thread(target=self.download_file, daemon=True, args=(url, False, True)))
                                 self.download_threads[-1].start()
 
@@ -3050,11 +3073,9 @@ class Endcord:
                         self.update_status_line()
                         continue
                     object_id = self.going_to_ch[num]
-                    if "/" in object_id:
-                        message_id = object_id.split("/")[1]
-                        object_id = object_id.split("/")[0]
-                    else:
-                        message_id = None
+                    parts = object_id.split("/")   # channel, guild/channel or guild/channel/message
+                    message_id = parts[2] if len(parts) == 3 else None
+                    object_id = parts[1] if len(parts) > 1 else parts[0]
                     channel_id, _, guild_id, _, parent_hint = self.find_parents_from_id(object_id)
                     if channel_id:
                         self.switch_channel(channel_id, guild_id, parent_hint=parent_hint)
@@ -3583,11 +3604,9 @@ class Endcord:
                     select_num = 0
                 select_num = max(min(select_num-1, len(channels)-1), 0)
                 object_id = channels[select_num]
-                if "/" in object_id:
-                    message_id = object_id.split("/")[1]
-                    object_id = object_id.split("/")[0]
-                else:
-                    message_id = None
+                parts = object_id.split("/")   # channel, guild/channel or guild/channel/message
+                message_id = parts[2] if len(parts) == 3 else None
+                object_id = parts[1] if len(parts) > 1 else parts[0]
                 channel_id, _, guild_id, _, parent_hint = self.find_parents_from_id(object_id)
                 if channel_id:
                     if not reset:   # means its from command bindings
@@ -3807,6 +3826,9 @@ class Endcord:
         elif cmd_type == 33:   # INSERT_TIMESTAMP
             timestamp = cmd_args["timestamp"]
             self.insert_into_input_store(timestamp)
+            reset = False
+            self.restore_input_text = (None, None)
+            return
 
         elif cmd_type == 34:   # VOTE
             select_num = max(cmd_args.get("num", 0), 0)
@@ -3997,6 +4019,8 @@ class Endcord:
             search_text = search_text.strip()
             if search_text[8:].startswith("tenor.com/") or search_text[8:].startswith("klipy.com/"):
                 self.insert_into_input_store(search_text)
+                reset = False
+                self.restore_input_text = (None, None)
             elif not self.search:
                 reset = False
                 self.reset_states(editing=False)
@@ -4080,10 +4104,7 @@ class Endcord:
                 settings["status"]["custom_status"]["text"] = self.my_status["custom_status"]
             if self.my_status["custom_status_emoji"]:
                 settings["status"]["custom_status"]["emoji_name"] = self.my_status["custom_status_emoji"]["name"]
-            if not self.gateway.legacy:
-                success = self.discord.patch_settings_proto(1, settings)
-            else:
-                success = self.discord.patch_settings_old("custom_status", {"text": self.my_status["custom_status"]})
+            success = self.discord.patch_settings_proto(1, settings)
             if success:
                 self.gateway.update_presence(
                     self.my_status["status"],
@@ -4412,21 +4433,6 @@ class Endcord:
             else:   # update
                 threading.Thread(target=self.update_extensions, daemon=True, args=(True, False, False)).start()
 
-        elif cmd_type == 73:   # SEARCH_EXTENSIONS
-            from endcord import git
-            extensions = git.search_gh_repos("endcord-extension", proxy=self.config["proxy"])
-            if extensions:
-                self.tui.disable_wrap_around(True)
-                max_w = self.tui.get_dimensions()[2][1]
-                self.search_ext = True
-                self.search_results = extensions
-                extra_title, extra_body, extra_format = formatter.generate_extra_window_search_ext(extensions, self.extensions, self.ext_updates, self.colors, max_w)
-                self.stop_assist(close=False)
-                self.tui.draw_extra_window(extra_title, extra_body, extra_format, select=True)
-                self.extra_window_open = True
-            else:
-                self.update_extra_line("Extension search failed", color=20)
-
         elif cmd_type == 74:   # RESIZE_POPUP_WINDOW
             self.tui.set_extra_height(cmd_args["value"])
 
@@ -4629,7 +4635,7 @@ class Endcord:
             self.voice_gateway.stop_video_player()
 
         elif cmd_type == 90 and self.voice_gateway and self.in_call and support_media:   # VOICE_ENABLE_CAMERA
-            name = cmd_args.get("name").removesuffix(" - Low quality (use voice_start_stream instead)")
+            name = cmd_args.get("name")
             from endcord import voice
             sources = voice.get_video_sources()
             command = None
@@ -4643,9 +4649,8 @@ class Endcord:
                     self.update_extra_line("Specified video source could not be found", color=19)
                     command = None
             if command:
-                self.in_call["video"] = True
+                self.in_call["video"] = self.voice_gateway.start_video_streaming(command)
                 self.update_voice_state()
-                self.voice_gateway.start_video_streaming(command)
                 self.update_call_extra_line()
 
         elif cmd_type == 91 and self.voice_gateway and self.in_call:   # VOICE_DISABLE_CAMERA
@@ -4653,6 +4658,45 @@ class Endcord:
             self.update_voice_state()
             self.voice_gateway.stop_video_streaming()
             self.update_call_extra_line()
+
+        elif cmd_type == 92:   # SETTINGS/SETTINGS-THEME/KEYBINDING/EXTENSION_MANAGER/VUMETER/COLOR_PALETTE/DOCUMENTATION
+            ui = cmd_args["ui"]
+            if ui == 5 and self.in_call:
+                self.update_extra_line("First leave the call", color=self.colors[9])
+                return
+            screen = self.tui.pause_tui()
+            need_restart = False
+            if ui == 1:   # settings
+                from endcord import settings
+                need_restart = settings.main_tui(screen, self.config, defaults.settings, title="Settings")
+            if ui == 2:   # settings_theme
+                from endcord import settings
+                bkp_path = self.config["config_path"]
+                if self.config["theme_path"]:   # theme is in separate file
+                    self.config["config_path"] = self.config["theme_path"]
+                need_restart = settings.main_tui(screen, config, defaults.theme, title="Theme")
+                self.config["config_path"] = bkp_path
+            elif ui == 3:   # keybinding
+                from endcord import keybinding_settings
+                need_restart = keybinding_settings.main_tui(screen, self.config)
+            elif ui == 4:   # extensions_manager
+                from endcord import extension_manager
+                need_restart = extension_manager.main_tui(screen, self.config)
+            elif ui == 5:   # vumeter
+                from endcord import vumeter
+                vumeter_app = vumeter.VUMeter(screen, self.config)
+                if vumeter_app.do_denoise is not None:
+                    self.config["call_noise_suppression"] = vumeter_app.do_denoise
+                    self.config["call_silence_threshold"] = vumeter_app.threshold_db
+            elif ui == 6:   # color_palette
+                from endcord import color
+                color.color_palette_tui(screen, self.config)
+            elif ui == 7:   # documentation
+                from endcord import documentation
+                documentation.main_tui(screen, self.config)
+            self.tui.resume_tui()
+            if need_restart:
+                self.update_extra_line("Restart needed for changes to take effect", color=self.colors[9])
 
         if success is None:
             self.gateway.set_offline()
@@ -5041,12 +5085,18 @@ class Endcord:
     def get_embed_type(self, msg_index, url):
         """Get kind of embed by its url: "media" - playable, "file" - downloadable, None - not embed"""
         for embed in self.messages[msg_index]["embeds"]:
-            if url in (embed["url"], embed.get("main_url")) or (embed["type"] == "rich" and url in embed["url"]):
-                if embed["type"].split("/")[0] in MEDIA_EMBEDS:
+            embed_type = embed["type"]
+            if embed_type == "rich":
+                urls = re.findall(match_url, embed["url"])
+                for embed_url, is_media in zip(urls, embed["media"]):
+                    if url == embed_url:
+                        return "media" if is_media else None
+                continue
+            if url in (embed.get("url"), embed.get("main_url")):
+                if embed_type.split("/")[0] in MEDIA_EMBEDS:
                     return "media"
                 if "main_url" not in embed:
                     return "file"
-                return None
         return None
 
 
@@ -5148,7 +5198,7 @@ class Endcord:
             "mention_everyone": None,
             "user_id": self.my_id,
             "username": self.my_user_data["username"],
-            "global_name": self.my_user_data["global_name"],   # spacebar_fix - get
+            "global_name": self.my_user_data["global_name"],
             "nick": self.my_user_data["nick"],
             "referenced_message": referenced_message,
             "reactions": [],
@@ -5205,6 +5255,8 @@ class Endcord:
 
     def download_file(self, url, move=True, open_media=False, open_move=False, copy=False):
         """Thread that downloads and moves file to downloads dir"""
+        if not url:
+            return
         is_gif = any(domain in url for domain in GIF_PROVIDERS)
         if is_gif:
             url = utils.convert_gif_type(url, self.gif_download_type)
@@ -5316,7 +5368,6 @@ class Endcord:
         at_index = len(self.ready_attachments[channel_id]) - 1
         self.selected_attachment = at_index
 
-        self.add_running_task("Uploading file", 2)
         time.sleep(0.01)   # time for tui to clear extra window before drawing extra line
         self.update_extra_line()
         upload_data, code = self.discord.request_attachment_url(channel_id, path)
@@ -5325,14 +5376,12 @@ class Endcord:
             self.update_extra_line("Network error", color=20)
         if channel_id not in self.ready_attachments:
             self.update_extra_line()
-            self.remove_running_task("Uploading file", 2)
             return
         try:
             if upload_data:
                 uploaded = self.discord.upload_attachment(upload_data["upload_url"], path)
                 if uploaded is None:
                     self.update_extra_line()
-                    self.remove_running_task("Uploading file", 2)
                     return
                 if uploaded:
                     self.ready_attachments[channel_id][at_index]["upload_url"] = upload_data["upload_url"]
@@ -5352,7 +5401,6 @@ class Endcord:
         if delete:
             os.remove(path)
         self.update_extra_line()
-        self.remove_running_task("Uploading file", 2)
 
 
     def cancel_upload(self):
@@ -5687,10 +5735,7 @@ class Endcord:
                 },
             }
             if not temp:
-                if not self.gateway.legacy:
-                    self.discord.patch_settings_proto(1, settings)
-                else:   # spacebar_fix - using old user_settings
-                    self.discord.patch_settings_old("status", status)
+                self.discord.patch_settings_proto(1, settings)
             self.update_status_line()
 
 
@@ -5860,6 +5905,7 @@ class Endcord:
             pinned,
             self.current_roles,
             self.current_channels,
+            self.guilds,
             self.blocked,
             len(pinned),
             self.config,
@@ -6129,6 +6175,7 @@ class Endcord:
             self.search_results,
             self.current_roles,
             self.current_channels,
+            self.guilds,
             self.blocked,
             total_search_messages,
             self.config,
@@ -6171,6 +6218,7 @@ class Endcord:
                 search_chunk,
                 self.current_roles,
                 self.current_channels,
+                self.guilds,
                 self.blocked,
                 total_search_messages,
                 self.config,
@@ -6478,12 +6526,13 @@ class Endcord:
             elif command_lower.startswith("voice_enable_camera ") and self.in_call:
                 from endcord import voice
                 self.assist_found = search.search_options(
-                    [x + " - Low quality (use voice_start_stream instead)" if x == "Capture Screen" else x for x, _ in voice.get_video_sources()],
+                    [x for x, _ in voice.get_video_sources()],
                     assist_word[20:],
                     assist_word[:19],
                     limit=self.assist_limit,
                     score_cutoff=self.assist_score_cutoff,
                 )
+                self.assist_found = [(x + " - Low quality (use voice_start_stream instead)", y) if x == "Capture Screen" else (x, y) for x, y, z in self.assist_found]
                 extra_format = [None] * len(self.assist_found)
 
             elif command_lower.startswith("gif "):
@@ -6502,18 +6551,17 @@ class Endcord:
                         extra_format.append(None)
 
             elif assist_word:
-                self.assist_found = search.search_client_commands(
+                commands = search.search_client_commands(
                     COMMAND_ASSISTS,
                     assist_word,
                     limit=self.assist_limit,
                     score_cutoff=self.assist_score_cutoff,
                 )
-                for line in self.assist_found:
-                    extra_format.append([(color_standout, None, 0, len(line[0].split(" ", 1)[0])), (color_low, None, line[0].find(" - ") + 3, max_w)])
+                self.assist_found, new_format = formatter.generate_command_assist(commands, self.command_bindings, self.colors, max_w)
+                extra_format.extend(new_format)
             else:
-                self.assist_found = COMMAND_ASSISTS
-                for line in self.assist_found:
-                    extra_format.append([(color_standout, None, 0, len(line[0].split(" ", 1)[0])), (color_low, None, line[0].find(" - ") + 3, max_w)])
+                self.assist_found, new_format = formatter.generate_command_assist(COMMAND_ASSISTS, self.command_bindings, self.colors, max_w)
+                extra_format.extend(new_format)
 
         elif assist_type == 6:   # app commands
             assist_words = assist_word[1:].split(" ")
@@ -6630,7 +6678,6 @@ class Endcord:
             self.tui.typing = time.monotonic() - 5
         self.search = False
         self.search_gif = False
-        self.search_ext = False
         self.tui.disable_wrap_around(False)
         self.search_end = False
         self.search_results = []
@@ -6658,11 +6705,13 @@ class Endcord:
             insert_string = f"<@{self.assist_found[index][1]}>"
 
         elif self.assist_type == 3:   # emoji
-            # default emoji - :emoji_name:
+            # default emoji - unicode character / :emoji_name:
             # discord emoji format: "<:name:ID>"
             insert_string = self.assist_found[index][1]
             if input_text.startswith("+:") and start == 2 and insert_string.startswith("<:"):
                 insert_string = ":" + insert_string
+            if not self.emoji_as_text:
+                insert_string = utils.emojize(insert_string)
 
         elif self.assist_type == 4:   # sticker
             insert_string = f"<;{self.assist_found[index][1]};>"   # format: "<;ID;>"
@@ -6894,12 +6943,6 @@ class Endcord:
             selected_line = 0
             selected_msg = 0
             remainder = 0
-
-        # spacebar_fix - message/referenced_message is always null, instead only for deleted message
-        if self.gateway.legacy:
-            for message in self.messages:
-                if message["referenced_message"] and not message["referenced_message"]["id"]:
-                    message["referenced_message"] = None
 
         # find message id for last acked line
         last_seen_msg = None
@@ -8517,6 +8560,7 @@ class Endcord:
             x264_bitrate=self.config["call_x264_bitrate"],
             x264_preset=self.config["call_x264_preset"],
             stream=False,
+            dbus=(curses.get_dbus_connection() if uses_gtkcurses else None),
         )
         self.in_call = {"guild_id": guild_id, "channel_id": channel_id, "video": False, "stream": False}
         for _ in range(100):   # wait for 10s
@@ -8803,6 +8847,7 @@ class Endcord:
         title, body = formatter.generate_message_notification(
             data,
             channels,
+            self.guilds,
             guild_roles,
             guild_name,
             self.my_user_data,
@@ -8859,6 +8904,11 @@ class Endcord:
             "extensions": {},
         }, create=True)
         just_updated = manual or git.ver_to_tuple(peripherals.VERSION) > git.ver_to_tuple(last_check["current"])
+        if just_updated:
+            last_check["current"] = peripherals.VERSION
+        if just_updated and os.path.exists(os.path.join(peripherals.config_path, "docs")):   # clean docs after update
+            shutil.rmtree(os.path.join(peripherals.config_path, "docs"))
+            os.makedirs(os.path.join(peripherals.config_path, "docs"), exist_ok=True)
         if not manual and not just_updated and int(time.time()) - last_check["time"] < self.config["check_update_interval"] * 86400:
             return
         if manual or git.ver_to_tuple(peripherals.VERSION) > git.ver_to_tuple(last_check["version"]):
@@ -9059,7 +9109,7 @@ class Endcord:
         # get data from gateway
         guilds = self.gateway.get_guilds()
         if guilds:
-            self.guilds = guilds
+            self.guilds[:] = guilds   # keep reference here
         self.all_roles = self.gateway.get_roles()
         self.all_roles = color.convert_role_colors(self.all_roles, default=self.config["color_default"][0])
 

@@ -20,7 +20,7 @@ else:
 
 from endcord import arg, config, defaults, peripherals, utils
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 default_config_path = peripherals.config_path
 log_path = peripherals.log_path
 threading.stack_size(512 * 1024)
@@ -109,11 +109,34 @@ def main(args):
             curses.enable_tray = False
         color.color_palette(config_data)
         sys.exit(0)
-    elif args.keybinding:
-        from endcord import keybinding
+    elif args.settings or args.settings_theme:
+        from endcord import settings
         if uses_gtkcurses:
             curses.enable_tray = False
-        keybinding.picker(keybindings, command_bindings, config_data)
+        if args.settings_theme:
+            if config_data["theme_path"]:   # theme is in separate file
+                config_data["config_path"] = config_data["theme_path"]
+            settings.settings(config_data, defaults.theme, "Theme")
+        else:
+            settings.settings(config_data, defaults.settings, "Settings")
+        sys.exit(0)
+    elif args.doc:
+        from endcord import documentation
+        if uses_gtkcurses:
+            curses.enable_tray = False
+        documentation.documentation(config_data)
+        sys.exit(0)
+    elif args.keybinding:
+        from endcord import keybinding_settings
+        if uses_gtkcurses:
+            curses.enable_tray = False
+        keybinding_settings.bindings(config_data)
+        sys.exit(0)
+    elif args.extensions:
+        from endcord import extension_manager
+        if uses_gtkcurses:
+            curses.enable_tray = False
+        extension_manager.manage(config_data)
         sys.exit(0)
     elif args.vumeter:
         from endcord import vumeter

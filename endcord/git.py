@@ -116,7 +116,11 @@ def check_for_update(current_version, owner, repo, etag=None, proxy=None):
     except (socket.gaierror, TimeoutError):
         connection.close()
         return None, etag
-    new_etag = response.getheader("ETag")[3:-1] or etag
+    new_etag = response.getheader("ETag")
+    if new_etag:
+        new_etag = new_etag[3:-1]
+    else:
+        new_etag = etag
     if response.status == 304:
         connection.close()
         return None, new_etag
@@ -132,7 +136,7 @@ def check_for_update(current_version, owner, repo, etag=None, proxy=None):
     return None, new_etag
 
 
-def search_gh_repos(topic, num=30, page=1, official_maintainer=peripherals.REPO_OWNER, proxy=None):
+def search_gh_repos(topic, num=50, page=1, official_maintainer=peripherals.REPO_OWNER, proxy=None):
     """Search github repositories"""
     query = urllib.parse.urlencode({
         "q": f"topic:{topic}",
@@ -154,7 +158,8 @@ def search_gh_repos(topic, num=30, page=1, official_maintainer=peripherals.REPO_
             repo_name = item["name"]
             description = item["description"] or "No description"
             owner = item["owner"]["login"]
-            repos.append((owner, repo_name, description, owner == official_maintainer))
+            source = item["html_url"]
+            repos.append((owner, repo_name, description, owner == official_maintainer, source))
         return repos
     connection.close()
     logger.error(f"Failed searching for repos: {topic}, page: {page}, http error code: {response.status}")

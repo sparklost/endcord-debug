@@ -6,6 +6,8 @@ import os
 import re
 from datetime import datetime
 
+from endcord import color
+
 PLATFORM_TYPES = ("Desktop", "Xbox", "Playstation", "IOS", "Android", "Nitendo", "Linux", "MacOS")
 CONTENT_TYPES = ("Played Game", "Watched Media", "Top Game", "Listened Media", "Listened Session", "Top Artist", "Custom Status", "Launched Activity", "Leaderboard")
 DISCORDAPP_CDN_ATTACHMENTS = ("https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments")
@@ -13,8 +15,7 @@ GIF_PROVIDERS = ("tenor.com/", "giphy.com/", "klipy.com/")
 YOUTUBE_DOMAINS = ("youtube.", "youtu.be")
 
 match_discord_attachment_url = re.compile(r"https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\/attachments\/\d+\/\d+\/([^\?\s)\]>]+)(?:\?.+)?")
-match_url = re.compile(r"https?:\/\/[\w-]+(\.[\w-])+[^\s)\]>]*")
-
+match_url = re.compile(r"https?:\/\/[\w-]+(?:\.[\w-])+[^\s)\]>]*")
 
 
 def generate_timestamp(timestamp, timestamp_format, unix=False):
@@ -51,8 +52,14 @@ def prepare_embeds(embeds, message_content):
         is_yt = any(domain in url + video_url for domain in YOUTUBE_DOMAINS)
 
         if url and not is_gif:
-            # dont repeat unless its not discord attachment and handle x=twitter
-            already_shown = url in message_content.replace("https://x.com", "https://twitter.com")
+            normalized_content = message_content.replace("https://x.com", "https://twitter.com")
+            normalized_url = url.rstrip("/")
+            matches = re.findall(match_url, normalized_content)
+            matching_url = next((match for match in matches if match.rstrip("/") == normalized_url), None)
+            already_shown = matching_url is not None
+            if already_shown and embed_type == "rich":
+                message_content = re.sub(re.escape(matching_url), "", message_content, count=1)
+                already_shown = False
             if embed_type == "image" or (embed_type != "rich" and ".discordapp." not in url) or not already_shown:
                 main_url = url
                 skip_main_url = True
@@ -116,7 +123,7 @@ def prepare_embeds(embeds, message_content):
             content.append(quote(footer_text))
             media += [False] * len(re.findall(match_url, footer_text))
 
-        if author and content and (embed_type == "video" or content[-1].startswith("> ")):
+        if author and content and (embed_type in ("video", "rich") or content[-1].startswith("> ")):
             content.append(author)
         content = "\n".join(content)
         if content or proxy_url:
@@ -140,6 +147,8 @@ def prepare_embeds(embeds, message_content):
             }
             if embed_type == "rich":
                 ready_data["media"] = media
+                if embed.get("color"):
+                    ready_data["color"] = color.closest_color(color.int_to_rgb(embed["color"]))[0]
             ready_embeds.append(ready_data)
 
     return ready_embeds, message_content
@@ -175,7 +184,7 @@ def prepare_message(message):
     if "referenced_message" in message:
         if message["referenced_message"]:
             reference_nick = None
-            for mention in message["mentions"]:
+            for mention in message.get("mentions"):
                 if mention["id"] == message["referenced_message"]["id"]:
                     if "member" in mention:
                         reference_nick = mention["member"]["nick"]
@@ -183,8 +192,8 @@ def prepare_message(message):
             if message["referenced_message"]["mentions"]:
                 for ref_mention in message["referenced_message"]["mentions"]:
                     ref_mentions.append({
-                        "username": ref_mention.get("username"),   # spacebar_fix - get
-                        "global_name": ref_mention.get("global_name"),   # spacebar_fix - get
+                        "username": ref_mention["username"],
+                        "global_name": ref_mention.get("global_name"),
                         "id": ref_mention["id"],
                     })
             if message["referenced_message"].get("message_snapshots"):
@@ -211,7 +220,7 @@ def prepare_message(message):
                 "mentions": ref_mentions,
                 "user_id": message["referenced_message"]["author"]["id"],
                 "username": message["referenced_message"]["author"]["username"],
-                "global_name": message["referenced_message"]["author"].get("global_name"),   # spacebar_fix - get
+                "global_name": message["referenced_message"]["author"].get("global_name"),
                 "nick": reference_nick,
                 "embeds": reference_embeds,
                 "stickers": message["referenced_message"].get("sticker_items", []),
@@ -230,7 +239,7 @@ def prepare_message(message):
         for reaction in message["reactions"]:
             reactions.append({
                 "emoji": reaction["emoji"]["name"],
-                "emoji_id": reaction["emoji"].get("id"),   # spacebar_fix - get
+                "emoji_id": reaction["emoji"].get("id"),
                 "count": reaction["count"],
                 "me": reaction.get("me"),
             })
@@ -250,7 +259,7 @@ def prepare_message(message):
 
     # special message types
     message = prepare_special_message_types(message)
-    if message.get("poll"):   # spacebar_fix - get
+    if message.get("poll"):
         poll = prepare_poll(message["poll"])
     else:
         poll = None
@@ -272,18 +281,18 @@ def prepare_message(message):
             data["duration"] = round(attachment["duration_secs"])
         embeds.append(data)   # keep attachments in same place as embeds (attachments have no "main_url")
     message, embeds = content_to_attachment(message, embeds)
+
     # mentions
     mentions = []
-    if message["mentions"]:
-        for mention in message["mentions"]:
-            mentions.append({
-                "username": mention.get("username"),   # spacebar_fix - get
-                "global_name": mention.get("global_name"),   # spacebar_fix - get
-                "id": mention["id"],
-            })
+    for mention in message.get("mentions"):
+        mentions.append({
+            "username": mention["username"],
+            "global_name": mention.get("global_name"),
+            "id": mention["id"],
+        })
 
     # interactions
-    if message.get("interaction"):   # spacebar_fix - get
+    if message.get("interaction"):
         interaction = {
             "username": message["interaction"]["user"]["username"],
             "global_name": message["interaction"]["user"].get("global_name"),
@@ -311,14 +320,14 @@ def prepare_message(message):
         "channel_id": message["channel_id"],
         "guild_id": message.get("guild_id"),
         "timestamp": message["timestamp"],
-        "edited": bool(message.get("edited_timestamp")),   # spacebar_fix - get
+        "edited": bool(message["edited_timestamp"]),
         "content": message["content"],
         "mentions": mentions,
         "mention_roles": message["mention_roles"],
         "mention_everyone": message["mention_everyone"],
         "user_id": message["author"]["id"],
         "username": message["author"]["username"],
-        "global_name": message["author"].get("global_name"),   # spacebar_fix - get
+        "global_name": message["author"].get("global_name"),
         "nick": nick,
         "referenced_message": reference,
         "reactions": reactions,
@@ -331,7 +340,7 @@ def prepare_message(message):
         message_dict["poll"] = poll
     if component_info:
         message_dict["component_info"] = component_info
-    if "bot" in message["author"]:
+    if message["author"].get("bot"):
         message_dict["bot"] = 1 + bool(message.get("flags", 0) & 64)   # 2 if ephemeral message
     if "webhook_id" in message:
         message_dict["webhook"] = True
@@ -734,7 +743,7 @@ def prepare_poll(poll):
 
 def is_relevant_message(op, message, current_channel_id, channel_cache, guilds, my_id, my_all_roles):
     """
-    Check of message is relevant and should be further processed.
+    Check if message is relevant and should be further processed.
     - Message is in current or cached channel
     - Message should ping
     """

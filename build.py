@@ -14,6 +14,8 @@ import sys
 import tomllib
 from datetime import datetime
 
+from tools import uvcompat
+
 CUSTOM_CFLAGS = [
     "-DNDEBUG",
     "-g0",
@@ -215,9 +217,9 @@ def get_python_version():
     """Get python major and minor versions"""
     if shutil.which("uv"):
         try:
-            version_result = subprocess.run(["uv", "run", "--no-sync", "python", "-VV"], capture_output=True, text=True, check=True)
+            version_result = uvcompat.run(["uv", "run", "--no-sync", "python", "-VV"], capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as e:
-            fprint(f"uv error: {e}", color_code=RED, prefix="", file=sys.stderr)
+            fprint(f"uv error: {e}", color=RED, prefix="", file=sys.stderr)
             return sys.version_info.major, sys.version_info.minor, not is_gil_enabled()
         all_parts = version_result.stdout.strip().split(" ")
         version_parts = all_parts[1].split(".")
@@ -242,7 +244,7 @@ def check_python():
         fprint(f"Python {sys.version_info.major} is not supported. Only Python 3 is supported.", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
 
-    if os.environ.get("UV", ""):
+    if uvcompat.in_env():
         if sys.version_info.minor < 12 or sys.version_info.minor > PYTHON_MAX_MINOR:
             fprint(f'WARNING: Python {sys.version_info.major}.{sys.version_info.minor} is not supported but build may succeed. Run "python build.py" to let uv download and setup recommended temporary python interpreter.', color=RED)
         if not is_gil_enabled():
@@ -252,8 +254,11 @@ def check_python():
                 fprint(f'WARNING: Endcord is known to only build with freethreaded python version 3.{PYTHON_FREETHREADED}. Build is likely to fail on other versions. Run "python build.py" to let uv download and setup recommended temporary python interpreter, optionally with flag "--freethreaded".', color=RED)
         return False
 
+    if not uvcompat.HAS_UV:
+        return True
+
     try:
-        subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+        uvcompat.run(["uv", "--version"], capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         fprint(f"uv error: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(1)
@@ -271,6 +276,10 @@ def ensure_python(freethreaded, safe=False):
         selected_version = PYTHON_MAX_MINOR
 
     _, minor, have_freethreaded = get_python_version()
+    if not uvcompat.HAS_UV:   # cant download python without uv
+        if minor != selected_version or freethreaded != have_freethreaded:
+            fprint("WARNING: uv not found, cant set up requested python, using current one", color=RED)
+        return None, have_freethreaded
     if minor == selected_version and freethreaded == have_freethreaded:
         return None, have_freethreaded
 
@@ -279,11 +288,11 @@ def ensure_python(freethreaded, safe=False):
     else:
         version = f"{PYTHON_MAJOR}.{selected_version}"
         # ensure there is no same-name freethreaded python
-        subprocess.run(["uv", "python", "uninstall", f"{PYTHON_MAJOR}.{minor}+freethreaded"], check=False)
+        uvcompat.run(["uv", "python", "uninstall", f"{PYTHON_MAJOR}.{minor}+freethreaded"], check=False)
 
     freethreaded_string = "freethreaded " if freethreaded else ""
     fprint(f"Setting up {freethreaded_string}python {version} for this project")
-    subprocess.run(["uv", "python", "install", version], check=True)
+    uvcompat.run(["uv", "python", "install", version], check=True)
 
     return version, have_freethreaded or freethreaded
 
@@ -385,10 +394,10 @@ def print_env_info():
     iprint(f"Architecture : {platform.machine()}")
     iprint(f"CPU Cores    : {os.cpu_count()}")
     try:
-        version = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+        version = uvcompat.run(["uv", "--version"], capture_output=True, text=True, check=True)
         iprint(f"uv           : {version.stdout.strip().removeprefix("uv ")}")
     except Exception:
-        iprint("uv           : Not installed", color=RED)
+        iprint("uv           : Not installed")
     iprint(f"Python       : {get_nice_python_version()}")
     iprint(f"GCC          : {get_bin_version("gcc")}")
     iprint(f"Clang        : {get_bin_version("clang")}")
@@ -403,7 +412,7 @@ def print_env_info():
         iprint(f"Git Branch   : {branch}")
         iprint(f"Modified     : {"Yes" if status else "No"}")
     except Exception:
-        iprint("Git Info     : Not a git repository or git command missing")
+        iprint("Git Info     : Not a git repository or git not installed")
 
 
 def check_deps(*deps):
@@ -414,46 +423,47 @@ def check_deps(*deps):
     return True
 
 
-def setup_dependencies(level, set_dev):
+def setup_dependencies(level, set_dev, silent=False):
     """Setup first stage of dependencies based on provided level"""
     restore_file("pyproject.toml", ".pyproject.toml.bak")
 
     if level == "FULL" and (not check_deps("av", "dave", "PIL", "nacl") or (set_dev and not check_deps("nuitka"))):
-        subprocess.run(["uv", "sync", "--group=media"] + (["--group=build"] if set_dev else []), check=True)
+        uvcompat.run(["uv", "sync", "--group=media"] + (["--group=build"] if set_dev else []), check=True)
 
     elif level == "MEDIUM" and (not check_deps("PIL") or check_deps("av") or (set_dev and not check_deps("nuitka"))):
-        subprocess.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
+        uvcompat.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
         with open("pyproject.toml", "rb") as f:
             media_deps = tomllib.load(f).get("dependency-groups", {}).get("media", {})
         medium_deps = load_build_config().get("medium_deps", [])
         for media_dep in media_deps:
             if any(x in media_dep for x in medium_deps):
-                subprocess.run(["uv", "pip", "install", media_dep], check=True)
+                uvcompat.run(["uv", "pip", "install", media_dep], check=True)
 
     elif level == "LITE" and (check_deps("PIL") or not check_deps("numpy") or (set_dev and not check_deps("nuitka"))):
-        subprocess.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
+        uvcompat.run(["uv", "sync"] + (["--group=build"] if set_dev else []), check=True)
 
     elif level == "MINI":
         backup_file("pyproject.toml", ".pyproject.toml.bak")
-        subprocess.run(["uv", "remove", *build_config.get("mini_exclude_deps")], check=True)
+        uvcompat.run(["uv", "remove", *build_config.get("mini_exclude_deps")], check=True)
         if set_dev:
-            subprocess.run(["uv", "sync", "--group=build"], check=True)
+            uvcompat.run(["uv", "sync", "--group=build"], check=True)
         fprint("WARNING: pyproject.toml is modified! Backup is '.pyproject.toml.bak'", color=RED)
 
     elif level == "MICRO":
         backup_file("pyproject.toml", ".pyproject.toml.bak")
-        subprocess.run(["uv", "remove", *build_config.get("micro_exclude_deps")], check=True)
+        uvcompat.run(["uv", "remove", *build_config.get("micro_exclude_deps")], check=True)
         if set_dev:
-            subprocess.run(["uv", "sync", "--group=build"], check=True)
+            uvcompat.run(["uv", "sync", "--group=build"], check=True)
         fprint("WARNING: pyproject.toml is modified! Backup is '.pyproject.toml.bak'", color=RED)
 
-    fprint(f"Environment configured to endcord-{level} with{"" if set_dev else "out"} build dependencies")
+    if not silent:
+        fprint(f"Environment configured to endcord-{level} with{"" if set_dev else "out"} build dependencies")
 
 
 def force_ujson():
     """Remove orjson and install ujson instead"""
-    subprocess.run(["uv", "-q", "pip", "uninstall", "orjson"], check=False, capture_output=True)
-    subprocess.run(["uv", "-q", "pip", "install", "ujson"], check=True)
+    uvcompat.run(["uv", "-q", "pip", "uninstall", "orjson"], check=False, capture_output=True)
+    uvcompat.run(["uv", "-q", "pip", "install", "ujson"], check=True)
     fprint("Switched orjson -> ujson")
 
 
@@ -504,7 +514,7 @@ def setup_gvsbuild(gvsbuild_release):
 def build_third_party_licenses(exclude=[]):
     """Collect and build all licenses found in venv into THIRD_PARTY_LICENSES.txt file"""
     fprint("Building list of third party licenses")
-    subprocess.run(["uv", "pip", "install", "pip-licenses"], check=True)
+    uvcompat.run(["uv", "pip", "install", "pip-licenses"], check=True)
     command = [
         "uv", "run", "pip-licenses",
         "--ignore-packages", *exclude,
@@ -513,8 +523,8 @@ def build_third_party_licenses(exclude=[]):
         "--with-license-file",
         "--output-file=THIRD_PARTY_LICENSES.txt",
     ]
-    subprocess.run(command, check=True)
-    subprocess.run(["uv", "pip", "uninstall", "pip-licenses", "prettytable", "wcwidth"], check=True)
+    uvcompat.run(command, check=True)
+    uvcompat.run(["uv", "pip", "uninstall", "pip-licenses", "prettytable", "wcwidth"], check=True)
     shutil.rmtree("build")
     sys.exit(0)
 
@@ -569,7 +579,7 @@ def install_local_wheels(wheels_dir):
     wheel_files = [os.path.join(wheels_dir, f) for f in os.listdir(wheels_dir) if f.lower().endswith(".whl")]
     if not wheel_files:
         return
-    subprocess.run(["uv", "pip", "install"] + wheel_files, check=True)
+    uvcompat.run(["uv", "pip", "install"] + wheel_files, check=True)
 
 
 def patch_soundcard():
@@ -759,14 +769,14 @@ def toggle_windowed(check_only=False):
 
     # toggle dependencies
     if enable:
-        subprocess.run(["uv", "pip", "install"] + WINDOWED_DEPS, check=True)
+        uvcompat.run(["uv", "pip", "install"] + WINDOWED_DEPS, check=True)
         patch_pystray()
         if sys.platform == "win32":
             install_local_wheels(have_gtk)
         download_font("https://github.com/adobe-fonts/source-code-pro/blob/release/TTF/SourceCodePro-Regular.ttf", "endcord")
         fprint("Windowed mode enabled!")
     else:
-        subprocess.run(["uv", "pip", "uninstall"] + load_build_config().get("windowed_deps", []), check=True)
+        uvcompat.run(["uv", "pip", "uninstall"] + load_build_config().get("windowed_deps", []), check=True)
         if os.path.exists("./endcord/SourceCodePro-Regular.ttf"):
             os.remove("./endcord/SourceCodePro-Regular.ttf")
         fprint("Windowed mode disabled!")
@@ -824,7 +834,7 @@ def setup_compiler(clang, clear=False, overwrite=False, cflags=[], ldflags=[], c
         unsafe_flags += ["-g0", "-O3", "-mtune=generic", "-fno-semantic-interposition", "-fno-strict-overflow"]
         safe = True
     skip_mtune = "-mtune=" in CFLAGS_OLD
-    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags and not (skip_mtune and item.starswith("-mtune"))] if safe else CUSTOM_CFLAGS
+    custom_cflags = [item for item in CUSTOM_CFLAGS if item not in unsafe_flags and not (skip_mtune and item.startswith("-mtune"))] if safe else CUSTOM_CFLAGS
     custom_ldflgs = [item for item in CUSTOM_LDFLAGS if "exclude-libs" not in item] if not exclude else CUSTOM_LDFLAGS
     cflags = ([] if overwrite else CFLAGS_OLD.split(" ")) + custom_cflags + cflags
     cxxflags = ([] if overwrite else CXXFLAGS_OLD.split(" ")) + CUSTOM_CXXFLAGS + cxxflags
@@ -846,13 +856,13 @@ def ensure_custom_python(safe, clang, curses):
     if not check_deps("_bz2"):
         return
     if os.path.exists(".cpython") and os.path.exists(f".cpython/bin/python{PYTHON_MAJOR}.{version.split(".")[1]}"):
-        if os.environ.get("UV", ""):
+        if uvcompat.in_env():
             if os.environ.get("_CUSTOM_PYTHON_CHECKED"):
                 fprint("Failed starting custom python build, delete .cpython dir and try again")
                 sys.exit(1)
             os.environ["_CUSTOM_PYTHON_CHECKED"] = "1"
-            subprocess.run(["uv", "venv", "--clear", "--python", f".cpython/bin/python{PYTHON_MAJOR}.{minor}"], check=True)
-        os.execvp("uv", ["uv", "run", *sys.argv])
+            uvcompat.run(["uv", "venv", "--clear", "--python", f".cpython/bin/python{PYTHON_MAJOR}.{minor}"], check=True)
+        uvcompat.execvp("uv", ["uv", "run", *sys.argv])
         sys.exit(0)
     else:
         build_custom_python(version, clang, curses)
@@ -945,7 +955,7 @@ def build_generic_package(package, clang, safe=False):
         return
     fprint(f"Building {package} with custom compiler args")
     setup_compiler(clang, safe=safe)
-    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
+    uvcompat.run(["uv", "-q", "pip", "install", "pip"], check=True)   # because uv wont work with --config-settings as it should
     try:
         python = ".venv/bin/python" if sys.platform != "win32" else r".venv\Scripts\python.exe"
         subprocess.run([python, "-m", "pip", "uninstall", "--yes", package], check=False, capture_output=True)
@@ -953,8 +963,8 @@ def build_generic_package(package, clang, safe=False):
     except subprocess.CalledProcessError as e:   # fallback
         iprint(e)
         fprint(f"Failed building {package}, falling back to default prebuilt version", color=RED, prefix="")
-        subprocess.run(["uv", "-q", "pip", "install", package], check=True)
-    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True)
+        uvcompat.run(["uv", "-q", "pip", "install", package], check=True)
+    uvcompat.run(["uv", "-q", "pip", "uninstall", "pip"], check=True)
 
 
 def build_numpy_lite(clang):
@@ -967,12 +977,12 @@ def build_numpy_lite(clang):
         "uv", "run", "python", "-c",
         "import numpy; print(int(numpy.__config__.show_config('dicts')['Build Dependencies']['blas'].get('found', False)))",
     ]   # check if numpy without blas is not already installed
-    value = subprocess.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
+    value = uvcompat.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
     if not value or not int(value):
         iprint("Numpy-lite (no openblas) is already built locally")
         return
     setup_compiler(clang)
-    subprocess.run(["uv", "-q", "pip", "install", "pip"], check=True, capture_output=True)   # because uv wont work with --config-settings as it should
+    uvcompat.run(["uv", "-q", "pip", "install", "pip"], check=True, capture_output=True)   # because uv wont work with --config-settings as it should
     try:
         python = ".venv/bin/python" if sys.platform != "win32" else r".venv\Scripts\python.exe"
         subprocess.run([python, "-m", "pip", "uninstall", "--yes", "numpy"], check=False, capture_output=True)
@@ -987,11 +997,11 @@ def build_numpy_lite(clang):
     except subprocess.CalledProcessError as e:   # fallback
         print(e)
         fprint("Failed building numpy-lite, faling back to default numpy", color=RED, prefix="")
-        subprocess.run(["uv", "-q", "pip", "install", "numpy"], check=True)
-    value = subprocess.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
+        uvcompat.run(["uv", "-q", "pip", "install", "numpy"], check=True)
+    value = uvcompat.run(check_openblas_cmd, capture_output=True, text=True, check=False).stdout.strip()
     if value and int(value):
         iprint("Verification failed: numpy after building is still linked to openblas!", color=RED)
-    subprocess.run(["uv", "-q", "pip", "uninstall", "pip"], check=True, capture_output=True)
+    uvcompat.run(["uv", "-q", "pip", "uninstall", "pip"], check=True, capture_output=True)
 
 
 def build_rnnoise(clang):
@@ -1030,7 +1040,7 @@ def build_libopus(clang):
         iprint("Libopus is already built")
         return
     if not shutil.which("make"):
-        iprint("make is missing", color=RED)
+        iprint("Cant build libopus: make is missing", color=RED)
     os.makedirs("build", exist_ok=True)
     setup_compiler(clang, lld=False)
     from tools.build_libopus import build_libopus
@@ -1055,7 +1065,7 @@ def build_cython(clang, mingw):
         cmd.append("--compiler=mingw32")   # covers mingw 32 and 64
 
     # run process with control of stdout
-    process = subprocess.Popen(
+    process = uvcompat.popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -1140,7 +1150,7 @@ def build_with_pyinstaller(level, onedir, print_cmd=False):
         sys.exit(0)
     fprint("Starting pyinstaller")
     try:
-        subprocess.run(cmd, check=True)
+        uvcompat.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
         fprint(f"Build failed: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(e.returncode)
@@ -1225,6 +1235,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         hidden_imports += [
             "--include-module=av.sidedata.encparams",
             "--include-module=av.utils",
+            "--include-module=av._cyutil",
         ]
     if level not in ("MINI", "MICRO"):
         package_data += ["--include-package-data=soundcard"]
@@ -1291,7 +1302,7 @@ def build_with_nuitka(level, onedir, clang, mingw, compile_deps, print_cmd=False
         sys.exit(0)
     fprint("Starting nuitka")
     try:
-        subprocess.run(cmd, check=True)
+        uvcompat.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
         fprint(f"Build failed: {e}", color=RED, prefix="", file=sys.stderr)
         sys.exit(e.returncode)
@@ -1405,6 +1416,11 @@ def parser():
         help="print build command for nuitka or pyinstaller and exit, without configuring any environment",
     )
     parser.add_argument(
+        "--run",
+        action="store_true",
+        help="run main.py in the environment instead of building, all arguments after --run are passed to it",
+    )
+    parser.add_argument(
         "--build-licenses",
         action="store_true",
         help="build file containing licenses from all used third party libraries",
@@ -1415,7 +1431,14 @@ def parser():
         default=argparse.SUPPRESS,
         help="show this help message and exit",
     )
-    return parser.parse_args()
+    argv = sys.argv[1:]
+    run_args = []
+    if "--run" in argv:   # everything after --run goes to main.py
+        index = argv.index("--run")
+        argv, run_args = argv[:index + 1], argv[index + 1:]
+    args = parser.parse_args(argv)
+    args.run_args = run_args
+    return args
 
 
 if __name__ == "__main__":
@@ -1437,9 +1460,10 @@ if __name__ == "__main__":
         shutil.rmtree("build")
 
     if not os.environ.get("FIRST_RUN"):
-        print_env_info()
+        if not args.run:
+            print_env_info()
         os.environ["FIRST_RUN"] = get_nice_python_version()
-    elif os.environ["FIRST_RUN"] != get_nice_python_version():
+    elif os.environ["FIRST_RUN"] != get_nice_python_version() and not args.run:
         fprint(f"Switched to Python {get_nice_python_version()}")
 
     if args.clean_uv:
@@ -1455,9 +1479,9 @@ if __name__ == "__main__":
     if check_python():
         version, freethreaded = ensure_python(args.freethreaded, args.safe)
         if version:
-            os.execvp("uv", ["uv", "run", "-p", "--no-sync", version, *sys.argv] + (["--freethreaded"] if freethreaded else []))
+            uvcompat.execvp("uv", ["uv", "run", "--no-sync", "-p", version, *sys.argv] + (["--freethreaded"] if freethreaded else []))
         else:
-            os.execvp("uv", ["uv", "run", "--no-sync", *sys.argv])
+            uvcompat.execvp("uv", ["uv", "run", "--no-sync", *sys.argv])
         sys.exit(0)
 
     if args.freethreaded:
@@ -1466,16 +1490,22 @@ if __name__ == "__main__":
     if args.toggle_windowed:
         toggle_windowed()
         sys.exit(0)
-    setup_dependencies(args.level, not args.nobuild)
+    setup_dependencies(args.level, not args.nobuild, silent=args.run)
 
     windowed = toggle_windowed(check_only=True)
     if windowed:
-        subprocess.run(["uv", "pip", "install"] + WINDOWED_DEPS, check=True)
+        uvcompat.run(["uv", "pip", "install"] + WINDOWED_DEPS, check=True)
         if sys.platform == "win32":
             install_local_wheels(ensure_gtk())
         fprint("Windowed mode enabled!")
 
-    enable_extensions(enable=(not args.disable_extensions))
+    enable_extensions(enable=(not args.disable_extensions), silent=args.run)
+
+    if args.run:
+        try:
+            sys.exit(subprocess.run([sys.executable, "main.py", *args.run_args], check=False).returncode)
+        except KeyboardInterrupt:
+            sys.exit(0)
 
     if sys.platform not in ("linux", "win32", "darwin"):
         fprint(f"This platform is not supported: {sys.platform}", color=RED, prefix="", file=sys.stderr)

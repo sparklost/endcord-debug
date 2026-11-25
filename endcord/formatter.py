@@ -21,6 +21,7 @@ try:
 except (AttributeError, NameError):
     APP_NAME = "endcord"
 uses_gtkcurses = hasattr(curses, "GTKCURSES")
+many_colors = uses_gtkcurses
 
 DAY_MS = 24 * 60 * 60 * 1000
 DISCORD_EPOCH_MS = 1420070400000
@@ -193,10 +194,10 @@ def format_seconds(seconds, nice=False, pad=True):
     fmt = "02d" if pad else "d"
     if hours:
         parts.append(f"{hours:{fmt}}" + ("h" if nice else ""))
-    if minutes or hours:
-        if pad:
-            parts.append(f"{minutes:{fmt}}" + ("m" if nice else ""))
-    parts.append(f"{secs:{fmt}}" + ("s" if nice else ""))
+    if minutes:
+        parts.append(f"{minutes:{fmt}}" + ("m" if nice else ""))
+    if seconds or not (hours or minutes):
+        parts.append(f"{secs:{fmt}}" + ("s" if nice else ""))
     if nice:
         return " ".join(parts)
     return ":".join(parts)
@@ -706,9 +707,9 @@ def replace_discord_url(text, *ranges_lists):
 
         result.append(left_side)
         if match.group(3):
-            new_text = f"<#{match.group(2)}/{match.group(3)}>>MSG"
+            new_text = f"<#{match.group(1)}/{match.group(2)}/{match.group(3)}>>MSG"
         else:
-            new_text = f"<#{match.group(2)}>"
+            new_text = f"<#{match.group(1)}/{match.group(2)}>"
         result.append(new_text)
         # range is added in replace_channels()
 
@@ -722,11 +723,11 @@ def replace_discord_url(text, *ranges_lists):
     return "".join(result)
 
 
-def replace_channels(text, channels_ids, *ranges_lists):
+def replace_channels(text, current_channels, guilds, *ranges_lists):
     """
     Transform channels string into nicer looking one:
-    `<#channel_id>` --> `#channel_name`
-    And shifts ranges for other range lists.
+    <#channel_id> --> #channel_name and <#guild_id/channel_id> --> guild_name > #channel_name
+    And shifts ranges for other range lists
     """
     result = []
     channel_ranges = []
@@ -736,16 +737,30 @@ def replace_channels(text, channels_ids, *ranges_lists):
         start, end = match.span()
         result.append(text[last_pos:start])
         full_id = match.group(1)
-        if "/" in full_id:
-            channel_id = full_id.split("/")[0]
+        parts = full_id.split("/")
+        if len(parts) == 1:
+            guild_id = None
+            channel_id = parts[0]
         else:
-            channel_id = full_id
-        for channel in channels_ids:
-            if channel_id == channel["id"]:
-                new_text = "#" + channel["name"]
-                break
+            guild_id, channel_id = parts[0], parts[1]
+
+        if guild_id:
+            for guild in guilds:
+                if guild["guild_id"] == guild_id:
+                    for channel in guild["channels"]:
+                        if channel["id"] == channel_id:
+                            new_text = f"{guild["name"]} > #{channel["name"]}"
+                            break
+                    break
+            else:
+                new_text = "#unknown"
         else:
-            new_text = "#unknown"
+            for channel in current_channels:
+                if channel["id"] == channel_id:
+                    new_text = "#" + channel["name"]
+                    break
+            else:
+                new_text = "#unknown"
         result.append(new_text)
 
         new_start = start + offset
@@ -1293,9 +1308,10 @@ def format_poll(poll):
 class ChatGenerator:
     """Chat generator class"""
 
-    def __init__(self, config, colors, colors_formatted, colors_code, my_id, placeholder_emoji, placeholder_images, font_ratio=2.25, dpw=1):
+    def __init__(self, config, guilds, colors, colors_formatted, colors_code, my_id, placeholder_emoji, placeholder_images, font_ratio=2.25, dpw=1):
         # load from config
         self.config = config
+        self.guilds = guilds
         self.format_message = config["format_message"]
         self.format_message_grouped = config["format_message_grouped"]
         self.format_newline = config["format_newline"]
@@ -1798,7 +1814,7 @@ class ChatGenerator:
                     content, _ = replace_mentions(content, ref_message["mentions"], global_name=self.use_global_name, use_nick=self.use_nick)
                     content, _ = replace_roles(content, roles)
                     content = replace_discord_url(content)
-                    content, _ = replace_channels(content, channels)
+                    content, _ = replace_channels(content, channels, self.guilds)
                     content, _ = replace_timestamps(content, self.convert_timezone)
                     content, _ = replace_markdown_urls(content, ())
                     content, _ = replace_escaped_md(content)
@@ -1918,7 +1934,7 @@ class ChatGenerator:
             content, role_ranges = replace_roles(content, roles, emoji_ranges, mention_ranges)
             mention_ranges += role_ranges
             content = replace_discord_url(content, emoji_ranges, mention_ranges)
-            content, channel_ranges = replace_channels(content, channels, emoji_ranges, mention_ranges)
+            content, channel_ranges = replace_channels(content, channels, self.guilds, emoji_ranges, mention_ranges)
             content, timestamp_ranges = replace_timestamps(content, self.convert_timezone, emoji_ranges, mention_ranges, channel_ranges)
             content, code_snippets = replace_code_snippets(content, emoji_ranges, mention_ranges, channel_ranges, timestamp_ranges)
             content, code_blocks = replace_code_blocks(content, emoji_ranges, mention_ranges, channel_ranges, timestamp_ranges, code_snippets)
@@ -1959,6 +1975,7 @@ class ChatGenerator:
         image_locations = []
         embed_marker_ranges = []
         embed_spans = []   # [start, end, real_url] of embed text, to mark urls found inside as embed urls
+        quote_spans = []   # [start, end, color_id] of rich embed text with color, to color its quote character
         for num_e, embed in enumerate(message["embeds"]):
             embed_url = embed["url"]
             embed_type = embed["type"]
@@ -1990,14 +2007,19 @@ class ChatGenerator:
             elif embed_type == "rich":
                 embed_url = embed_url.replace("\r\n", "\n").strip(" \n")
                 embed_url, url_ranges = replace_markdown_urls(embed_url, ())
+                embed_color = embed.get("color") if many_colors else None
                 if url_ranges:
-                    pre_embed_len = pre_content_len + len(content) + len(embed_type) + 10
+                    pre_embed_len = pre_content_len + len(content)
                     for url_range in url_ranges:
                         urls.append([pre_embed_len + url_range[0], pre_embed_len + url_range[1], url_range[2], True])
-                embed_marker_ranges.append([len(content), len(content) + 13])
-                content += f"[rich embed]:\n{embed_url}"
+                if many_colors and embed_color is not None:
+                    embed_color += (6500 if mentioned else 6000)
+                else:
+                    embed_color = self.color_separator[0]
+                quote_spans.append([len(content), len(content) + len(embed_url), embed_color])
+                content += embed_url
             else:
-                if self.show_embed_names and "youtube." not in embed["main_url"]:
+                if self.show_embed_names and "youtube." not in embed["main_url"] and embed_type != "article":
                     name = embed.get("name")
                     embed_url = trim_string(name if name else "Unnamed", self.trim_embed_url_size)
                 elif embed.get("proxy_url") and embed_url == " " and not self.placeholder_images:
@@ -2063,8 +2085,8 @@ class ChatGenerator:
             self.dyn_limit_username, emoji_safe=False,
             fill=not (self.dynamic_name_len)),
         )
-        if embed_marker_ranges:
-            shift_ranges_all(pre_content_len, embed_marker_ranges)
+        if embed_marker_ranges or quote_spans:
+            shift_ranges_all(pre_content_len, embed_marker_ranges, quote_spans)
         message_line = lazy_replace(message_line, "%global_name", lambda: normalize_string(global_name, self.dyn_limit_username, emoji_safe=True, fill=not (self.dynamic_name_len)))
         message_line = lazy_replace(message_line, "%timestamp", lambda: generate_timestamp(message["timestamp"], self.format_timestamp, self.convert_timezone))
         message_line = message_line.replace("%edited", self.edited_string if edited else "")
@@ -2303,6 +2325,7 @@ class ChatGenerator:
                 channel_ranges,
                 timestamp_ranges,
                 embed_marker_ranges,
+                quote_spans,
             )
             standout_ranges = chain(timestamp_ranges, mention_ranges, channel_ranges, emoji_ranges, embed_marker_ranges)
             quote_nl = False
@@ -2357,6 +2380,12 @@ class ChatGenerator:
             if code_block_format:
                 new_line = new_line.ljust(max_length-1)
             code_block_format += format_multiline_one_line_format(code_blocks_tokens, len_new_line, self.newline_len, this_quote)
+            if this_quote:   # color quote character of colored rich embeds
+                for span in quote_spans:
+                    if span[0] < len_new_line and span[1] > self.newline_len:
+                        code_block_format.append([span[2], self.newline_len, self.newline_len + 1])
+                        new_line = new_line[:self.newline_len] + "▌" + new_line[self.newline_len+1:]
+                        break
 
             len_new_line = len(new_line)
             chat.append(new_line)
@@ -3377,7 +3406,7 @@ def generate_extra_window_summaries(summaries, colors, max_len, channel_name=Non
     return title_line, body, body_format, indexes
 
 
-def generate_extra_window_search(query, messages, roles, channels, blocked, total_msg, config, colors, max_len, limit_lines=3, newline_len=4, pinned=False):
+def generate_extra_window_search(query, messages, roles, channels, guilds, blocked, total_msg, config, colors, max_len, limit_lines=3, newline_len=4, pinned=False):
     """
     Generate extra window title and body for message search view
     Possible options for format_message:
@@ -3442,7 +3471,7 @@ def generate_extra_window_search(query, messages, roles, channels, blocked, tota
                 content, _ = replace_mentions(content, message["mentions"], global_name=use_global_name, use_nick=use_nick)
                 content, _ = replace_roles(content, roles)
                 content = replace_discord_url(content)
-                content, _ = replace_channels(content, channels)
+                content, _ = replace_channels(content, channels, guilds)
                 content, _ = replace_timestamps(content, convert_timezone)
                 content, _ = replace_markdown_urls(content, ())
 
@@ -3492,31 +3521,6 @@ def generate_extra_window_search(query, messages, roles, channels, blocked, tota
     else:
         body = ["No messages found."]
     return title_line, body, body_format, indexes
-
-
-def generate_extra_window_search_ext(extensions, installed, updates, colors, max_len):
-    """Generate extra window title and body for extensions search view"""
-    title_line = f"Extensions search results: {len(extensions)} extensions"
-    color_low = colors[8]
-    color_standout = colors[9]
-    body = []
-    body_format = []
-    installed_ext = [ex.EXT_SOURCE.strip("/").split("/")[-1] for ex in installed if ex.EXT_SOURCE]
-    for extension in extensions:
-        official = " (official)" if extension[3] else ""
-        description = str(extension[2]).replace("An extension for endcord discord TUI client, that ", "")
-        description = description.capitalize()
-        name = extension[1] + official + " - "
-        body.append(normalize_string(name + description, max_len, emoji_safe=True, dots=True, fill=False))
-        line_format = [(color_low, None, len(name) - 1, len(name) + len(description))]
-        if extension[3]:
-            line_format.insert(0, (color_standout, None, len(extension[1]) + 1, len(extension[1]) + len(official)))
-        if extension[1] in updates:
-            line_format.insert(0, (19, None, 0, len(extension[1])))
-        elif extension[1] in installed_ext:
-            line_format.insert(0, (18, None, 0, len(extension[1])))
-        body_format.append(line_format)
-    return title_line, body, body_format
 
 
 def generate_extra_window_text(title_text, body_text, max_len):
@@ -3634,6 +3638,32 @@ def generate_extra_window_stats(data, texts, colors, max_len):
             body.append(line)
             body_format.append([(color_standout, None, len(text) + 2, len(line))])
     return title_line[:max_len], body, body_format
+
+
+def generate_command_assist(commands, bindings, colors, max_w):
+    """Add key bindings to command assist lines and generate their color format"""
+    color_low = colors[8]
+    color_standout = colors[9]
+    keys = {}
+    for key, command in bindings.items():
+        if " " not in command:   # skip commands with arguments
+            keys.setdefault(command, key)
+    assist_found = []
+    extra_format = []
+    for line in commands:
+        name, desc = line[0].split(" - ", 1)
+        line_format = [(color_standout, None, 0, len(name.split(" ", 1)[0]))]
+        start = len(name) + 3
+        key = keys.get(line[1])
+        if key:
+            end = start + len(key) + 2
+            line = (f"{name} - ({key}) - {desc}", line[1])   # noqa
+            line_format.append((18, None, start, end))
+            start = end + 3
+        line_format.append((color_low, None, start, max_w))
+        assist_found.append(line)
+        extra_format.append(line_format)
+    return assist_found, extra_format
 
 
 def generate_forum(threads, blocked, max_length, colors, colors_formatted, config):
@@ -3780,7 +3810,7 @@ def generate_member_list(member_list_raw, guild_roles, width, use_nick, status_s
     return member_list, member_list_format
 
 
-def generate_message_notification(data, channels, roles, guild_name, my_data, convert_timezone, use_global_name=False, use_nick=False):
+def generate_message_notification(data, channels, guilds, roles, guild_name, my_data, convert_timezone, use_global_name=False, use_nick=False):
     """Generate message notification title and body"""
     if data["guild_id"]:
         # find guild and channel name
@@ -3805,7 +3835,7 @@ def generate_message_notification(data, channels, roles, guild_name, my_data, co
         body, _ = replace_mentions(body, data["mentions"] + [my_data], global_name=use_global_name, use_nick=use_nick)
         body, _ = replace_roles(body, roles)
         body = replace_discord_url(body)
-        body, _ = replace_channels(body, channels)
+        body, _ = replace_channels(body, channels, guilds)
         body, _ = replace_timestamps(body, convert_timezone)
         content, _ = replace_markdown_urls(body, ())
     elif data.get("embeds"):
@@ -4289,14 +4319,13 @@ def generate_tree(dms, guilds, threads, read_state, guild_folders, activities, c
                     mention_count = generate_count(category["ping"])
                     tree.append(normalize_string_with_suffix(f"{intersection} {name}", mention_count, max_width, emoji_safe=not (safe_emoji)))
                     code = 300
-                    if muted and not category["active"]:
+                    if category["muted"] and not category["active"]:
                         code += 10
                     elif category["ping"]:
                         code += 20
                     elif category["unseen"]:
                         code += 30
                     tree_format.append(code)
-                    category["muted"] = muted
                     tree_metadata.append({
                         "id": category["id"],
                         "type": 0,

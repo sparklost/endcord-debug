@@ -34,7 +34,7 @@ try:
 except (AttributeError, NameError):
     APP_NAME = "endcord"
 TRUE_APP_NAME = "endcord"
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 NO_NOTIFY_SOUND_DE = ("kde", "plasma")   # linux desktops without notification sound
 RUNTIME_TEMP = False   # forces all temp files to be written to runtime dir
 
@@ -656,8 +656,10 @@ def native_open(path, mpv_path="", yt_in_mpv=True):
     )
 
 
-def get_connection(host, port=443, timeout=2, proxy=None):
-    """Get connection object and handle proxying"""
+def get_connection(host, port=443, timeout=2, proxy=None, tls=True):
+    """Get connection object and handle proxying, plain http is used when tls is false"""
+    if not tls:
+        return http.client.HTTPConnection(host, port, timeout=timeout)
     if sys.platform == "darwin":
         import certifi
         ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -667,10 +669,10 @@ def get_connection(host, port=443, timeout=2, proxy=None):
     if not proxy:
         return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl_context)
     try:
-        if proxy.startswith("http://") or proxy.startswith("http://"):
+        if proxy.startswith("http://") or proxy.startswith("https://"):
             proxy = urllib.parse.urlsplit(proxy)
             if proxy.startswith("http://"):
-                connection = http.client.HTTPConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
+                connection = http.client.HTTPConnection(proxy.hostname, proxy.port, timeout=timeout)
             else:
                 connection = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=timeout, context=ssl_context)
             connection.set_tunnel(host, port=port)

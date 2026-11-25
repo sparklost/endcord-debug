@@ -1,4 +1,6 @@
 ## Configuration
+Settings can be edited in endcord UI with `endcord --settings` argument or `settings` command inside endcord.  
+Theme can be edited in endcord UI with `endcord --settings-theme` argument or `settings-theme` command inside endcord.  
 Settings, logs, state, themes, extensions etc. location:
 - On Linux: `~/.config/endcord/` or `$XDG_DATA_HOME/endcord/`  
 - On Windows: `%USERPROFILE%/AppData/Local/endcord/`  
@@ -141,6 +143,10 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
     Quality of downloaded image thumb for chat inline media. Has no effect in endcord-lite. Possible options are: `lossless`, `high`, `'low`.
 - `rpc_external = True`  
     Whether to use external resources for Rich Presence (like custom pictures).
+- `rpc_passthrough = False`  
+    Allow any RPC app to set Rich Presence even if its not registered with discord.  
+    THis option can be set to string representing one-line json: a dictionary where string app_id is key and string custom app name is value.  
+    Simply add app id (can be obtained from the log) and pair it with custom name to rename the app.  
 - `emoji_as_text = False`  
     Will convert emoji characters to their names. Enable if emoji are not supported by terminal.
 - `message_spacing = True`  
@@ -161,11 +167,11 @@ Also see [keybindings configuration](keybindings.md#configuring-keybindings).
 - `remember_collapsed_channels = True`  
     Whether to persist collapsed state for forums and channels with threads.
 - `dm_activity_in_tree = True`  
-    Wether to show DM rich presence activity icon instead of status dot (`tree_dm_status` in theme) in tree. Uses characters from `activity_icons` in thme.
+    Whether to show DM rich presence activity icon instead of status dot (`tree_dm_status` in theme) in tree. Uses characters from `activity_icons` in thme.
 - `assist = True`  
     Assist when typing @username, @role, #channel, :emoji:, ;sticker;
 - `assist_stop_space = True`  
-    Wether to stop assist when space character is typed.
+    Whether to stop assist when space character is typed.
  - `assist_swap_binding = True`  
     Whether to swap `chat_up` and `chat_down` with `extra_up` and `extra_down` when popup window is open.
 - `assist_skip_app_command = False`  

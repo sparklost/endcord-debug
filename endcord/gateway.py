@@ -97,15 +97,11 @@ def extract_activities(raw_activities):
 class Gateway():
     """Methods for fetching and sending data to Discord gateway through websocket"""
 
-    def __init__(self, token, host, client_prop, user_agent, proxy=None, capablities=None):
-        if host:
-            host_obj = urllib.parse.urlsplit(host)
-            if host_obj.netloc:
-                self.host = host_obj.netloc
-            else:
-                self.host = host_obj.path
-        else:
-            self.host = DISCORD_HOST
+    def __init__(self, token, api, gateway, client_prop, user_agent, proxy=None, capablities=None):
+        # gateway is a (hostname, port, tls) tuple from discord.get_hosts()
+        self.hostname, self.port, self.tls = api
+        self.gateway_host = gateway
+        self.host = self.hostname if self.port in (80, 443) else f"{self.hostname}:{self.port}"
         self.user_agent = user_agent
         self.header = [
             "Connection: keep-alive, Upgrade",
@@ -152,7 +148,7 @@ class Gateway():
         self.roles_changed = False
         self.user_settings_proto = None
         self.proto_changed = False
-        self.legacy = "spacebar" in self.host
+        self.is_spacebar = "spacebar" in self.host
         self.activities = []
         self.activities_changed = []
         self.subscribed_activities = []
@@ -284,14 +280,18 @@ class Gateway():
     def connect_ws(self, resume=False):
         """Connect to websocket"""
         gateway_url = self.resume_gateway_url if (resume and self.resume_gateway_url) else self.gateway_url
+        tls = not gateway_url.startswith("ws://")   # plain ws:// is used for local instances
         try:
-            if sys.platform == "darwin":
-                import certifi
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-            else:
-                ssl_context = ssl.create_default_context()
-            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-            self.ws = websocket.WebSocket(sslopt={"context": ssl_context})
+            sslopt = {}
+            if tls:
+                if sys.platform == "darwin":
+                    import certifi
+                    ssl_context = ssl.create_default_context(cafile=certifi.where())
+                else:
+                    ssl_context = ssl.create_default_context()
+                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                sslopt = {"context": ssl_context}
+            self.ws = websocket.WebSocket(sslopt=sslopt)
             if self.proxy:
                 proxy = urllib.parse.urlsplit(self.proxy)
                 scheme = proxy.scheme
@@ -331,32 +331,38 @@ class Gateway():
 
     def connect(self):
         """Create initial connection to Discord gateway"""
-        if self.host == DISCORD_HOST:
+        if self.gateway_host:
+            hostname, port, tls = self.gateway_host
+            port_suffix = "" if port in (80, 443) else f":{port}"
+            self.gateway_url = f"{"wss" if tls else "ws"}://{hostname}{port_suffix}"
+        elif self.hostname == DISCORD_HOST:
             self.gateway_url = DISCORD_HOST_GATEWY
         else:
+            header = {
+                "Accept": "*/*",
+                "Content-Type": "application/json",
+                "Priority": "u=1",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "User-Agent": self.user_agent,
+            }
+            connection = None
             try:
-                header = {
-                    "Accept": "*/*",
-                    "Content-Type": "application/json",
-                    "Priority": "u=1",
-                    "Sec-Fetch-Dest": "empty",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "cross-site",
-                    "User-Agent": self.user_agent,
-                }
-                connection = peripherals.get_connection(self.host, timeout=3, proxy=self.proxy)
+                connection = peripherals.get_connection(self.hostname, self.port, timeout=3, proxy=self.proxy, tls=self.tls)
                 connection.request("GET", "/api/v9/gateway", headers=header)   # subscribe works differently in v10
-            except (socket.gaierror, TimeoutError, ConnectionResetError):
-                connection.close()
-                sys.exit("No internet connection. Exiting...")
-            response = connection.getresponse()
-            if response.status == 200:
+                response = connection.getresponse()
+                status = response.status
                 data = response.read()
-                connection.close()
-                self.gateway_url = json.loads(data)["url"]
-            else:
-                connection.close()
-                sys.exit(f"Failed to get gateway url. Response code: {response.status}. Exiting...")
+            except OSError:   # includes gaierror, timeout, connection reset and refused
+                sys.exit("Could not reach the server. Exiting...")
+            finally:
+                if connection:
+                    connection.close()
+            if status != 200:
+                sys.exit(f"Failed to get gateway url. Response code: {status}. Exiting...")
+            logger.info(data)
+            self.gateway_url = json.loads(data)["url"].rstrip("/")
 
         error = self.connect_ws()
         if error:
@@ -455,7 +461,7 @@ class Gateway():
                 "message_notifications": channel["message_notifications"],
                 "muted": channel["muted"],
                 "hidden": hidden,
-                "collapsed": channel.get("collapsed", False),   # spacebar_fix - get
+                "collapsed": channel.get("collapsed"),
                 "flags": flags,
             })
 
@@ -629,9 +635,9 @@ class Gateway():
                 recipients.append({
                     "id": recipient["id"],
                     "username": recipient["username"],
-                    "global_name": recipient.get("global_name"),   # spacebar_fix - get
+                    "global_name": recipient.get("global_name"),
                 })
-            else:   # spacebar_fix - can open dm with self
+            else:
                 add_me = True
         elif data:
             for recipient_id in dm["recipient_ids"]:
@@ -640,9 +646,9 @@ class Gateway():
                         recipients.append({
                             "id": recipient_id,
                             "username": user["username"],
-                            "global_name": user.get("global_name"),   # spacebar_fix - get
+                            "global_name": user.get("global_name"),
                         })
-                    elif recipient_id == self.my_id:   # spacebar_fix - can open dm with self
+                    elif recipient_id == self.my_id:
                         recipients.append(self.my_user_data)
         if add_me:
             recipients.append(self.my_user_data)
@@ -751,23 +757,23 @@ class Gateway():
     def set_my_user_data(self, data):
         """Set my user data from user object"""
         tag = None
-        if data.get("primary_guild") and "tag" in data["primary_guild"]:   # spacebar_fix - get
+        if data["primary_guild"] and "tag" in data["primary_guild"]:
             tag = data["primary_guild"]["tag"]
         if data.get("bot"):
             extra_data = None
         else:
             extra_data = {
                 "avatar": data["avatar"],
-                "avatar_decoration_data": data.get("avatar_decoration_data"),   # spacebar_fix - get
+                "avatar_decoration_data": data["avatar_decoration_data"],
                 "discriminator": data["discriminator"],
-                "flags": data.get("flags"),   # spacebar_fix - get
+                "flags": data["flags"],
                 "premium_type": data["premium_type"],
             }
         self.my_user_data = {
             "id": data["id"],
             "guild_id": None,
             "username": data["username"],
-            "global_name": data.get("global_name"),   # spacebar_fix - get
+            "global_name": data.get("global_name"),
             "nick": None,
             "bio": data.get("bio"),
             "pronouns":  data.get("pronouns"),
@@ -972,10 +978,9 @@ class Gateway():
                     time_log_string += f"    blocked users - {round((time.monotonic() - ready_time_mid) * 1000, 3)} ms\n"
                     ready_time_mid = time.monotonic()
                     # get user settings
-                    if "user_settings_proto" in data and not self.legacy:
+                    if "user_settings_proto" in data:
                         self.user_settings_proto = protobuf.parse_message(base64.b64decode(data["user_settings_proto"]), protobuf_schemata.USER_SETTINGS)
                     else:
-                        self.legacy = True
                         old_user_settings = data["user_settings"]
                         old_user_settings.update({
                             "status": {
@@ -997,8 +1002,10 @@ class Gateway():
                             guild_id = self.guilds[num]["guild_id"]
                             roles = []
                             for member in guild:
-                                if member.get("user_id") == self.my_id or member.get("id") == self.my_id:   # spacebar_fix - user_id -> id
+                                if member.get("user_id") == self.my_id or member.get("user", {}).get("id") == self.my_id:
                                     roles = member["roles"]
+                            if guild_id not in roles:
+                                roles.append(guild_id)   # this is @everyone role
                             self.my_roles.append({
                                 "guild_id": guild_id,
                                 "roles": roles,
@@ -1171,10 +1178,10 @@ class Gateway():
                     })
 
                 elif optext == "MESSAGE_REACTION_ADD":
-                    if "member" in data and "user" in data["member"]:   # spacebar_fix - "user" is missing
+                    if "member" in data:
                         user_id = data["member"]["user"]["id"]
                         username = data["member"]["user"]["username"]
-                        global_name = data["member"]["user"].get("global_name")   # spacebar_fix - get
+                        global_name = data["member"]["user"].get("global_name")
                         nick = data["member"]["user"].get("nick")
                     else:
                         user_id = data["user_id"]
@@ -1186,7 +1193,7 @@ class Gateway():
                         "channel_id": data["channel_id"],
                         "guild_id": data.get("guild_id"),
                         "emoji": data["emoji"]["name"],
-                        "emoji_id": data["emoji"].get("id"),   # spacebar_fix - get
+                        "emoji_id": data["emoji"].get("id"),
                         "user_id": user_id,
                         "username": username,
                         "global_name": global_name,
@@ -1225,7 +1232,7 @@ class Gateway():
                         "channel_id": data["channel_id"],
                         "guild_id": data.get("guild_id"),
                         "emoji": data["emoji"]["name"],
-                        "emoji_id": data["emoji"].get("id"),   # spacebar_fix - get
+                        "emoji_id": data["emoji"].get("id"),
                         "user_id": data["user_id"],
                     }
                     self.messages_buffer.append({
@@ -1245,7 +1252,7 @@ class Gateway():
                     # received when user in currently subscribed guild channel starts typing
                     if "member" in data:
                         username = data["member"]["user"]["username"]
-                        global_name = data["member"]["user"].get("global_name")   # spacebar_fix - get
+                        global_name = data["member"]["user"].get("global_name")
                         nick = data["member"]["user"].get("nick")
                     else:
                         username = None
@@ -1326,7 +1333,7 @@ class Gateway():
                                     members_sync.append({
                                         "id": member_data["user"]["id"],
                                         "username": member_data["user"]["username"],
-                                        "global_name": member_data["user"].get("global_name"),   # spacebar_fix - get
+                                        "global_name": member_data["user"].get("global_name"),
                                         "nick": member_data["nick"],
                                         "roles": member_data["roles"],
                                         "status": member_data["presence"]["status"],
@@ -1361,7 +1368,7 @@ class Gateway():
                                 ready_data = {
                                     "id": member_id,
                                     "username": member_data["user"]["username"],
-                                    "global_name": member_data["user"].get("global_name"),   # spacebar_fix - get
+                                    "global_name": member_data["user"].get("global_name"),
                                     "nick": member_data["nick"],
                                     "roles": member_data["roles"],
                                     "status": member_data["presence"]["status"],
@@ -1403,7 +1410,7 @@ class Gateway():
                         target.append({
                             "id": member_data["user"]["id"],
                             "username": member_data["user"]["username"],
-                            "global_name": member_data["user"].get("global_name"),   # spacebar_fix - get
+                            "global_name": member_data["user"].get("global_name"),
                             "nick": member_data["nick"],
                             "roles": member_data["roles"],
                             "status": presence["status"],
@@ -1477,7 +1484,7 @@ class Gateway():
                         if user["id"] == user_id:
                             selected_activities[num] = {
                                 "id": user_id,
-                                "status": data.get("status"),   # spacebar_fix - status
+                                "status": data.get("status"),   # spacebar_fix
                                 "custom_status": custom_status,
                                 "activities": activities,
                             }
@@ -1485,7 +1492,7 @@ class Gateway():
                     else:
                         selected_activities.append({
                             "id": data["user"]["id"],
-                            "status": data.get("status"),   # spacebar_fix - get
+                            "status": data.get("status"),   # spacebar_fix
                             "custom_status": custom_status,
                             "activities": activities,
                         })
@@ -1678,7 +1685,7 @@ class Gateway():
                                 self.voice_gateway_data["channel_id"] = channel_id
                                 self.voice_gateway_data_ready += 1
                         else:
-                            if "member" in data:
+                            if "member" in data and "user" in data["member"]:
                                 username = data["member"]["user"]["username"]
                                 global_name = data["member"]["user"].get("global_name")
                                 nick = data["member"].get("nick")
@@ -1694,7 +1701,7 @@ class Gateway():
                                     if username:
                                         break
                                 nick = None
-                            name = nick if nick else global_name if global_name else username   # spacebar_fix - get
+                            name = nick if nick else global_name if global_name else username
                             self.call_buffer.append({
                                 "op": "STATE_UPDATE",
                                 "channel_id": channel_id,
@@ -1838,7 +1845,7 @@ class Gateway():
                             "name": new_channel["name"],
                             "topic": new_channel.get("topic"),
                             "parent_id": new_channel.get("parent_id"),
-                            "position": new_channel["position"],
+                            "position": new_channel.get("position", 0),
                             "permission_overwrites": new_channel["permission_overwrites"],
                             "hidden": False,
                         }
@@ -1866,7 +1873,7 @@ class Gateway():
                                 self.my_roles.append({
                                     "guild_id": guild_id,
                                     "roles": member["roles"],
-                                    "nick": member["nick"],
+                                    "nick": member.get("nick"),
                                 })
                                 break
                         self.guilds_changed = True
@@ -2020,7 +2027,7 @@ class Gateway():
         self.heartbeat_sent_time = int(time.monotonic())
         time_spent_event_time = int(time.monotonic()) - 1990   # send it 10s after start, then every 30min
         while self.run and not self.wait and self.heartbeat_running:
-            send_time_spent_event = not self.legacy and int(time.monotonic()) - time_spent_event_time >= 1800
+            send_time_spent_event = not self.is_spacebar and int(time.monotonic()) - time_spent_event_time >= 1800
             if send_time_spent_event:
                 self.send({
                     "op": 41,
@@ -2033,7 +2040,7 @@ class Gateway():
                 logger.debug("Sent Time Spent event")
                 time_spent_event_time = int(time.monotonic())
             if time.monotonic() - self.heartbeat_sent_time >= heartbeat_interval_rand or send_time_spent_event:
-                if QOS_HEARTBEAT and not self.legacy:
+                if QOS_HEARTBEAT and not self.is_spacebar:
                     self.send({
                         "op": 1,
                         "d": {
@@ -2171,9 +2178,6 @@ class Gateway():
 
     def update_presence(self, status, custom_status=None, custom_status_emoji=None, activities=None, afk=False):
         """Update client status. Statuses: online, idle, dnd, invisible, offline"""
-        if self.legacy:
-            return   # spacebar_fix - gateway returns error if this event is sent
-
         all_activities = []
         if custom_status:
             all_activities.append({
