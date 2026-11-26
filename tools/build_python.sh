@@ -154,7 +154,6 @@ xxlimited_35
 _multiprocessing
 _interpchannels
 _remote_debugging
-_lsprof
 EOF
 
 ./configure ax_cv_c_float_words_bigendian=no \
