@@ -1,15 +1,16 @@
-Fix libopus build on windows
-
-endflux extension
-    humanize gateway.py
-    decide on license
-    publish
-    setup fluxer server with bridge
-    add auth.py patch
+Bump dependencies
+Switch to python 3.15
+    update workflows
+    test all platforms on endcord-debug
 
 New project name ???
 Move website to projectname.github.io
 Add nightly builds?
+
+endflux/donaflux extension
+    setup fluxer server with bridge
+    publish
+    add auth.py patch
 
 CORE EASY:
 Add inbox
